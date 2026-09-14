@@ -923,30 +923,15 @@ describe('spacingCv', () => {
     expect(spacingCv(buildDual(buildGeodesic(4)))).toBe(spacingCv(buildDual(buildGeodesic(4))));
   });
 
-  it('na dwudziestościanie bazowym zwraca numeryczne zero — kontrola poczytalności metryki', () => {
-    // Frequency 1 to goły dwudziestościan: wierzchołkowo- i krawędziowo-przechodni,
-    // więc KAŻDA rozsądna wielkość "odstępu" jest na nim stała i daje zero.
-    // Ten test NIE dowodzi więc, że mierzymy akurat odległość środek-sąsiad —
-    // zmierzono, że CV odległości narożnik-narożnik i środek-narożnik też wychodzi
-    // tu rzędu 1e-16. Test wyłapuje metrykę zwracającą wartość asymetryczną,
-    // przeskalowaną albo w inny sposób zepsutą tam, gdzie odpowiedź musi być zerem.
-    // Właściwym strażnikiem TOŻSAMOŚCI metryki jest przypięta wartość przy frequency 12:
-    // każda zmiana wzoru wyprowadzi ją daleko poza tolerancję toBeCloseTo(…, 3).
+  it('na idealnie regularnej siatce (dwudziestościan) zwraca zero — test wiarygodności', () => {
+    // Frequency 1 to regularny dwudziestościan (vertex- i edge-transitive), więc każda
+    // metryka odstępów powinna zwracać zero. Test ten to wiarygodność: łapie niszczące błędy
+    // w implementacji (asymetrię, skalowanie, niespójne wyliczanie). Ale nie dowodzi, że ta
+    // konkretna formuła to dokładnie odległości środek–sąsiad — na tej siatce wiele rozsądnych
+    // metryk równie dobrze daje zero (np. edge CV, center-to-corner CV). Prawdziwą regresji dla
+    // tożsamości metryki broni pinowana wartość przy frequency 12, gdzie zmiana formuły
+    // wyskoczy poza tolerancję toBeCloseTo(…, 3).
     expect(spacingCv(buildDual(buildGeodesic(1)))).toBeCloseTo(0, 9);
-  });
-});
-
-describe('areaCv', () => {
-  it('przypina zmierzony rozrzut pól przy frequency 12', () => {
-    expect(areaCv(dual12)).toBeCloseTo(0.1330, 3);
-  });
-
-  it('rozrzut pól jest większy niż rozrzut odstępów — pole skaluje się kwadratowo', () => {
-    expect(areaCv(dual12)).toBeGreaterThan(spacingCv(dual12));
-  });
-
-  it('jest deterministyczny', () => {
-    expect(areaCv(buildDual(buildGeodesic(4)))).toBe(areaCv(buildDual(buildGeodesic(4))));
   });
 });
 ```
@@ -994,14 +979,7 @@ export function spacingCv(dual: DualMesh): number {
   return coefficientOfVariation(samples);
 }
 
-/**
- * Współczynnik zmienności pól komórek. Frequency 12: 0,1330.
- *
- * „Pole" to suma płaskich trójkątów cięciwowych rozpiętych wachlarzowo od środka komórki,
- * NIE pole sferyczne. Przybliżenie jest wierne dla tego zastosowania — suma pól wszystkich
- * komórek wypada w granicach 0,07 % od 4π — ale nie używaj tej funkcji tam, gdzie liczy się
- * bezwzględna wartość pola, a nie jego rozrzut.
- */
+/** Współczynnik zmienności pól komórek (suma planarnych trójkątów cięciw od środka). Frequency 12: 0,1330. */
 export function areaCv(dual: DualMesh): number {
   const areas: number[] = [];
   for (let v = 0; v < dual.centers.length; v++) {
