@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createScanner } from 'typescript/unstable/ast/scanner';
 import { SyntaxKind } from 'typescript/unstable/ast';
 import { SIM_VERSION } from '../src/index.js';
@@ -17,6 +18,13 @@ import { SIM_VERSION } from '../src/index.js';
  * napisowe jako pojedyncze, nierozkładalne tokeny — więc w odróżnieniu od
  * dopasowania regexem po surowym tekście, nie da się go oszukać komentarzem
  * ani literałem napisowym zawierającym tekst w stylu "from 'x'".
+ *
+ * Rozpoznawane są dwa rodzaje literałów niosące specyfikator: zwykły literał
+ * napisowy (`SyntaxKind.StringLiteral`) oraz literał szablonowy bez podstawień
+ * (`SyntaxKind.NoSubstitutionTemplateLiteral`, czyli `` `spec` ``) — bo
+ * `import(...)`/`require(...)` to zwykłe wywołania, przyjmujące dowolne
+ * wyrażenie jako argument, więc `` import(`three`) `` i `` require(`three`) ``
+ * są równie prawdziwym importem jak ich odpowiedniki z cudzysłowem.
  *
  * Pełny AST w tej wersji TypeScript (7.x, kompilator natywny) jest dostępny
  * tylko przez klienta RPC do procesu kompilatora, powiązanego z projektem i
@@ -36,11 +44,11 @@ function extractModuleSpecifiers(sourceText: string): string[] {
   let token = scanner.scan();
 
   while (token !== SyntaxKind.EndOfFile) {
-    if (token === SyntaxKind.StringLiteral) {
+    if (token === SyntaxKind.StringLiteral || token === SyntaxKind.NoSubstitutionTemplateLiteral) {
       const isFromClause = prev === SyntaxKind.FromKeyword; // import/export ... from 'x'
       const isSideEffectImport = prev === SyntaxKind.ImportKeyword; // import 'x';
-      const isDynamicImport = prev === SyntaxKind.OpenParenToken && prevPrev === SyntaxKind.ImportKeyword; // import('x')
-      const isRequireCall = prev === SyntaxKind.OpenParenToken && prevPrev === SyntaxKind.RequireKeyword; // require('x')
+      const isDynamicImport = prev === SyntaxKind.OpenParenToken && prevPrev === SyntaxKind.ImportKeyword; // import('x') / import(`x`)
+      const isRequireCall = prev === SyntaxKind.OpenParenToken && prevPrev === SyntaxKind.RequireKeyword; // require('x') / require(`x`)
 
       if (isFromClause || isSideEffectImport || isDynamicImport || isRequireCall) {
         specifiers.push(scanner.getTokenValue());
@@ -72,7 +80,15 @@ describe('kontrakt pakietu sim', () => {
 
   it('żaden plik źródłowy nie importuje three ani niczego spoza pakietu', async () => {
     const { globSync } = await import('node:fs');
-    const files = globSync('src/**/*.ts', { cwd: new URL('..', import.meta.url).pathname });
+    // fileURLToPath, NIE `.pathname` surowego URL-a: `.pathname` jest %-kodowany
+    // (spacja → %20 itd.), więc na ścieżce zawierającej znak wymagający kodowania
+    // `cwd` przestałby istnieć, `globSync` po cichu zwróciłby [], a cała reszta tego
+    // testu zielono "sprawdziłaby" zero plików. `fileURLToPath` dekoduje z powrotem
+    // do rzeczywistej ścieżki systemu plików.
+    const files = globSync('src/**/*.ts', { cwd: fileURLToPath(new URL('..', import.meta.url)) });
+    // Strażnik na własną niepustość: bez tego powyższa klasa błędu (albo dowolna inna
+    // regresja globu) przechodzi zielono, nie przeczytawszy ani jednego pliku.
+    expect(files.length).toBeGreaterThan(0);
     const offenders: string[] = [];
     for (const f of files) {
       const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
@@ -104,6 +120,15 @@ describe('strażnik importów (lekser TypeScript, nie regex): findOffendingSpeci
 
   it('wykrywa CommonJS: `require("spec")`', () => {
     expect(findOffendingSpecifiers(`const three = require('three');`)).toEqual(['three']);
+  });
+
+  it('wykrywa dynamiczny import zapisany literałem szablonowym: `import(`spec`)`', () => {
+    const src = 'export async function load() { return await import(`three`); }';
+    expect(findOffendingSpecifiers(src)).toEqual(['three']);
+  });
+
+  it('wykrywa CommonJS zapisany literałem szablonowym: `require(`spec`)`', () => {
+    expect(findOffendingSpecifiers('const three = require(`three`);')).toEqual(['three']);
   });
 
   it('NIE zgłasza importów względnych ani wbudowanych node:', () => {
