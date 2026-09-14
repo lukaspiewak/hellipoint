@@ -20,6 +20,16 @@ export class Sim {
   private readonly pending: Command[] = [];
 
   constructor(planet: Planet, config: SimConfig) {
+    // `!(x > 0)` NIE łapie Infinity (Infinity > 0 jest prawdziwe) — stąd Number.isFinite.
+    // Walidacja tu, a nie w scale.ts, chroni WSZYSTKICH konsumentów rotationPeriod naraz:
+    // terminatorSpeedWorld/terminatorSpeedCells/terminatorCrossingTime dzielą przez nie
+    // bez żadnej straży i po cichu dają Infinity/0 zamiast rzucić błąd.
+    if (!Number.isFinite(config.rotationPeriod) || config.rotationPeriod <= 0) {
+      throw new RangeError(`SimConfig.rotationPeriod must be finite and positive, got ${config.rotationPeriod}`);
+    }
+    if (!Number.isFinite(config.startingOre) || config.startingOre < 0) {
+      throw new RangeError(`SimConfig.startingOre must be finite and non-negative, got ${config.startingOre}`);
+    }
     this.config = config;
     this.s = createState(planet, config.startingOre);
   }

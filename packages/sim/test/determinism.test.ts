@@ -46,3 +46,38 @@ describe('determinizm (§7.2)', () => {
     expect(sim.state.tick).toBe(20);
   });
 });
+
+/**
+ * `rotationPeriod` zły przepływa do `terminatorSpeedWorld`/`terminatorSpeedCells`/
+ * `terminatorCrossingTime` w scale.ts, które dzielą przez nie bez żadnej straży —
+ * zdegenerowana wartość dałaby ciche Infinity/0 dopiero w Fazie 1C, bez błędu
+ * w tym miejscu. Walidacja w konstruktorze chroni WSZYSTKICH konsumentów naraz.
+ * `!(x > 0)` NIE łapie Infinity (Infinity > 0 jest prawdziwe) — stąd Number.isFinite.
+ */
+describe('SimConfig — walidacja w konstruktorze Sim', () => {
+  const planet = createPlanet({ seed: 1 });
+
+  it('odrzuca rotationPeriod <= 0 lub nieskończony', () => {
+    expect(() => new Sim(planet, { rotationPeriod: 0, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: -180, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: NaN, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: Infinity, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: -Infinity, startingOre: 100 })).toThrow(RangeError);
+  });
+
+  it('odrzuca startingOre ujemny lub nieskończony', () => {
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -1 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: NaN })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: Infinity })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -Infinity })).toThrow(RangeError);
+  });
+
+  it('akceptuje startingOre = 0 — niezerowa dolna granica byłaby błędem (pole jest NIEUJEMNE, nie dodatnie)', () => {
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: 0 })).not.toThrow();
+  });
+
+  it('komunikat błędu nazywa pole i wartość, a nie tylko ogólnikowo "invalid config"', () => {
+    expect(() => new Sim(planet, { rotationPeriod: -5, startingOre: 100 })).toThrow(/rotationPeriod.*-5/);
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -5 })).toThrow(/startingOre.*-5/);
+  });
+});
