@@ -33,6 +33,27 @@ describe('Rng', () => {
     expect(sum / 100_000).toBeCloseTo(0.5, 2);
   });
 
+  it('nextInt mieści się w [0, maxExclusive) dla kilku wartości maxExclusive', () => {
+    const r = new Rng(2026);
+    // 6 (typ. liczba sąsiadów), 12 (frequency), 1430 (liczba heksagonów przy frequency 12) —
+    // wartości realnie używane przez createPlanet do wyboru z tablic.
+    for (const max of [2, 6, 12, 1430]) {
+      for (let i = 0; i < 5_000; i++) {
+        const v = r.nextInt(max);
+        expect(Number.isInteger(v)).toBe(true);
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThan(max);
+      }
+    }
+  });
+
+  it('nextInt z maxExclusive=1 zawsze daje 0 (przypadek brzegowy używany przez wybór komórki startowej)', () => {
+    const r = new Rng(2027);
+    for (let i = 0; i < 1000; i++) {
+      expect(r.nextInt(1)).toBe(0);
+    }
+  });
+
   it('fork jest niezależny od tego, jak daleko zaawansował rodzic', () => {
     const parentEarly = new Rng(42);
     const forkEarly = parentEarly.fork(STREAM.ORE).nextUint32();
