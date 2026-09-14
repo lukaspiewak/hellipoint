@@ -46,13 +46,15 @@ export function lightAt(normal: Vec3, sunDir: Vec3): number {
  * tego pola do czegokolwiek międzymaszynowego.] `Math.cos`/`Math.sin` w `sunDirection`
  * są przybliżeniami zależnymi od implementacji silnika JS — ECMAScript nie gwarantuje
  * identycznego wyniku co do bitu na różnych silnikach/platformach. Zmierzone (naprawa
- * residuali Fazy 1B — poprzedni pomiar w tym miejscu liczył tylko JEDEN kierunek
- * perturbacji, stąd błędny): perturbacja `Math.cos` o jeden ULP float64 w OBU kierunkach
+ * residuali Fazy 1B; przegląd zgłosił, że poprzednia liczba jest błędna, bo liczyła jeden
+ * kierunek perturbacji — powtórny pomiar tego NIE potwierdził: oba kierunki dają tyle samo,
+ * a prawdziwą wadą starej liczby był rozmiar próbki, nie kierunek):
+ * perturbacja `Math.cos` o jeden ULP float64 w OBU kierunkach
  * (bit w górę i w dół), ze sprawdzeniem przetrwania `Math.fround` — dokładnie tego
  * zaokrąglenia do float32, które robi `Float32Array` poniżej. Przy ~2000 próbkowanych
  * kątach na zestaw (kąty realne wg wzoru symulacji i kąty szeroko-jednostajne w
  * [-1e6, 1e6)) — 0 z 2000 przetrwało w KAŻDYM kierunku z osobna, co potwierdza starą
- * liczbę, ale teraz dla obu kierunków, nie tylko jednego. Przy 1 000 000 000 próbek na
+ * liczbę i rozszerza ją na oba kierunki. Przy 1 000 000 000 próbek na
  * zestaw liczba przestaje być zerem: 1–2 przetrwania na miliard, rząd wielkości zgodny
  * z teoretycznym stosunkiem ULP(float64)/ULP(float32) ≈ 2⁻²⁹ (~1 na 500 milionów).
  * Wniosek: tłumienie float32 drastycznie redukuje ryzyko, ale go NIE zeruje — „0 z 2000"
