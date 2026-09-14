@@ -933,7 +933,17 @@ export function lightField(planet: Planet, sunDir: Vec3): Float32Array {
 - [ ] **Step 4: Uruchom testy i commituj**
 
 Run: `pnpm vitest run packages/sim/test/light.test.ts`
-Oczekiwane: **11 testów przechodzi.** Test „oświetla mniej więcej połowę planety" jest formalnym potwierdzeniem D1 — globalna faza dnia i nocy z draftu była geometrycznie niemożliwa.
+Oczekiwane: **11 testów przechodzi.**
+
+> **Uwaga do kierunku naliczania kosztu — naprawiony defekt planu.** Wcześniejsza wersja tego
+> kroku relaksowała `distance[cur] + entryCost(cur)`, czyli obciążała sąsiadów kosztem komórki
+> JUŻ ROZSTRZYGNIĘTEJ. To jest błędne w obie strony: HP samego celu doliczało się jako stała do
+> odległości KAŻDEJ osiągalnej komórki, a budynek nigdy nie podnosił kosztu WŁASNEJ komórki —
+> ujawniał się dopiero o krok dalej. Poprawnie jest `distance[cur] + entryCost(n)`: wróg stojący
+> w `n` płaci za wejście do `n`, więc porównując sąsiadów widzi realny koszt kroku.
+> Zmierzone po naprawie (seed 41, Armor dps 50): sąsiad Core na pustej planecie 1,00 (czysty krok
+> BFS), ta sama komórka z barykadą 4,00, ten sam mur przy dps 10 → 16,00, przy dps 100 → 2,50.
+> Ostatnia para to D3 na żywo: ten sam mur kosztuje słabego szesnaście, a silnego dwa i pół. Test „oświetla mniej więcej połowę planety" jest formalnym potwierdzeniem D1 — globalna faza dnia i nocy z draftu była geometrycznie niemożliwa.
 
 ```bash
 git add packages/sim/src/sim/light.ts packages/sim/test/light.test.ts
@@ -2270,11 +2280,16 @@ export function buildFlowField(s: SimState, priority: Priority, attackerDps: num
     if (settled[cur]) continue;
     settled[cur] = 1;
 
-    // Wchodzimy DO `cur` z sąsiada, więc koszt wejścia dotyczy komórki `cur`.
-    const stepCost = entryCost(s, cur, attackerDps);
     for (const n of cells[cur].neighbors) {
       if (settled[n]) continue;
-      const candidate = distance[cur] + stepCost;
+      // Wchodzimy DO `n` z (już rozstrzygniętego, bliższego celowi) `cur`,
+      // więc koszt wejścia dotyczy komórki `n`, NIE `cur`. `cur` może samo być
+      // celem (dystans 0) — jego własny koszt zniszczenia nie ma się nigdzie
+      // "przeciekać" do sąsiadów, inaczej HP celu doliczałoby się do odległości
+      // KAŻDEJ osiągalnej komórki jako stała, a zabudowana komórka nigdy nie
+      // byłaby droższa od pustej pod WŁASNYM indeksem (koszt jej budynku
+      // ujawniałby się dopiero na sąsiadach o jeden krok dalej).
+      const candidate = distance[cur] + entryCost(s, n, attackerDps);
       if (candidate < distance[n]) {
         distance[n] = candidate;
         next[n] = cur;
