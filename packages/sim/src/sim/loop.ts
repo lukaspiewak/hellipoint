@@ -1,6 +1,7 @@
 import type { Planet } from '../world/planet.js';
 import { applyCommand, type Command } from './commands.js';
 import { lightField, sunDirection } from './light.js';
+import { updatePower } from './power.js';
 import { createState, TICK_SECONDS, type SimState } from './state.js';
 
 export interface SimConfig {
@@ -50,7 +51,9 @@ export class Sim {
     // 2. Oświetlenie — liczone raz i podawane pozostałym systemom.
     const sun = sunDirection(this.elapsedSeconds, this.config.rotationPeriod);
     const light = lightField(this.s.planet, sun);
-    void light; // systemy dopinane w Task 5-13
+
+    // 3. Energia — musi być przed ekonomią i walką, bo ustawia flagi `powered`.
+    updatePower(this.s, light);
 
     // TUTAJ dopinane są kolejne systemy, w tej kolejności:
     //   energia → ekonomia → pola przepływu → jednostki → walka → spalanie → fale → warunki końca
