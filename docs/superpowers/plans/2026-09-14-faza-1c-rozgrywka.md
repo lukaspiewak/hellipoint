@@ -1927,6 +1927,17 @@ pnpm --filter @heliopolis/headless bench 1000 0
 
 Pierwszy raport zapisz do `docs/superpowers/plans/pierwszy-raport-balansu.txt`. Nie ma być dobry — ma **istnieć** i być powtarzalny. To on wyznacza pracę Fazy 3.
 
+> **Zakres słowa „powtarzalny" — przeczytaj, zanim oprzesz coś na tym raporcie.** Powtarzalny
+> znaczy tu: **ten sam proces i ta sama maszyna**, dwa przebiegi z tymi samymi seedami dają
+> identyczne liczby. Mocniejszego twierdzenia — że ten sam seed da te same liczby na cudzym
+> komputerze albo w CI — **ten plan NIE stawia** i Faza 3 nie może go założyć bez sprawdzenia.
+> Powód jest zapisany w komentarzu nad `lightField` w `packages/sim/src/sim/light.ts`:
+> `Math.cos`/`Math.sin` to przybliżenia zależne od silnika JS, a ECMAScript nie gwarantuje
+> wyniku co do bitu między platformami. Tłumienie przez `Float32Array` większość rozbieżności
+> zjada, ale **nie wszystkie** — zmierzona resztka jest w tamtym komentarzu. Dlatego test
+> determinizmu w Tasku 5 porównuje dwa przebiegi w jednym procesie (`expect(run()).toBe(run())`),
+> a nie przypięty literał hasza. Nie zamieniaj go na literał bez rozstrzygnięcia tej kwestii.
+
 ```bash
 git add -A
 git commit -m "feat(headless): runner balansowy ze skryptową polityką i raportem rozkładów (§8.3)"
@@ -1939,14 +1950,14 @@ git commit -m "feat(headless): runner balansowy ze skryptową polityką i raport
 - [ ] `pnpm test` zielony, `pnpm typecheck` bez błędów, strażnik zero-zależności nadal przechodzi
 - [ ] Determinizm potwierdzony na pełnym runie przez 8000 ticków, nie tylko na modułach
 - [ ] Run przechodzi się bez renderu od startu do porażki albo zwycięstwa
-- [ ] Headless runner wykonuje 1000 runów i wypisuje powtarzalny raport rozkładów
+- [ ] Headless runner wykonuje 1000 runów i wypisuje raport rozkładów powtarzalny **w tym samym procesie i na tej samej maszynie** (zakres tego słowa — patrz ramka w Tasku 6)
 - [ ] Niezmiennik N3 zweryfikowany na żywej symulacji: ARMOR ginie, SWARM ucieka z tej samej pozycji
 - [ ] D3 zweryfikowane: CORE w pełnym pierścieniu barykad pozostaje osiągalny
 - [ ] D1 zweryfikowane: oświetlony pentagon nie spawnuje, oświetlona jest zawsze ~połowa planety
 - [ ] §5.3 zweryfikowane: 12 zatkanych capów nadal generuje zagrożenie — `allCapsOverloadTimeSeconds` jest zbędne
 - [ ] Wszystkie liczby balansowe oznaczone `// [STROJENIE]`
 - [ ] **Q2, Q3 i Q4 przeniesione w §11 specu z „otwarte" do rozstrzygniętych**, z uzasadnieniem z sekcji Global Constraints tego planu
-- [ ] `docs/superpowers/plans/pierwszy-raport-balansu.txt` istnieje i jest powtarzalny
+- [ ] `docs/superpowers/plans/pierwszy-raport-balansu.txt` istnieje i jest powtarzalny w powyższym zakresie
 
 **Następna faza:** Faza 2 — warstwa renderu i sterowania. Plan powstaje **po** Fazie 0, bo to jej wynik rozstrzyga model kamery (Q1).
 
