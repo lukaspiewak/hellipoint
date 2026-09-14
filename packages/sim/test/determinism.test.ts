@@ -6,7 +6,12 @@ import type { Command } from '../src/sim/commands.js';
 
 const CONFIG = { rotationPeriod: 180, startingOre: 150 };
 
-function runScripted(seed: number, ticks: number): string {
+/**
+ * `withCommands = false` daje IDENTYCZNĄ pętlę step() bez żadnej komendy w kolejce —
+ * potrzebne, żeby odróżnić "hash różni się, bo komendy coś zmieniły" od "hash różni
+ * się, bo `oreRemaining` (seedowane z rozmieszczenia rudy) jest inne dla innego seeda".
+ */
+function runScripted(seed: number, ticks: number, withCommands = true): string {
   const planet = createPlanet({ seed });
   const sim = new Sim(planet, CONFIG);
 
@@ -18,11 +23,13 @@ function runScripted(seed: number, ticks: number): string {
     .map((c) => c.id);
   const [c1, c2] = [buildable[0], buildable[1]];
 
-  const script: Array<[number, Command]> = [
-    [10, { kind: 'BUILD', cellId: c1, type: 'PYLON' }],
-    [25, { kind: 'BUILD', cellId: c2, type: 'BARRICADE' }],
-    [40, { kind: 'DEMOLISH', cellId: c1 }],
-  ];
+  const script: Array<[number, Command]> = withCommands
+    ? [
+        [10, { kind: 'BUILD', cellId: c1, type: 'PYLON' }],
+        [25, { kind: 'BUILD', cellId: c2, type: 'BARRICADE' }],
+        [40, { kind: 'DEMOLISH', cellId: c1 }],
+      ]
+    : [];
   for (let t = 0; t < ticks; t++) {
     for (const [at, cmd] of script) if (at === t) sim.enqueue(cmd);
     sim.step();
@@ -35,8 +42,17 @@ describe('determinizm (§7.2)', () => {
     expect(runScripted(2026, 1200)).toBe(runScripted(2026, 1200));
   });
 
-  it('inny seed ⇒ inny hash', () => {
+  // UWAGA na zakres tego testu: NIE dowodzi, że komendy/step() biorą udział w hashu —
+  // `stateHash` hashuje `oreRemaining`, a to jest seedowane wprost z rozmieszczenia rudy
+  // (`planet.cells[].oreCapacity`), różnego dla różnych seedów już w `createState`,
+  // zanim jakikolwiek `step()` się wykona. Dowód, że komendy naprawdę zmieniają hash,
+  // jest w teście `komendy zmieniają hash` niżej.
+  it('różne ziarno ⇒ różny hash — już od stanu startowego (oreRemaining), niezależnie od komend czy step()', () => {
     expect(runScripted(2026, 600)).not.toBe(runScripted(2027, 600));
+  });
+
+  it('komendy zmieniają hash: ten sam seed i liczba ticków, z komendami vs. bez komend w kolejce, dają różny hash', () => {
+    expect(runScripted(2026, 1200, true)).not.toBe(runScripted(2026, 1200, false));
   });
 
   it('czas symulacji wynika wyłącznie z liczby ticków, nie z zegara', () => {
@@ -44,6 +60,30 @@ describe('determinizm (§7.2)', () => {
     for (let i = 0; i < 20; i++) sim.step();
     expect(sim.elapsedSeconds).toBeCloseTo(1, 12);
     expect(sim.state.tick).toBe(20);
+  });
+});
+
+/**
+ * `pending` w Sim to zwykła tablica z push + for...of — poprawne dziś tylko dlatego,
+ * że nikt tego nie zmienił. Faza 5 będzie polegać na kolejności FIFO przy replayu
+ * komend z sieci, więc przyszła zmiana struktury kolejki mogłaby złamać ten kontrakt
+ * niewidocznie, gdyby nic go nie pilnowało.
+ */
+describe('kolejność komend w jednym ticku', () => {
+  it('dwie komendy dotykające tej samej komórki w tym samym ticku stosowane są w kolejności enqueue (FIFO) — wygrywa PIERWSZA, nie druga', () => {
+    const planet = createPlanet({ seed: 4 });
+    const target = planet.cells.find(
+      (c) => c.cellType === 'HEXAGON' && c.oreCapacity === 0 && c.id !== planet.startCell,
+    )!.id;
+    const sim = new Sim(planet, CONFIG);
+
+    sim.enqueue({ kind: 'BUILD', cellId: target, type: 'PYLON' });
+    sim.enqueue({ kind: 'BUILD', cellId: target, type: 'BARRICADE' });
+    sim.step();
+
+    // Gdyby kolejność była odwrócona (albo niezdeterminowana), na komórce
+    // stanąłby BARRICADE — druga komenda — a nie PYLON, pierwsza.
+    expect(sim.state.buildings[target]).toMatchObject({ type: 'PYLON' });
   });
 });
 
