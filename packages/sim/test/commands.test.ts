@@ -74,4 +74,12 @@ describe('applyCommand', () => {
     applyCommand(s, { kind: 'DEMOLISH', cellId: planet.startCell });
     expect(s.buildings[planet.startCell]).not.toBeNull();
   });
+
+  it('DEMOLISH z cellId poza zakresem (ujemny, za duży, NaN) jest po cichu ignorowany, nie rzuca — komendy przychodzą z sieci', () => {
+    const s = createState(planet, 100);
+    for (const badCellId of [-1, planet.cells.length + 999, NaN]) {
+      expect(() => applyCommand(s, { kind: 'DEMOLISH', cellId: badCellId })).not.toThrow();
+    }
+    expect(s.ore).toBe(100);
+  });
 });

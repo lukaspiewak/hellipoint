@@ -39,7 +39,10 @@ export function applyCommand(s: SimState, cmd: Command): void {
     }
     case 'DEMOLISH': {
       const b = s.buildings[cmd.cellId];
-      if (b === null || b.type === 'CORE') return;
+      // `== null`, nie `===`: cellId poza zakresem (ujemny, za duży, NaN) daje
+      // `undefined` z gęstej tablicy, nie `null` — komendy przychodzą z zewnątrz,
+      // więc obie wartości muszą być traktowane jak "nic tu nie ma do zburzenia".
+      if (b == null || b.type === 'CORE') return;
       s.ore += Math.floor(BUILDINGS[b.type].costOre / 2); // [STROJENIE] zwrot 50 %
       s.buildings[cmd.cellId] = null;
       return;
