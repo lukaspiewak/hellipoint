@@ -20,10 +20,14 @@ describe('spacingCv', () => {
     expect(spacingCv(buildDual(buildGeodesic(4)))).toBe(spacingCv(buildDual(buildGeodesic(4))));
   });
 
-  it('siatka idealnie regularna miałaby zerowy rozrzut — dwudziestościan bazowy jest taki', () => {
-    // Przy frequency 1 wszystkie krawędzie dwudziestościanu są równe z konstrukcji,
-    // więc rozrzut musi być numerycznie zerowy. To kalibruje samą metrykę:
-    // gdyby liczyła coś innego niż odległości środek–sąsiad, tu by nie wyszło zero.
+  it('na idealnie regularnej siatce (dwudziestościan) zwraca zero — test wiarygodności', () => {
+    // Frequency 1 to regularny dwudziestościan (vertex- i edge-transitive), więc każda
+    // metryka odstępów powinna zwracać zero. Test ten to wiarygodność: łapie niszczące błędy
+    // w implementacji (asymetrię, skalowanie, niespójne wyliczanie). Ale nie dowodzi, że ta
+    // konkretna formuła to dokładnie odległości środek–sąsiad — na tej siatce wiele rozsądnych
+    // metryk równie dobrze daje zero (np. edge CV, center-to-corner CV). Prawdziwą regresji dla
+    // tożsamości metryki broni pinowana wartość przy frequency 12, gdzie zmiana formuły
+    // wyskoczy poza tolerancję toBeCloseTo(…, 3).
     expect(spacingCv(buildDual(buildGeodesic(1)))).toBeCloseTo(0, 9);
   });
 });

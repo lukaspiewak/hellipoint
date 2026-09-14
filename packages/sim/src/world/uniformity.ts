@@ -32,7 +32,7 @@ export function spacingCv(dual: DualMesh): number {
   return coefficientOfVariation(samples);
 }
 
-/** Współczynnik zmienności pól komórek. Frequency 12: 0,1330. */
+/** Współczynnik zmienności pól komórek (suma planarnych trójkątów cięciw od środka). Frequency 12: 0,1330. */
 export function areaCv(dual: DualMesh): number {
   const areas: number[] = [];
   for (let v = 0; v < dual.centers.length; v++) {
