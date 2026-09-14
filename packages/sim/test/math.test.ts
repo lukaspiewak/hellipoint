@@ -69,6 +69,42 @@ describe('Rng', () => {
     const p = new Rng(42);
     expect(p.fork(STREAM.ORE).nextUint32()).not.toBe(p.fork(STREAM.START).nextUint32());
   });
+
+  it('getState/fromState: generator przywrócony z migawki kontynuuje IDENTYCZNĄ sekwencję', () => {
+    const original = new Rng(2024);
+    // Kilka wywołań PRZED migawką — migawka ma łapać bieżący stan generatora,
+    // nie tylko seed, więc test musiałby wykryć implementację, która o tym zapomina.
+    for (let i = 0; i < 7; i++) original.nextUint32();
+
+    const snapshot = original.getState();
+    const continuedFromOriginal = Array.from({ length: 20 }, () => original.nextUint32());
+
+    const restored = Rng.fromState(snapshot);
+    const continuedFromRestored = Array.from({ length: 20 }, () => restored.nextUint32());
+
+    expect(continuedFromRestored).toEqual(continuedFromOriginal);
+  });
+
+  it('stan przetrwa JSON.stringify/JSON.parse — to jest cały sens tego kształtu', () => {
+    const original = new Rng(777);
+    for (let i = 0; i < 3; i++) original.nextUint32();
+
+    const roundTripped = JSON.parse(JSON.stringify(original.getState()));
+    const restored = Rng.fromState(roundTripped);
+
+    const expected = Array.from({ length: 10 }, () => original.nextUint32());
+    const actual = Array.from({ length: 10 }, () => restored.nextUint32());
+    expect(actual).toEqual(expected);
+  });
+
+  it('fork() na przywróconym generatorze zgadza się z fork() na oryginale w tym samym punkcie', () => {
+    const original = new Rng(55);
+    for (let i = 0; i < 12; i++) original.nextUint32();
+
+    const restored = Rng.fromState(original.getState());
+
+    expect(restored.fork(STREAM.WAVES).nextUint32()).toBe(original.fork(STREAM.WAVES).nextUint32());
+  });
 });
 
 describe('vec3', () => {
