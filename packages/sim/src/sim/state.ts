@@ -32,6 +32,27 @@ export interface Unit {
   exposure: number;
 }
 
+/**
+ * NIEZMIENNIK SERIALIZOWALNOŚCI (§7.2, plan Fazy 1B pkt. „granica serializowalności"):
+ * `SimState` (i wszystko w nim zagnieżdżone, teraz i w przyszłych fazach) musi przejść
+ * bez strat przez `JSON.parse(JSON.stringify(...))`. Konkretnie nigdy nie wolno tu
+ * trzymać:
+ *   - `Infinity` / `-Infinity` / `NaN` — `JSON.stringify` zamienia WSZYSTKIE TRZY na
+ *     `null`, nieodróżnialnie od siebie, a `null` w arytmetyce zachowuje się jak `0`
+ *     (`null + 5 === 5`) — czyli "nieosiągalne"/"brak celu" po cichu staje się
+ *     "osiągalne w zero kroków", bez żadnego błędu w miejscu, gdzie to się stało;
+ *   - `TypedArray` (`Float64Array`, `Int32Array`, ...) — serializuje się jako zwykły
+ *     obiekt `{ "0": ..., "1": ... }`, nie jako tablica, i round-trip go nie odtwarza;
+ *   - `Map` / `Set` — serializują się jako `{}`, tracąc całą zawartość po cichu;
+ *   - surowe wyjście BFS/Dijkstry (np. `FlowField.distance`/`FlowField.next` z
+ *     `flowfield.ts`, cokolwiek z `network.ts`) — te struktury z ZAŁOŻENIA niosą
+ *     `Infinity` dla „brak celu"/„nieosiągalny" i mają być PRZELICZANE co tick z
+ *     `SimState`, nie trzymane w nim jako pole. To dotyczy też pól, które Faza 1C
+ *     dopiero doda (`units`, fale, `evacCharge`, `RngState`) i wszystkiego, co
+ *     kiedykolwiek uzna się za warte cache'owania.
+ * Strażnik: `state.test.ts` uruchamia skryptowaną symulację przez kilkaset ticków i
+ * asercjuje, że `stateHash` PRZED i PO round-tripie JSON są identyczne.
+ */
 export interface SimState {
   tick: number;
   /** Niemutowalna. Wszystko, co się zmienia, żyje obok niej. */

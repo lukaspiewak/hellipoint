@@ -35,6 +35,17 @@ describe('sunDirection', () => {
     expect(() => sunDirection(0, Infinity)).toThrow(RangeError);
     expect(() => sunDirection(0, -Infinity)).toThrow(RangeError);
   });
+
+  // Regresja na Important #3 z przeglądu końcowego Fazy 1B: odłożone wcześniej na
+  // fałszywej przesłance "nieskończoność da głośny NaN". Zmierzone: nie daje — `lightAt`
+  // robi `d > 0 ? d : 0`, a `NaN > 0` jest `false`, więc CAŁA planeta cicho ląduje na
+  // dokładnym 0.0 (trwała ciemność, zero komórek z NaN) — bajt w bajt ten sam tryb
+  // awarii co `rotationPeriod = 0`, który kosztował tę fazę dwie rundy.
+  it('wyrzuca błąd dla elapsedSeconds NaN lub nieskończonego', () => {
+    expect(() => sunDirection(NaN, T)).toThrow(RangeError);
+    expect(() => sunDirection(Infinity, T)).toThrow(RangeError);
+    expect(() => sunDirection(-Infinity, T)).toThrow(RangeError);
+  });
 });
 
 describe('lightAt', () => {

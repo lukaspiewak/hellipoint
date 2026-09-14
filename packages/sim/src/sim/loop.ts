@@ -43,7 +43,14 @@ export class Sim {
   enqueue(cmd: Command): void { this.pending.push(cmd); }
 
   step(): void {
-    if (this.s.phase !== 'RUNNING') return;
+    if (this.s.phase !== 'RUNNING') {
+      // Drenuj też tutaj, nie tylko w ścieżce RUNNING poniżej — inaczej kolejka rośnie
+      // bez ograniczeń, gdy komendy wciąż napływają po końcu meczu (Faza 5: klient
+      // może spamować zakończony mecz; bez tego 1000 wysłanych komend to 1000
+      // rezydujących w pamięci, bez końca).
+      this.pending.length = 0;
+      return;
+    }
 
     // 1. Komendy — zawsze pierwsze, żeby tick widział świat już zmieniony.
     for (const cmd of this.pending) applyCommand(this.s, cmd);
@@ -60,7 +67,7 @@ export class Sim {
     updateEconomy(this.s);
 
     // TUTAJ dopinane są kolejne systemy, w tej kolejności:
-    //   energia → ekonomia → pola przepływu → jednostki → walka → spalanie → fale → warunki końca
+    //   pola przepływu → jednostki → walka → spalanie → fale → warunki końca
 
     this.s.tick++;
   }

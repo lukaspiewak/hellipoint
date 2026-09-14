@@ -3,6 +3,8 @@ import { vec3 } from '../src/math/vec3.js';
 import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS } from '../src/sim/state.js';
 import { stateHash } from '../src/sim/hash.js';
+import { Sim } from '../src/sim/loop.js';
+import type { Command } from '../src/sim/commands.js';
 
 const planet = createPlanet({ seed: 1 });
 
@@ -170,5 +172,42 @@ describe('stateHash', () => {
     const variant = createState(planet, 150);
     variant.phase = 'VICTORY';
     expect(stateHash(variant)).not.toBe(h);
+  });
+});
+
+/**
+ * Regresja na Important #4 z przeglądu końcowego Fazy 1B: plan wymagał albo sentinela
+ * `-1` zamiast `Infinity`, albo spisanej twardej reguły "wyjście BFS/Dijkstry nigdy nie
+ * wchodzi do SimState". Nie wdrożono ŻADNEGO — kod jest dziś czysty (ten test przechodzi
+ * bez zmian w produkcyjnym kodzie), ale nic tego nie asercjowało, a Faza 1C to właśnie
+ * moment, w którym `SimState` rośnie (jednostki, fale, `evacCharge`, `RngState`) i w
+ * którym pola przepływu zaczynają wyglądać na warte cache'owania. Ten test zamienia
+ * założenie w strażnika: tani dziś, bo nic nie naprawia, ale łapie regresję jutro.
+ */
+describe('niezmiennik serializowalności (round-trip JSON)', () => {
+  it('stateHash(JSON.parse(JSON.stringify(state))) === stateHash(state) po kilkuset tickach ze zbudowanymi budynkami', () => {
+    const sim = new Sim(planet, { rotationPeriod: 180, startingOre: 5000 });
+
+    // Komórki wybierane z planety, nie zaszyte na sztywno — patrz uzasadnienie w
+    // determinism.test.ts. Kilka BUILD/DEMOLISH, żeby `buildings`/`ore`/`storedEnergy`
+    // faktycznie się zapełniły: `createState` sam z siebie daje puste `buildings`, co
+    // sprawiłoby, że round-trip pustego stanu "przechodzi" nic nie sprawdzając.
+    const buildable = planet.cells
+      .filter((c) => c.cellType === 'HEXAGON' && c.oreCapacity === 0 && c.id !== planet.startCell)
+      .map((c) => c.id);
+    const script: Array<[number, Command]> = [
+      [5, { kind: 'BUILD', cellId: buildable[0], type: 'PYLON' }],
+      [10, { kind: 'BUILD', cellId: buildable[1], type: 'SOLAR_PANEL' }],
+      [60, { kind: 'BUILD', cellId: buildable[2], type: 'BARRICADE' }],
+      [150, { kind: 'DEMOLISH', cellId: buildable[0] }],
+    ];
+    for (let t = 0; t < 400; t++) {
+      for (const [at, cmd] of script) if (at === t) sim.enqueue(cmd);
+      sim.step();
+    }
+
+    const before = stateHash(sim.state);
+    const roundTripped = JSON.parse(JSON.stringify(sim.state));
+    expect(stateHash(roundTripped)).toBe(before);
   });
 });

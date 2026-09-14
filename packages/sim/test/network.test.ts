@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createPlanet } from '../src/world/planet.js';
 import { createState } from '../src/sim/state.js';
 import { applyCommand } from '../src/sim/commands.js';
+import { BUILDINGS } from '../src/sim/defs.js';
 import { connectedToCore } from '../src/sim/network.js';
 import { multiSourceDistances } from '../src/world/graph.js';
 
@@ -35,9 +36,17 @@ function cellNear(from: number, steps: number, minFromStart: number): number {
   throw new Error(`brak heksa ${steps} kroków od ${from} i dalej niż ${minFromStart} od startu`);
 }
 
+/**
+ * CORE ma `playerBuildable: false` (Important #1, przegląd końcowy Fazy 1B), więc
+ * `applyCommand` go już nie postawi. `connectedToCore` liczy propagację OD CORE, więc
+ * niemal każdy test w tym pliku go potrzebuje jako scaffolding — stawiamy go tak samo,
+ * jak zrobi to `Sim` w Fazie 1C: bezpośrednim zapisem do stanu.
+ */
 function withCore() {
   const s = createState(planet, 5000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -58,6 +67,28 @@ describe('connectedToCore', () => {
     const far = cellAtDistance(7);
     applyCommand(s, { kind: 'BUILD', cellId: far, type: 'BATTERY' });
     expect(connectedToCore(s)[far]).toBe(false);
+  });
+
+  // Minor z przeglądu końcowego Fazy 1B: powyższy test próbkuje odległość 7 wobec
+  // promienia 3 — spory margines, który nie złapałby off-by-one w warunku pętli BFS
+  // (`step <= radius` zamiast `step < radius` poszerzyłby zasięg do 4, a ŻADEN
+  // dotychczasowy test by tego nie oblał). Poniższe dwa testy pinują samą GRANICĘ z obu
+  // stron. KAŻDY stawia dokładnie JEDEN budynek na świeżym `withCore()` — w odróżnieniu
+  // od pierwszej (nieudanej) wersji tego testu, która stawiała BATTERY (connectionRadius
+  // 2) na OBU odległościach naraz i przez to łączyła odległość 4 z CORE pośrednio,
+  // przez budynek na odległości 3, zamiast testować wyłącznie promień samego CORE.
+  it('na granicy zasięgu (odległość 3, promień CORE też 3) budynek JEST połączony', () => {
+    const s = withCore();
+    const atLimit = cellAtDistance(3);
+    applyCommand(s, { kind: 'BUILD', cellId: atLimit, type: 'BATTERY' });
+    expect(connectedToCore(s)[atLimit]).toBe(true);
+  });
+
+  it('o jeden krok POZA granicą zasięgu (odległość 4) budynek NIE jest połączony', () => {
+    const s = withCore();
+    const justPast = cellAtDistance(4);
+    applyCommand(s, { kind: 'BUILD', cellId: justPast, type: 'BATTERY' });
+    expect(connectedToCore(s)[justPast]).toBe(false);
   });
 
   it('pylon przedłuża sieć', () => {

@@ -4,7 +4,7 @@ import { createState } from '../src/sim/state.js';
 import { applyCommand } from '../src/sim/commands.js';
 import { buildAllFlowFields, buildFlowField } from '../src/sim/flowfield.js';
 import { MinHeap } from '../src/sim/heap.js';
-import { ENEMIES } from '../src/sim/defs.js';
+import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
 import { multiSourceDistances } from '../src/world/graph.js';
 
 const planet = createPlanet({ seed: 41 });
@@ -49,9 +49,17 @@ describe('MinHeap', () => {
   });
 });
 
+/**
+ * CORE ma `playerBuildable: false` (Important #1, przegląd końcowy Fazy 1B), więc
+ * `applyCommand` go już nie postawi. Pola przepływu liczą się OD CORE (priorytet
+ * `'CORE'`), więc niemal każdy test w tym pliku go potrzebuje jako scaffolding —
+ * stawiamy go tak samo, jak zrobi to `Sim` w Fazie 1C: bezpośrednim zapisem do stanu.
+ */
 function withCore() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -99,6 +107,20 @@ describe('buildFlowField', () => {
     applyCommand(s, { kind: 'BUILD', cellId: target, type: 'BARRICADE' });
     const walled = buildFlowField(s, 'CORE', ENEMIES.ARMOR.dps);
     expect(walled.distance[target]).toBeGreaterThan(empty.distance[target]);
+  });
+
+  // Minor z przeglądu końcowego Fazy 1B: hp ujemny (przejściowy stan między "obrażenia
+  // zadane" i "budynek usunięty" w walce Fazy 1C) łamał nieujemność wag Dijkstry.
+  // Zmierzone przed poprawką: hp = -500, dps = 50 dawało distance = -9.
+  it('hp ujemny na budynku jest obcinany do zera, nie ujemnego kosztu krawędzi', () => {
+    const s = withCore();
+    const target = planet.cells[planet.startCell].neighbors[0];
+    applyCommand(s, { kind: 'BUILD', cellId: target, type: 'BARRICADE' });
+    s.buildings[target]!.hp = -500;
+
+    const f = buildFlowField(s, 'CORE', 50);
+    // Sąsiad celu (distance 0) z obciętym kosztem wejścia = 1: 1 + max(0,-500)/50 = 1.
+    expect(f.distance[target]).toBe(1);
   });
 
   it('wróg o wyższym DPS wycenia ten sam mur taniej', () => {

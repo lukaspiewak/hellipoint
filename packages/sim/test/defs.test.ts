@@ -72,6 +72,18 @@ describe('BUILDINGS', () => {
       }
     }
   });
+
+  // Regresja na Important #1 z przeglądu końcowego Fazy 1B: `canBuild` polega na tym
+  // polu, żeby odrzucić BUILD CORE niezależnie od komórki/rudy. Gdyby ktoś kiedyś dodał
+  // jedenasty typ budynku i zapomniał ustawić `playerBuildable`, ten test by to złapał —
+  // podobnie jak istniejący test `energyInfrastructure` niżej.
+  it('playerBuildable przypisania są poprawne: CORE jest jedynym wyjątkiem', () => {
+    const notPlayerBuildable = (Object.entries(BUILDINGS)
+      .filter(([_, def]) => !def.playerBuildable)
+      .map(([type]) => type)
+      .sort());
+    expect(notPlayerBuildable).toEqual(['CORE']);
+  });
 });
 
 describe('BROWNOUT_ORDER', () => {
@@ -115,5 +127,17 @@ describe('ENEMIES', () => {
     expect(ENEMIES.SWARM.targetPriority).toBe('NEAREST_BUILDING');
     expect(ENEMIES.ARMOR.targetPriority).toBe('CORE');
     expect(ENEMIES.DISRUPTOR.targetPriority).toBe('ENERGY_INFRASTRUCTURE');
+  });
+
+  // Minor z przeglądu końcowego Fazy 1B: `buildAllFlowFields` RZUCA, jeśli którekolwiek
+  // `ENEMIES[*].dps` jest niedodatnie lub nieskończone (straż `attackerDps` w
+  // flowfield.ts, Task 8) — ale nic tego nie pinowało jako oczekiwania na danych. Bez tej
+  // asercji przyszła zmiana balansu (np. wróg wsparcia z dps = 0) zamieniłaby edycję
+  // danych w rzucający się co tick runtime error, zamiast w czytelny fail testu danych.
+  it('dps jest dodatni i skończony dla każdego typu wroga', () => {
+    for (const def of Object.values(ENEMIES)) {
+      expect(Number.isFinite(def.dps)).toBe(true);
+      expect(def.dps).toBeGreaterThan(0);
+    }
   });
 });

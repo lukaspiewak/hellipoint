@@ -37,6 +37,17 @@ export interface BuildingDef {
   targeting: 'NONE' | 'SINGLE' | 'AOE';
   /** Czy budynek liczy się jako cel dla DISRUPTOR-a (§4.5). */
   energyInfrastructure: boolean;
+  /**
+   * Czy `canBuild`/`applyCommand` (czyli KOMENDY — z sieci w Fazie 5) wolno w ogóle
+   * postawić ten typ. `false` wyłącznie dla CORE: symulacja sama go zasiewa przy
+   * starcie (bezpośrednim zapisem do `SimState`, nie przez komendę), gracz nigdy.
+   * Bez tej flagi `CORE.costOre = 0` plus brak innej blokady w `canBuild` pozwalały
+   * postawić dowolną liczbę darmowych CORE na dowolnej pustej komórce — `CELL_OCCUPIED`
+   * chroni tylko TĘ SAMĄ komórkę przed drugim CORE, nie planetę przed setnym.
+   * Nazwa celowo `playerBuildable`, nie `unique`: nie chodzi o "co najwyżej jeden",
+   * tylko o to, że gracz (i każda komenda z sieci) nie stawia go wcale.
+   */
+  playerBuildable: boolean;
 }
 
 // Wszystkie liczby poniżej: [STROJENIE] — wyznaczy je headless runner w Fazie 3.
@@ -44,56 +55,56 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   CORE: {
     hp: 1000, costOre: 0, energyDrain: 0, energyOutput: { kind: 'CONSTANT', rate: 10 },
     energyStorage: 200, allowedCells: 'HEXAGON', connectionRadius: 3, range: 0,
-    dps: 0, targeting: 'NONE', energyInfrastructure: true,
+    dps: 0, targeting: 'NONE', energyInfrastructure: true, playerBuildable: false,
   },
   BARRICADE: {
     // Tani blok czysto-HP. Bez niego mechanika blokowania (D3) nie ma czym operować,
     // bo najtańszym blokerem byłby PYLON, który jest jednocześnie szkieletem sieci.
     hp: 150, costOre: 8, energyDrain: 0, energyOutput: { kind: 'NONE' },
     energyStorage: 0, allowedCells: 'HEXAGON', connectionRadius: 0, range: 0,
-    dps: 0, targeting: 'NONE', energyInfrastructure: false,
+    dps: 0, targeting: 'NONE', energyInfrastructure: false, playerBuildable: true,
   },
   PYLON: {
     hp: 80, costOre: 15, energyDrain: 0.5, energyOutput: { kind: 'NONE' },
     energyStorage: 0, allowedCells: 'HEXAGON', connectionRadius: 3, range: 0,
-    dps: 0, targeting: 'NONE', energyInfrastructure: true,
+    dps: 0, targeting: 'NONE', energyInfrastructure: true, playerBuildable: true,
   },
   SOLAR_PANEL: {
     // peakRate podniesiony wobec draftu: średnia z saturate(cos) po obrocie
     // to 1/π ≈ 0,318, a nie 0,5 (§5.1).
     hp: 100, costOre: 25, energyDrain: 0, energyOutput: { kind: 'SOLAR', peakRate: 40 },
     energyStorage: 0, allowedCells: 'HEXAGON', connectionRadius: 1, range: 0,
-    dps: 0, targeting: 'NONE', energyInfrastructure: true,
+    dps: 0, targeting: 'NONE', energyInfrastructure: true, playerBuildable: true,
   },
   BATTERY: {
     hp: 150, costOre: 40, energyDrain: 0, energyOutput: { kind: 'NONE' },
     energyStorage: 600, allowedCells: 'HEXAGON', connectionRadius: 2, range: 0,
-    dps: 0, targeting: 'NONE', energyInfrastructure: true,
+    dps: 0, targeting: 'NONE', energyInfrastructure: true, playerBuildable: true,
   },
   EXTRACTOR: {
     hp: 120, costOre: 30, energyDrain: 5, energyOutput: { kind: 'NONE' },
     energyStorage: 0, allowedCells: 'ORE_HEXAGON', connectionRadius: 1, range: 0,
-    dps: 0, targeting: 'NONE', energyInfrastructure: false,
+    dps: 0, targeting: 'NONE', energyInfrastructure: false, playerBuildable: true,
   },
   KINETIC_TURRET: {
     hp: 200, costOre: 50, energyDrain: 3, energyOutput: { kind: 'NONE' },
     energyStorage: 0, allowedCells: 'HEXAGON', connectionRadius: 1, range: 2,
-    dps: 25, targeting: 'SINGLE', energyInfrastructure: false,
+    dps: 25, targeting: 'SINGLE', energyInfrastructure: false, playerBuildable: true,
   },
   LASER_TURRET: {
     hp: 250, costOre: 100, energyDrain: 12, energyOutput: { kind: 'NONE' },
     energyStorage: 0, allowedCells: 'HEXAGON', connectionRadius: 1, range: 3,
-    dps: 60, targeting: 'AOE', energyInfrastructure: false,
+    dps: 60, targeting: 'AOE', energyInfrastructure: false, playerBuildable: true,
   },
   GEOTHERMAL_CAP: {
     hp: 300, costOre: 75, energyDrain: 0, energyOutput: { kind: 'CONSTANT', rate: 25 },
     energyStorage: 0, allowedCells: 'PENTAGON', connectionRadius: 2, range: 0,
-    dps: 0, targeting: 'NONE', energyInfrastructure: true,
+    dps: 0, targeting: 'NONE', energyInfrastructure: true, playerBuildable: true,
   },
   EVACUATION_MODULE: {
     hp: 2000, costOre: 300, energyDrain: 0, energyOutput: { kind: 'NONE' },
     energyStorage: 0, allowedCells: 'HEXAGON', connectionRadius: 2, range: 0,
-    dps: 0, targeting: 'NONE', energyInfrastructure: true,
+    dps: 0, targeting: 'NONE', energyInfrastructure: true, playerBuildable: true,
   },
 };
 

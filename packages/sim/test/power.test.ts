@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS } from '../src/sim/state.js';
 import { applyCommand } from '../src/sim/commands.js';
+import { BUILDINGS } from '../src/sim/defs.js';
 import { updatePower } from '../src/sim/power.js';
 import { multiSourceDistances } from '../src/world/graph.js';
 
@@ -54,9 +55,17 @@ function nearbyHexesForPylons(count: number): number[] {
   return out;
 }
 
+/**
+ * CORE ma `playerBuildable: false` (Important #1, przegląd końcowy Fazy 1B), więc
+ * `applyCommand` go już nie postawi. Prawie każdy test w tym pliku potrzebuje go jako
+ * scaffolding (`updatePower` liczy się OD CORE przez `connectedToCore`) — stawiamy go
+ * tak samo, jak zrobi to `Sim` w Fazie 1C: bezpośrednim zapisem do stanu.
+ */
 function base() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -64,6 +73,21 @@ const fullLight = new Float32Array(planet.cells.length).fill(1);
 const noLight = new Float32Array(planet.cells.length).fill(0);
 
 describe('updatePower', () => {
+  // Regresja na Important #2 z przeglądu końcowego Fazy 1B: bez tej straży `light[i]`
+  // poza końcem tablicy dawało `undefined`, a `peakRate * undefined` NaN, który przez
+  // Math.max/Math.min zatruwał `storedEnergy` NA ZAWSZE — żaden kolejny poprawny tick
+  // tego nie leczył, a serializacja zamieniała NaN w null, czyli w arytmetyce w 0.
+  it('rzuca RangeError, gdy `light.length` różni się od `s.buildings.length`, nazywając obie długości', () => {
+    const s = base();
+    const tooShort = new Float32Array(planet.cells.length - 1);
+    expect(() => updatePower(s, tooShort)).toThrow(RangeError);
+    expect(() => updatePower(s, tooShort)).toThrow(new RegExp(String(tooShort.length)));
+    expect(() => updatePower(s, tooShort)).toThrow(new RegExp(String(s.buildings.length)));
+
+    const tooLong = new Float32Array(planet.cells.length + 1);
+    expect(() => updatePower(s, tooLong)).toThrow(RangeError);
+  });
+
   it('CORE sam produkuje 10/s i zasila się sam', () => {
     const s = base();
     const r = updatePower(s, noLight);

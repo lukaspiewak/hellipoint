@@ -88,6 +88,34 @@ describe('kolejność komend w jednym ticku', () => {
 });
 
 /**
+ * Minor z przeglądu końcowego Fazy 1B: `step()` wracał wcześniej PRZED
+ * `this.pending.length = 0`, gdy `phase !== 'RUNNING'` — kolejka rosła bez ograniczeń.
+ * Zmierzone przed poprawką: 1000 komend wysłanych, 1000 wciąż rezydujących. Nieszkodliwe
+ * dziś (nic tak nie woła `Sim`), realne w Fazie 5, gdzie klient może nadal wysyłać
+ * komendy po zakończeniu meczu.
+ */
+describe('drenowanie kolejki komend poza fazą RUNNING', () => {
+  it('step() opróżnia kolejkę nawet gdy gra się skończyła, zamiast pozwolić jej rosnąć bez końca', () => {
+    const planet = createPlanet({ seed: 6 });
+    const sim = new Sim(planet, CONFIG);
+    const target = planet.cells.find(
+      (c) => c.cellType === 'HEXAGON' && c.oreCapacity === 0 && c.id !== planet.startCell,
+    )!.id;
+
+    sim.state.phase = 'VICTORY'; // mecz zakończony
+    for (let i = 0; i < 1000; i++) sim.enqueue({ kind: 'BUILD', cellId: target, type: 'PYLON' });
+    sim.step(); // no-op z powodu fazy — ale MUSI zdrenować kolejkę, nie tylko pominąć krok
+
+    sim.state.phase = 'RUNNING'; // gdyby kolejka przeciekła, WŁAŚNIE TEN krok by ją zużył
+    sim.step();
+
+    // Skoro kolejka została opróżniona podczas kroku no-op, żadna z tych 1000 komend
+    // nigdy się nie zastosowała: budynek nie powstał.
+    expect(sim.state.buildings[target]).toBeNull();
+  });
+});
+
+/**
  * `rotationPeriod` zły przepływa do `terminatorSpeedWorld`/`terminatorSpeedCells`/
  * `terminatorCrossingTime` w scale.ts, które dzielą przez nie bez żadnej straży —
  * zdegenerowana wartość dałaby ciche Infinity/0 dopiero w Fazie 1C, bez błędu

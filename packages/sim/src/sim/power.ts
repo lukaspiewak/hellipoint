@@ -16,6 +16,16 @@ export interface PowerReport {
 }
 
 export function updatePower(s: SimState, light: Float32Array): PowerReport {
+  // Bez tej straży `light[i]` poza końcem tablicy daje `undefined`, `peakRate * undefined`
+  // daje `NaN`, a `Math.max(0, Math.min(capacity, NaN))` to NaN — jedno takie wywołanie
+  // zatruwa `storedEnergy` NA ZAWSZE (Math.min/Math.max propagują NaN), więc żaden
+  // KOLEJNY poprawny tick tego już nie wyleczy. Serializuje się potem jako `null`, a
+  // `null` w arytmetyce to `0` — czyli cichy, trwały spadek do zera bez śladu błędu.
+  if (light.length !== s.buildings.length) {
+    throw new RangeError(
+      `updatePower: light.length (${light.length}) must equal s.buildings.length (${s.buildings.length})`,
+    );
+  }
   const connected = connectedToCore(s);
 
   let supply = 0;

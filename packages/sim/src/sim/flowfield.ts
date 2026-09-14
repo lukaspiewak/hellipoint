@@ -89,9 +89,16 @@ function isTarget(s: SimState, cellId: number, priority: Priority): boolean {
   }
 }
 
-/** 1 krok za przejście + szacowany czas rozbicia budynku stojącego na komórce. */
+/**
+ * 1 krok za przejście + szacowany czas rozbicia budynku stojącego na komórce.
+ * `Math.max(0, b.hp)`, NIE surowe `b.hp`: Faza 1C odejmuje obrażenia od `hp` w walce,
+ * więc między "obrażenia zadane" a "budynek usunięty" `hp` może być przejściowo ujemne.
+ * Bez obcięcia ujemny koszt krawędzi łamie założenie Dijkstry o nieujemnych wagach —
+ * zmierzone: hp = -500, dps = 50 dawało dystans -9. Ten moduł ma być bezpieczny
+ * niezależnie od tego, w jakiej kolejności 1C ureguluje obrażenia i usuwanie budynków.
+ */
 function entryCost(s: SimState, cellId: number, attackerDps: number): number {
   const b = s.buildings[cellId];
   if (b === null) return 1;
-  return 1 + b.hp / attackerDps;
+  return 1 + Math.max(0, b.hp) / attackerDps;
 }

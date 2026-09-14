@@ -13,6 +13,14 @@ export function canBuild(s: SimState, cellId: number, type: BuildingType): Build
   if (s.buildings[cellId] !== null) return { ok: false, reason: 'CELL_OCCUPIED' };
 
   const def = BUILDINGS[type];
+  // CORE jest jedynym `playerBuildable: false` — symulacja go zasiewa bezpośrednim
+  // zapisem do stanu, nigdy przez komendę. Sprawdzane PRZED typem komórki/rudą, bo to
+  // fakt o samym TYPIE budynku, niezależny od tego, gdzie/za ile ktoś próbuje go postawić:
+  // bez tej klauzuli `CORE.costOre = 0` plus brak innej blokady pozwalały postawić
+  // dowolną liczbę darmowych CORE na dowolnej pustej komórce (`CELL_OCCUPIED` chroni
+  // tylko TĘ SAMĄ komórkę przed drugim CORE, nie planetę przed setnym).
+  if (!def.playerBuildable) return { ok: false, reason: 'NOT_PLAYER_BUILDABLE' };
+
   const typeOk =
     def.allowedCells === 'ANY' ||
     (def.allowedCells === 'HEXAGON' && cell.cellType === 'HEXAGON') ||
