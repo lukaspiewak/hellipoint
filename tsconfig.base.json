@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "declaration": true,
+    "sourceMap": true,
+    "skipLibCheck": true
+    // Decyzja zapisana: `noUncheckedIndexedAccess` celowo WYŁĄCZONE. Kod geometryczny to
+    // gęste indeksowanie tablic w pętlach o niezmiennych granicach; flaga wymusiłaby setki
+    // asercji `!`, które obniżają czytelność bardziej, niż podnoszą bezpieczeństwo.
+    // Rozważyć włączenie dla modułów regułowych w Fazie 1B.
+  }
+}
