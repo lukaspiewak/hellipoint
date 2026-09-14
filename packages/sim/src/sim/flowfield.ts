@@ -22,6 +22,15 @@ type Priority = EnemyDef['targetPriority'];
  *   • w MP nie da się zamurować gracza na głucho.
  */
 export function buildFlowField(s: SimState, priority: Priority, attackerDps: number): FlowField {
+  // `attackerDps <= 0` niepostrzeżenie robi `entryCost` = Infinity (podział przez 0 przy
+  // dodatnim hp), więc CORE otoczony pierścieniem staje się PRAWDZIWIE nieosiągalne —
+  // dokładnie porażka D3, którą ten moduł ma wykluczyć, tylko cicha. `Number.isFinite`,
+  // NIE `!(x > 0)` — to drugie przepuszcza Infinity (Infinity > 0 jest prawdziwe), co dawałoby
+  // odwrotnie zdegenerowany przypadek: każdy mur za darmo. Ten sam idiom co `sunDirection`
+  // w light.ts i konstruktor `Sim` w loop.ts.
+  if (!Number.isFinite(attackerDps) || attackerDps <= 0) {
+    throw new RangeError(`attackerDps must be positive and finite, got ${attackerDps}`);
+  }
   const cells = s.planet.cells;
   const distance = new Float64Array(cells.length).fill(Infinity);
   const next = new Int32Array(cells.length).fill(-1);
