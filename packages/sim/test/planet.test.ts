@@ -43,6 +43,18 @@ describe('createPlanet', () => {
     expect(createPlanet({ seed: 20260914 })).toEqual(planet);
   });
 
+  it('jawnie podane `undefined` dla opcjonalnego pola zachowuje się jak jego brak', () => {
+    // `PlanetOptions` nie ma `exactOptionalPropertyTypes`, więc `{ radius: undefined }`
+    // typuje się identycznie jak brak pola w ogóle — ale `{ ...DEFAULTS, ...opts }`
+    // rozróżniałoby te dwa przypadki w runtime (nadpisując domyślną wartość
+    // jawnym `undefined`). Dokładnie tak wygląda przekazanie dalej częściowo
+    // wypełnionej, opcjonalnej konfiguracji (np. przez Fazę 2 albo headless
+    // runner Fazy 1C) — musi dać ten sam wynik co pominięcie pola.
+    const baseline = createPlanet({ seed: 1 });
+    expect(createPlanet({ seed: 1, radius: undefined })).toEqual(baseline);
+    expect(createPlanet({ seed: 1, frequency: undefined })).toEqual(baseline);
+  });
+
   it('inny seed daje inny rozkład rudy', () => {
     const other = createPlanet({ seed: 777 });
     const oreA = planet.cells.filter((c) => c.oreCapacity > 0).map((c) => c.id);

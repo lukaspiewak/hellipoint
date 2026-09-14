@@ -50,7 +50,21 @@ const DEFAULTS = {
 } as const;
 
 export function createPlanet(opts: PlanetOptions): Planet {
-  const o = { ...DEFAULTS, ...opts };
+  // Rozwiązywane pole-po-polu, NIE `{ ...DEFAULTS, ...opts }`: `PlanetOptions` ma
+  // opcjonalne pola bez `exactOptionalPropertyTypes`, więc jawnie przekazane
+  // `{ radius: undefined }` (dokładnie tak woła Faza 2 rendererem/Faza 1C runnerem,
+  // przekazując dalej własną, częściowo wypełnioną konfigurację) nadpisałoby
+  // wartość z DEFAULTS, dając np. `radius === undefined` i ciche NaN we
+  // wszystkich `center`/`corner` zamiast rzucanego błędu.
+  const o = {
+    seed: opts.seed,
+    frequency: opts.frequency ?? DEFAULTS.frequency,
+    radius: opts.radius ?? DEFAULTS.radius,
+    oreClusters: opts.oreClusters ?? DEFAULTS.oreClusters,
+    oreClusterRadius: opts.oreClusterRadius ?? DEFAULTS.oreClusterRadius,
+    oreCapacityPerCell: opts.oreCapacityPerCell ?? DEFAULTS.oreCapacityPerCell,
+    minStartDistanceFromPentagon: opts.minStartDistanceFromPentagon ?? DEFAULTS.minStartDistanceFromPentagon,
+  };
   // Bez relaksacji — Task 5 zmierzył, że laplasjan na tej konstrukcji nic nie poprawia.
   const dual = buildDual(buildGeodesic(o.frequency));
   const rng = new Rng(o.seed);
