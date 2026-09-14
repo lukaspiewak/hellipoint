@@ -481,6 +481,7 @@ git commit -m "feat(sim): kształt stanu symulacji + hash FNV-1a do testów dete
 - Produces:
   - `type EnergyOutput = { kind: 'NONE' } | { kind: 'CONSTANT'; rate: number } | { kind: 'SOLAR'; peakRate: number }`
   - `function evaluateEnergyOutput(out: EnergyOutput, light: number): number`
+  - `type CellRequirement = 'ANY' | 'HEXAGON' | 'PENTAGON' | 'ORE_HEXAGON'`
   - `interface BuildingDef { … }`, `const BUILDINGS: Record<BuildingType, BuildingDef>`
   - `interface EnemyDef { … }`, `const ENEMIES: Record<EnemyType, EnemyDef>`
   - `const BROWNOUT_ORDER: BuildingType[]`
@@ -539,6 +540,32 @@ describe('BUILDINGS', () => {
       expect(def.connectionRadius).toBeLessThanOrEqual(6);
     }
   });
+
+  it('energyInfrastructure przypisania są poprawne', () => {
+    const infrastructure = (Object.entries(BUILDINGS)
+      .filter(([_, def]) => def.energyInfrastructure)
+      .map(([type]) => type)
+      .sort());
+    expect(infrastructure).toEqual([
+      'BATTERY', 'CORE', 'EVACUATION_MODULE', 'GEOTHERMAL_CAP', 'PYLON', 'SOLAR_PANEL',
+    ]);
+  });
+
+  it('spójność zakresu i celowania: range > 0 => targeting !== NONE', () => {
+    for (const def of Object.values(BUILDINGS)) {
+      if (def.range > 0) {
+        expect(def.targeting).not.toBe('NONE');
+      }
+    }
+  });
+
+  it('spójność uszkodzenia i zakresu: dps > 0 => range > 0', () => {
+    for (const def of Object.values(BUILDINGS)) {
+      if (def.dps > 0) {
+        expect(def.range).toBeGreaterThan(0);
+      }
+    }
+  });
 });
 
 describe('BROWNOUT_ORDER', () => {
@@ -576,6 +603,12 @@ describe('ENEMIES', () => {
   it('każdy typ ma inny priorytet celu', () => {
     const priorities = Object.values(ENEMIES).map((e) => e.targetPriority);
     expect(new Set(priorities).size).toBe(3);
+  });
+
+  it('targetPriority przypisania są poprawne', () => {
+    expect(ENEMIES.SWARM.targetPriority).toBe('NEAREST_BUILDING');
+    expect(ENEMIES.ARMOR.targetPriority).toBe('CORE');
+    expect(ENEMIES.DISRUPTOR.targetPriority).toBe('ENERGY_INFRASTRUCTURE');
   });
 });
 ```
@@ -730,7 +763,13 @@ export const ENEMIES: Record<EnemyType, EnemyDef> = {
 - [ ] **Step 4: Uruchom testy i commituj**
 
 Run: `pnpm vitest run packages/sim/test/defs.test.ts`
-Oczekiwane: **14 testów przechodzi.**
+Oczekiwane: **19 testów przechodzi.**
+
+Cztery z nich przypinają **pola strukturalne**, i to jest istota, nie dodatek. Liczby balansowe
+słusznie zostają nieprzypięte — Faza 3 je przestroi i każde strojenie łamałoby test bez pożytku.
+Ale `targetPriority`, `energyInfrastructure` i spójność `range`/`targeting`/`dps` to nie balans,
+tylko zachowanie: zamiana priorytetów ARMOR↔DISRUPTOR przeszłaby cały pozostały zestaw tej fazy,
+łącznie z testami Task 8, który to pole konsumuje — a odwróciłaby rdzeń rozgrywki.
 
 ```bash
 git add packages/sim/src/sim/defs.ts packages/sim/test/defs.test.ts
