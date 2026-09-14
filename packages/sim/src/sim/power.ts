@@ -4,6 +4,12 @@ import { TICK_SECONDS, type BuildingType, type SimState } from './state.js';
 
 export interface PowerReport {
   supply: number;
+  /**
+   * Popyt PO kaskadzie gaszenia, nie surowe zapotrzebowanie sprzed niej: akumulowany
+   * dla wszystkich podłączonych odbiorców, a potem pomniejszany w miejscu przy każdym
+   * zgaszeniu. UI pokazujący „potrzebowano X/s, było Y/s" chce wartości SPRZED kaskady —
+   * to pole jej nie niesie.
+   */
   demand: number;
   /** Typy, które faktycznie zgaszono w tym ticku, w kolejności gaszenia. */
   shedTypes: BuildingType[];
