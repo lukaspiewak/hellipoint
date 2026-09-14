@@ -1290,8 +1290,15 @@ Oczekiwane: FAIL — brak modułów.
 /**
  * BFS wieloźródłowy: dla każdej komórki odległość w krokach grafu
  * do najbliższego źródła. Nieosiągalne dostają Infinity.
+ *
+ * `neighbors` i `sources` przyjmują tablice tylko-do-odczytu: ta funkcja wyłącznie
+ * czyta sąsiedztwo i listę źródeł (np. bezpośrednio `Planet.cells`/`Planet.pentagons`,
+ * dzielone przez referencję z wewnętrznym DualMesh) i nigdy ich nie mutuje.
  */
-export function multiSourceDistances(neighbors: number[][], sources: number[]): number[] {
+export function multiSourceDistances(
+  neighbors: readonly (readonly number[])[],
+  sources: readonly number[],
+): number[] {
   const dist = new Array<number>(neighbors.length).fill(Infinity);
   const queue: number[] = [];
 
@@ -1332,8 +1339,9 @@ export interface Cell {
   readonly center: Vec3;
   /** Jednostkowa — równa center/radius. Wydzielona, bo oświetlenie liczy się z niej co tick. */
   readonly normal: Vec3;
-  readonly corners: Vec3[];
-  readonly neighbors: number[];
+  readonly corners: readonly Vec3[];
+  /** Dzielone przez referencję z wewnętrznym DualMesh — tylko-do-odczytu, żeby konsument nie mógł go po cichu zmutować. */
+  readonly neighbors: readonly number[];
   readonly cellType: CellType;
   /** 0 = brak złoża. Złoża są wyczerpywalne (§5.2), więc to pojemność początkowa. */
   readonly oreCapacity: number;
@@ -1343,8 +1351,9 @@ export interface Planet {
   readonly seed: number;
   readonly radius: number;
   readonly frequency: number;
-  readonly cells: Cell[];
-  readonly pentagons: number[];
+  /** Tylko-do-odczytu: `pentagons`, `startCell` i każdy `Cell.neighbors` to indeksy w tę tablicę — sortowanie/mutacja w miejscu rozsynchronizowałaby je wszystkie. */
+  readonly cells: readonly Cell[];
+  readonly pentagons: readonly number[];
   readonly startCell: number;
 }
 
@@ -1390,7 +1399,9 @@ export function createPlanet(opts: PlanetOptions): Planet {
     cells.push({
       id: i,
       center: scale(dual.centers[i], o.radius),
-      normal: dual.centers[i],
+      // scale(..., 1) zamiast bezpośredniego przypisania: świeży obiekt zamiast aliasu do
+      // wewnętrznego DualMesh, tak jak center i corners obok (por. komentarz przy neighbors).
+      normal: scale(dual.centers[i], 1),
       corners: dual.corners[i].map((c) => scale(c, o.radius)),
       neighbors: neighbors[i],
       cellType: dual.cellTypes[i],
@@ -1416,12 +1427,20 @@ function placeOre(
   rng: Rng,
   cellTypes: CellType[],
   neighbors: number[][],
-  o: typeof DEFAULTS & PlanetOptions,
+  o: Required<PlanetOptions>,
 ): number[] {
   const capacity = new Array<number>(cellTypes.length).fill(0);
   const hexes: number[] = [];
   for (let i = 0; i < cellTypes.length; i++) {
     if (cellTypes[i] === 'HEXAGON') hexes.push(i);
+  }
+
+  if (hexes.length === 0) {
+    throw new Error(
+      `Brak heksagonów do rozmieszczenia rudy: frequency=${o.frequency} daje samą powłokę ` +
+        `dwudziestościanu (12 pentagonów, 0 heksagonów) — nie ma gdzie postawić klastra. ` +
+        `Zwiększ frequency do co najmniej 2.`,
+    );
   }
 
   for (let c = 0; c < o.oreClusters; c++) {
@@ -1443,7 +1462,7 @@ function pickStart(
   cellTypes: CellType[],
   oreCapacity: number[],
   distFromPentagon: number[],
-  o: typeof DEFAULTS & PlanetOptions,
+  o: Required<PlanetOptions>,
 ): number {
   const candidates: number[] = [];
   for (let i = 0; i < cellTypes.length; i++) {
