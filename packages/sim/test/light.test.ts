@@ -46,6 +46,20 @@ describe('sunDirection', () => {
     expect(() => sunDirection(Infinity, T)).toThrow(RangeError);
     expect(() => sunDirection(-Infinity, T)).toThrow(RangeError);
   });
+
+  // Residual z przeglądu końcowego Fazy 1B (trzecie wystąpienie tego trybu awarii):
+  // `rotationPeriod = 1e-320` jest finite i > 0 — przechodzi OBIE powyższe straże —
+  // ale `angle = (2π·elapsedSeconds)/rotationPeriod` przepełnia się do Infinity.
+  // `Math.cos(Infinity)`/`Math.sin(Infinity)` dają NaN, a `lightAt` robi `d > 0 ? d : 0`,
+  // gdzie `NaN > 0` jest `false` — więc PRZED tą strażą cała planeta cicho gasła do
+  // dokładnego 0.0, zero komórek z NaN, zero błędu (zmierzone w raporcie naprawy).
+  // Straży pilnuje `angle` w miejscu, gdzie faktycznie staje się zły, nie argumenty.
+  it('wyrzuca błąd, gdy angle przepełnia się do Infinity mimo że oba argumenty są finite i dodatnie', () => {
+    expect(() => sunDirection(0.05, 1e-320)).toThrow(RangeError);
+    // Komunikat musi nazywać OBA wejścia, żeby przyczyna była widoczna, nie tylko skutek.
+    expect(() => sunDirection(0.05, 1e-320)).toThrow(/0\.05/);
+    expect(() => sunDirection(0.05, 1e-320)).toThrow(/1e-320/);
+  });
 });
 
 describe('lightAt', () => {

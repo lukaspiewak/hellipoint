@@ -51,7 +51,11 @@ export interface Unit {
  *     dopiero doda (`units`, fale, `evacCharge`, `RngState`) i wszystkiego, co
  *     kiedykolwiek uzna się za warte cache'owania.
  * Strażnik: `state.test.ts` uruchamia skryptowaną symulację przez kilkaset ticków i
- * asercjuje, że `stateHash` PRZED i PO round-tripie JSON są identyczne.
+ * asercjuje, że `stateHash` PRZED i PO round-tripie JSON są identyczne — ale ten
+ * strażnik widzi WYŁĄCZNIE pola, które `stateHash` faktycznie czyta, więc KAŻDE nowe
+ * pole `SimState` musi zostać zahashowane w `hash.ts` (albo świadomie dopisane do
+ * `UNHASHED_FIELDS` w `state.test.ts`) — inaczej test kompletności `stateHash` tamże
+ * przestaje się kompilować lub nie przechodzi w runtime.
  */
 export interface SimState {
   tick: number;

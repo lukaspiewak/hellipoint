@@ -19,6 +19,17 @@ export function sunDirection(elapsedSeconds: number, rotationPeriod: number): Ve
     throw new RangeError(`elapsedSeconds must be finite, got ${elapsedSeconds}`);
   }
   const angle = (2 * Math.PI * elapsedSeconds) / rotationPeriod;
+  // Oba argumenty mogą być finite i (dla rotationPeriod) dodatnie, a `angle` i tak wyjść
+  // nieskończony — np. rotationPeriod = 1e-320 (finite, > 0) przechodzi obie straże
+  // powyżej, ale dzielenie przepełnia się do Infinity. Straż NALEŻY tu, w miejscu gdzie
+  // wartość faktycznie staje się zła, nie tylko na wejściach: `Math.cos`/`Math.sin`
+  // Infinity dają NaN, a `lightAt` (`d > 0 ? d : 0`) ciągnie NaN do cichego 0.0 — patrz
+  // komentarz przy `lightField` i raport naprawy residuali Fazy 1B.
+  if (!Number.isFinite(angle)) {
+    throw new RangeError(
+      `sunDirection: (2π·elapsedSeconds)/rotationPeriod overflowed to a non-finite angle — elapsedSeconds=${elapsedSeconds}, rotationPeriod=${rotationPeriod}`,
+    );
+  }
   return { x: Math.cos(angle), y: 0, z: Math.sin(angle) };
 }
 
@@ -34,10 +45,19 @@ export function lightAt(normal: Vec3, sunDir: Vec3): number {
  * [Residualne ryzyko determinizmu — nie blokuje Fazy 1B, ale przeczytaj przed użyciem
  * tego pola do czegokolwiek międzymaszynowego.] `Math.cos`/`Math.sin` w `sunDirection`
  * są przybliżeniami zależnymi od implementacji silnika JS — ECMAScript nie gwarantuje
- * identycznego wyniku co do bitu na różnych silnikach/platformach. Zmierzone (przegląd
- * końcowy Fazy 1B): perturbacja `Math.cos` o jeden ULP float64 na 2000 próbkowanych
- * kątach — 0 z 2000 przetrwało zaokrąglenie do float32 właśnie tutaj, w zwracanym
- * `Float32Array`. Dziś nieszkodliwe, bo architektura ma JEDEN autorytatywny serwer,
+ * identycznego wyniku co do bitu na różnych silnikach/platformach. Zmierzone (naprawa
+ * residuali Fazy 1B — poprzedni pomiar w tym miejscu liczył tylko JEDEN kierunek
+ * perturbacji, stąd błędny): perturbacja `Math.cos` o jeden ULP float64 w OBU kierunkach
+ * (bit w górę i w dół), ze sprawdzeniem przetrwania `Math.fround` — dokładnie tego
+ * zaokrąglenia do float32, które robi `Float32Array` poniżej. Przy ~2000 próbkowanych
+ * kątach na zestaw (kąty realne wg wzoru symulacji i kąty szeroko-jednostajne w
+ * [-1e6, 1e6)) — 0 z 2000 przetrwało w KAŻDYM kierunku z osobna, co potwierdza starą
+ * liczbę, ale teraz dla obu kierunków, nie tylko jednego. Przy 1 000 000 000 próbek na
+ * zestaw liczba przestaje być zerem: 1–2 przetrwania na miliard, rząd wielkości zgodny
+ * z teoretycznym stosunkiem ULP(float64)/ULP(float32) ≈ 2⁻²⁹ (~1 na 500 milionów).
+ * Wniosek: tłumienie float32 drastycznie redukuje ryzyko, ale go NIE zeruje — „0 z 2000"
+ * nigdy nie było dowodem niemożliwości, tylko próbką za małą, żeby złapać zdarzenie o
+ * częstości rzędu 10⁻⁹. Dziś nieszkodliwe, bo architektura ma JEDEN autorytatywny serwer,
  * nie lockstep z resymulacją klientów. Staje się realne w dwóch momentach: (1) gdy
  * headless runner Fazy 3 ma rościć sobie odtwarzalność między maszynami dla wyprowadzonych
  * liczb balansu, (2) gdy ktokolwiek doda golden hash SAMEGO stanu symulacji (nie tylko

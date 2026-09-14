@@ -29,6 +29,18 @@ export class Sim {
     if (!Number.isFinite(config.rotationPeriod) || config.rotationPeriod <= 0) {
       throw new RangeError(`SimConfig.rotationPeriod must be finite and positive, got ${config.rotationPeriod}`);
     }
+    // Druga warstwa tej samej straży, na poziomie DOMENY zamiast arytmetyki: finite i
+    // dodatni nie wystarczy, jeśli okres jest krótszy niż jeden tick — Słońce robiłoby
+    // wtedy pełny obrót WEWNĄTRZ pojedynczego kroku symulacji, co nie jest cyklem
+    // dzień/noc w żadnym sensownym znaczeniu (a przy skrajnych wartościach, np. 1e-320,
+    // to właśnie ten zakres, w którym `angle` w `sunDirection` przepełnia się do
+    // Infinity — patrz light.ts). Granica inclusive: dokładnie jeden tick jest ostatnią
+    // wartością, przy której obrót JEST rozłożony na (przynajmniej) jeden krok.
+    if (config.rotationPeriod < TICK_SECONDS) {
+      throw new RangeError(
+        `SimConfig.rotationPeriod must be at least one tick (${TICK_SECONDS}s), got ${config.rotationPeriod} — a shorter period completes a full day/night cycle inside a single tick and is not a simulable cycle`,
+      );
+    }
     if (!Number.isFinite(config.startingOre) || config.startingOre < 0) {
       throw new RangeError(`SimConfig.startingOre must be finite and non-negative, got ${config.startingOre}`);
     }

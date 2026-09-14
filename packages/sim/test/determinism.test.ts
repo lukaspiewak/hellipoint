@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createPlanet } from '../src/world/planet.js';
 import { Sim } from '../src/sim/loop.js';
 import { stateHash } from '../src/sim/hash.js';
+import { TICK_SECONDS } from '../src/sim/state.js';
 import type { Command } from '../src/sim/commands.js';
 
 const CONFIG = { rotationPeriod: 180, startingOre: 150 };
@@ -147,5 +148,25 @@ describe('SimConfig — walidacja w konstruktorze Sim', () => {
   it('komunikat błędu nazywa pole i wartość, a nie tylko ogólnikowo "invalid config"', () => {
     expect(() => new Sim(planet, { rotationPeriod: -5, startingOre: 100 })).toThrow(/rotationPeriod.*-5/);
     expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -5 })).toThrow(/startingOre.*-5/);
+  });
+
+  /**
+   * Residual z przeglądu końcowego Fazy 1B: `rotationPeriod` skończony i dodatni
+   * (przechodzi powyższą straż) ale krótszy niż jeden tick oznacza, że Słońce robi
+   * pełny obrót WEWNĄTRZ pojedynczego ticku — to nie jest symulowalny cykl dzień/noc,
+   * niezależnie od tego, czy akurat przepełnia `angle` w `sunDirection` (por.
+   * light.test.ts, `rotationPeriod = 1e-320`). Druga warstwa tej samej straży: tu
+   * łapiemy DOMENOWO ("za krótki, żeby cokolwiek symulować"), w `sunDirection` —
+   * LOKALNIE ("angle wyszedł nieskończony"). Zweryfikowano: żaden istniejący test
+   * w tym pakiecie nie używa rotationPeriod < 180s poza testami odrzucenia.
+   */
+  it('odrzuca rotationPeriod krótszy niż jeden tick — pełny obrót Słońca w jednym ticku nie jest symulowalnym cyklem dzień/noc', () => {
+    expect(() => new Sim(planet, { rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: 1e-320, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(/rotationPeriod/);
+  });
+
+  it('akceptuje rotationPeriod dokładnie równy jednemu tickowi — granica jest inclusive, "krótszy niż" to ostra nierówność', () => {
+    expect(() => new Sim(planet, { rotationPeriod: TICK_SECONDS, startingOre: 100 })).not.toThrow();
   });
 });
