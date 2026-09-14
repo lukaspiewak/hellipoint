@@ -1504,6 +1504,7 @@ export class Sim {
 
 Dopisz do `packages/sim/src/index.ts`:
 ```ts
+export { type RngState } from './math/rng.js';
 export { TICK_SECONDS, createState } from './sim/state.js';
 export type { Building, BuildingType, EnemyType, Phase, SimState, Unit } from './sim/state.js';
 export { stateHash } from './sim/hash.js';
