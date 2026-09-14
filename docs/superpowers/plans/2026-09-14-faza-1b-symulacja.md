@@ -1923,6 +1923,39 @@ describe('updateEconomy', () => {
     expect(s.oreRemaining[oreCell]).toBe(0);
     expect(s.ore).toBeCloseTo(capacity, 6);
   });
+
+  it('typ gmachu — tylko EXTRACTOR wydobywa, inne typy mają wstęp zamknięty', () => {
+    const s = createState(planet, 0);
+
+    // Trzy żyzne komórki — różne składy.
+    const fertileCells = planet.cells.filter((c) => c.oreCapacity > 0).slice(0, 3);
+    const extractorCell = fertileCells[0].id;
+    const pylonCell = fertileCells[1].id;
+    const extractor2Cell = fertileCells[2].id;
+
+    // Zmienne początkowe.
+    const extractorCapacity = s.oreRemaining[extractorCell];
+    const pylonCapacity = s.oreRemaining[pylonCell];
+    const extractor2Capacity = s.oreRemaining[extractor2Cell];
+
+    // EXTRACTOR na pierwszej, PYLON na drugiej (typem chroniony), drugi EXTRACTOR na trzeciej.
+    s.buildings[extractorCell] = { cellId: extractorCell, type: 'EXTRACTOR', hp: 120, powered: true };
+    s.buildings[pylonCell] = { cellId: pylonCell, type: 'PYLON', hp: 80, powered: true };
+    s.buildings[extractor2Cell] = { cellId: extractor2Cell, type: 'EXTRACTOR', hp: 120, powered: true };
+
+    const perTick = ORE_PER_SECOND * TICK_SECONDS;
+    updateEconomy(s);
+
+    // Oba ekstraktory wydobyły po perTick.
+    expect(s.ore).toBeCloseTo(perTick * 2, 9);
+
+    // Każdy EXTRACTOR uszczuplił swoje złoże.
+    expect(s.oreRemaining[extractorCell]).toBeCloseTo(extractorCapacity - perTick, 9);
+    expect(s.oreRemaining[extractor2Cell]).toBeCloseTo(extractor2Capacity - perTick, 9);
+
+    // PYLON na typem zablokowany — jego złoże nietknięte.
+    expect(s.oreRemaining[pylonCell]).toBe(pylonCapacity);
+  });
 });
 ```
 
