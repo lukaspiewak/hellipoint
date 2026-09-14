@@ -54,7 +54,8 @@ albo zapisz jako twardą regułę, że wynik BFS-a nigdy nie wchodzi do `SimStat
 
 **Files:**
 - Create: `packages/sim/src/sim/state.ts`, `packages/sim/src/sim/hash.ts`
-- Test: `packages/sim/test/state.test.ts`
+- Modify: `packages/sim/src/math/rng.ts` (migawka generatora — patrz krok 6)
+- Test: `packages/sim/test/state.test.ts`, `packages/sim/test/math.test.ts`
 
 **Interfaces:**
 - Consumes: `Planet`, `createPlanet` z Fazy 1A
@@ -72,11 +73,26 @@ albo zapisz jako twardą regułę, że wynik BFS-a nigdy nie wchodzi do `SimStat
 `packages/sim/test/state.test.ts`:
 ```ts
 import { describe, expect, it } from 'vitest';
+import { vec3 } from '../src/math/vec3.js';
 import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS } from '../src/sim/state.js';
 import { stateHash } from '../src/sim/hash.js';
 
 const planet = createPlanet({ seed: 1 });
+
+/**
+ * Stan z jednym budynkiem (domyślnie na indeksie 0) i jedną jednostką — wspólny
+ * punkt odniesienia dla testów wrażliwości hasha na pola budynków/jednostek,
+ * których `createState` sam z siebie nigdy nie populuje. `buildingIndex`
+ * parametryzowany, żeby test pozycyjności (§cellId) mógł postawić IDENTYCZNY
+ * budynek pod innym indeksem bez ręcznego powielania jego pól.
+ */
+function withBuildingAndUnit(buildingIndex = 0) {
+  const s = createState(planet, 150);
+  s.buildings[buildingIndex] = { cellId: 0, type: 'PYLON', hp: 80, powered: false };
+  s.units.push({ id: 1, type: 'SWARM', cellId: 0, pos: vec3(1, 2, 3), hp: 30, exposure: 0.25 });
+  return s;
+}
 
 describe('createState', () => {
   it('startuje z zadaną rudą i pustą planszą', () => {
@@ -124,6 +140,110 @@ describe('stateHash', () => {
     const a = createState(planet, 150); a.storedEnergy = 1;
     const b = createState(planet, 150); b.storedEnergy = 1 + Number.EPSILON;
     expect(stateHash(a)).not.toBe(stateHash(b));
+  });
+
+  // `createState` zawsze zwraca puste `buildings`/`units`, więc bez poniższych
+  // pętle po budynkach i jednostkach w hash.ts nigdy by się nie wykonały w całym
+  // pakiecie testów — regresja w którejkolwiek z nich przeszłaby niezauważona.
+
+  it('budynek: zmiana `type` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.buildings[0]!.type = 'BARRICADE';
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('budynek: zmiana `hp` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.buildings[0]!.hp += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('budynek: zmiana `powered` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.buildings[0]!.powered = true;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('budynek: `cellId` jest niesiony POZYCYJNIE przez indeks tablicy, nie przez pole — ten sam budynek pod innym indeksem zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit(0));
+    const moved = withBuildingAndUnit(1);
+    expect(stateHash(moved)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `id` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.units[0].id += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `type` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.units[0].type = 'ARMOR';
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `cellId` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.units[0].cellId += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `pos.x` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    const p = variant.units[0].pos;
+    variant.units[0].pos = vec3(p.x + 1, p.y, p.z);
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `pos.y` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    const p = variant.units[0].pos;
+    variant.units[0].pos = vec3(p.x, p.y + 1, p.z);
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `pos.z` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    const p = variant.units[0].pos;
+    variant.units[0].pos = vec3(p.x, p.y, p.z + 1);
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `hp` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.units[0].hp += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `exposure` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.units[0].exposure += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('zmiana `nextUnitId` zmienia hash', () => {
+    const h = stateHash(createState(planet, 150));
+    const variant = createState(planet, 150);
+    variant.nextUnitId += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('zmiana `phase` zmienia hash', () => {
+    const h = stateHash(createState(planet, 150));
+    const variant = createState(planet, 150);
+    variant.phase = 'VICTORY';
+    expect(stateHash(variant)).not.toBe(h);
   });
 });
 ```
@@ -277,10 +397,71 @@ class Fnv {
 }
 ```
 
-- [ ] **Step 5: Uruchom testy i commituj**
+- [ ] **Step 5: Zaimplementuj migawkę generatora**
 
-Run: `pnpm vitest run packages/sim/test/state.test.ts`
-Oczekiwane: **6 testów przechodzi.**
+Wynika z przeglądu końcowego Fazy 1A (patrz sekcja „Dwie rzeczy wyniesione…" na górze planu).
+`Rng` trzyma stan w `private readonly s` i nie da się go odczytać ani odtworzyć, a Faza 1C
+umieszcza strumień fal poza `SimState`. Dla testu startującego od ticka 0 to niewidoczne —
+i pozostaje niewidoczne aż do pierwszej rzeczy, która od ticka 0 nie startuje.
+
+Dopisz do `packages/sim/src/math/rng.ts`:
+```ts
+  /**
+   * Migawka pełnego stanu generatora: cztery słowa robocze xoshiro ORAZ seed.
+   * Seed jest częścią migawki, nie tylko `s` — `fork()` zależy wyłącznie od
+   * seeda (patrz wyżej), więc bez niego generator odtworzony z migawki dawałby
+   * INNE poddrzewa strumieni niż oryginał w tym samym punkcie.
+   *
+   * Zwykła krotka liczb, nie Uint32Array — musi przetrwać JSON.stringify/parse
+   * (zapis gry, resynchronizacja klienta/serwera), a TypedArray tego nie gwarantuje.
+   */
+  getState(): RngState {
+    return { seed: this.seed, s: [this.s[0], this.s[1], this.s[2], this.s[3]] };
+  }
+
+  /**
+   * Odtwarza generator z migawki `getState()`: kontynuuje IDENTYCZNĄ sekwencję
+   * od miejsca, w którym migawka została zrobiona. Bez tego, odtworzenie
+   * `SimState` po zapisie/resynchronizacji restartowałoby dowolny strumień
+   * trzymany poza stanem (np. fale, Faza 1C) od pozycji zero i rozjeżdżało
+   * spawny wobec serwera, który nie przestawał liczyć.
+   */
+  static fromState(state: RngState): Rng {
+    const rng = new Rng(state.seed);
+    rng.s.set(state.s);
+    return rng;
+  }
+```
+
+oraz, poza klasą:
+```ts
+export interface RngState {
+  readonly seed: number;
+  readonly s: readonly [number, number, number, number];
+}
+```
+
+**Stan MUSI być zwykłą krotką, nie `Uint32Array`.** `JSON.stringify(new Uint32Array([10,20]))`
+daje `{"0":10,"1":20}`, a podanie tego z powrotem do `.set()` **nie rzuca wyjątku** — po cichu
+zostawia zera. Migawka, która nie przeżywa podróży przez JSON, jest gorsza niż jej brak.
+`seed` wchodzi do migawki, bo `fork()` zależy wyłącznie od niego.
+
+Testy w `packages/sim/test/math.test.ts`: przywrócony generator kontynuuje **identyczną**
+sekwencję; migawka przeżywa `JSON.parse(JSON.stringify(...))`; migawka nie jest aliasem
+żywego stanu w żadną stronę.
+
+**Nie dodawaj pola rng do `SimState`** — czy generatory symulacji mieszkają w stanie, rozstrzyga
+Faza 1C. Tu chodzi o to, żeby było to *możliwe*.
+
+- [ ] **Step 6: Uruchom testy i commituj**
+
+Run: `pnpm vitest run packages/sim/test/state.test.ts packages/sim/test/math.test.ts`
+Oczekiwane: **20 testów w state.test.ts** (6 podstawowych + 14 asercji czułości hasza na pola
+`Building`, `Unit`, `nextUnitId` i `phase`) **oraz 12 w math.test.ts** (9 podstawowych + 3 migawki).
+
+Asercje czułości są tu istotą, nie dodatkiem: `createState` zawsze zwraca puste `buildings`
+i `units`, więc bez nich obie pętle w `hash.ts` **nie wykonują się ani razu** — a wszystkie
+pozostałe zadania tej fazy budują swój test determinizmu na tym haszu.
 
 ```bash
 git add packages/sim/src/sim packages/sim/test/state.test.ts
