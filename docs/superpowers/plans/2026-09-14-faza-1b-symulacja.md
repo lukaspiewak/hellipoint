@@ -1541,7 +1541,7 @@ import { applyCommand } from '../src/sim/commands.js';
 import { updatePower } from '../src/sim/power.js';
 import { multiSourceDistances } from '../src/world/graph.js';
 
-const planet = createPlanet({ seed: 21 });
+const planet = createPlanet({ seed: 8 });
 const neighbors = planet.cells.map((c) => c.neighbors);
 const dist = multiSourceDistances(neighbors, [planet.startCell]);
 
@@ -1553,6 +1553,23 @@ function nearbyHexes(count: number): number[] {
     }
   }
   if (out.length < count) throw new Error('za mało pustych heksów blisko startu');
+  return out;
+}
+
+/**
+ * Jak `nearbyHexes`, ale zwraca heksy ZE złożem (`oreCapacity > 0`) — jedyne, na których
+ * `canBuild` wpuszcza EXTRACTOR (`allowedCells: 'ORE_HEXAGON'` wymaga `oreRemaining > 0`,
+ * a świeży stan ma `oreRemaining === oreCapacity`). `nearbyHexes` celowo filtruje odwrotnie
+ * (`oreCapacity === 0`), więc nie nadaje się do stawiania ekstraktora.
+ */
+function nearbyOreHexes(count: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < dist.length && out.length < count; i++) {
+    if (dist[i] >= 1 && dist[i] <= 2 && planet.cells[i].cellType === 'HEXAGON' && planet.cells[i].oreCapacity > 0) {
+      out.push(i);
+    }
+  }
+  if (out.length < count) throw new Error('za mało heksów ze złożem blisko startu');
   return out;
 }
 
@@ -1606,7 +1623,8 @@ describe('updatePower', () => {
 
   it('przy niedoborze gasi EKSTRAKTORY przed obroną (§5.1)', () => {
     const s = base();
-    const [a, b, c, d] = nearbyHexes(4);
+    const [a] = nearbyOreHexes(1);
+    const [b, c, d] = nearbyHexes(3);
     applyCommand(s, { kind: 'BUILD', cellId: a, type: 'EXTRACTOR' });
     applyCommand(s, { kind: 'BUILD', cellId: b, type: 'KINETIC_TURRET' });
     applyCommand(s, { kind: 'BUILD', cellId: c, type: 'LASER_TURRET' });
@@ -1626,7 +1644,8 @@ describe('updatePower', () => {
 
   it('gasi lasery dopiero jako ostatnie', () => {
     const s = base();
-    const [a, b, c] = nearbyHexes(3);
+    const [a] = nearbyOreHexes(1);
+    const [b, c] = nearbyHexes(2);
     applyCommand(s, { kind: 'BUILD', cellId: a, type: 'EXTRACTOR' });
     applyCommand(s, { kind: 'BUILD', cellId: b, type: 'KINETIC_TURRET' });
     applyCommand(s, { kind: 'BUILD', cellId: c, type: 'LASER_TURRET' });
@@ -1642,7 +1661,7 @@ describe('updatePower', () => {
 
   it('magazyn pokrywa chwilowy niedobór zamiast natychmiast gasić', () => {
     const s = base();
-    const [a, b, c] = nearbyHexes(3);
+    const [a, b, c] = nearbyOreHexes(3);
     applyCommand(s, { kind: 'BUILD', cellId: a, type: 'EXTRACTOR' });
     applyCommand(s, { kind: 'BUILD', cellId: b, type: 'EXTRACTOR' });
     applyCommand(s, { kind: 'BUILD', cellId: c, type: 'EXTRACTOR' });
@@ -1728,6 +1747,15 @@ export function updatePower(s: SimState, light: Float32Array): PowerReport {
   return { supply, demand, shedTypes };
 }
 ```
+
+> **Uwaga do seeda i helperów — wynik naprawy defektu planu.** Ten plik używa `seed: 8`
+> i dwóch osobnych helperów doboru komórek: `nearbyHexes` (heksy BEZ rudy, pod wszystko poza
+> ekstraktorem) oraz `nearbyOreHexes` (heksy ZE złożem, wyłącznie pod EXTRACTOR). Wcześniejsza
+> wersja używała `seed: 21` i stawiała ekstraktory przez `nearbyHexes`, co było **niewykonalne**:
+> `EXTRACTOR.allowedCells` to `ORE_HEXAGON`, więc `canBuild` odrzucał je z `WRONG_CELL_TYPE`,
+> a przy seedzie 21 najbliższa ruda leży i tak 7 skoków od bazy, czyli poza zasięgiem Core (3).
+> Zmierzone: seed 21 → 0 komórek rudy w zasięgu 3; seed 8 → 16. Nie zmieniaj seeda ani helperów
+> bez ponownego sprawdzenia tej geometrii — arytmetyka popytu w testach kaskady od niej zależy.
 
 - [ ] **Step 4: Dopnij system do pętli**
 
