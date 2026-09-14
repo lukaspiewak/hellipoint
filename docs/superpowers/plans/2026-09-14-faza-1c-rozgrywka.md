@@ -66,7 +66,7 @@ import { applyCommand } from '../src/sim/commands.js';
 import { buildAllFlowFields } from '../src/sim/flowfield.js';
 import { spawnUnit, updateMovement, type MotionContext } from '../src/sim/movement.js';
 import { cellSpacing, terminatorSpeedCells } from '../src/world/scale.js';
-import { ENEMIES } from '../src/sim/defs.js';
+import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
 import { length, scale, sub, normalize, dot } from '../src/math/vec3.js';
 import { multiSourceDistances } from '../src/world/graph.js';
 
@@ -85,7 +85,9 @@ const sunDir = { x: 1, y: 0, z: 0 };
 
 function withCore() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -369,7 +371,9 @@ const planet = createPlanet({ seed: 61 });
 
 function withCore() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -677,13 +681,12 @@ Faza 1A dowiodła niezmiennika N3 **na wzorze**. Ten task dowodzi go **na żywej
 import { describe, expect, it } from 'vitest';
 import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS } from '../src/sim/state.js';
-import { applyCommand } from '../src/sim/commands.js';
 import { buildAllFlowFields } from '../src/sim/flowfield.js';
 import { spawnUnit, updateMovement, type MotionContext } from '../src/sim/movement.js';
 import { SHADOW_RECOVERY_RATE, updateBurning } from '../src/sim/burning.js';
 import { lightField, sunDirection } from '../src/sim/light.js';
 import { cellSpacing, terminatorSpeedCells } from '../src/world/scale.js';
-import { ENEMIES } from '../src/sim/defs.js';
+import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
 import { dot } from '../src/math/vec3.js';
 
 const planet = createPlanet({ seed: 71 });
@@ -701,7 +704,9 @@ const noLight = new Float32Array(N).fill(0);
 
 function withCore() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -925,6 +930,7 @@ import { createState } from '../src/sim/state.js';
 import { applyCommand } from '../src/sim/commands.js';
 import { DEFAULT_SPAWN, updateSpawning } from '../src/sim/spawning.js';
 import { Rng, STREAM } from '../src/math/rng.js';
+import { BUILDINGS } from '../src/sim/defs.js';
 
 const planet = createPlanet({ seed: 81 });
 const N = planet.cells.length;
@@ -934,7 +940,9 @@ const allLit = new Float32Array(N).fill(1);
 
 function fresh() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -1188,7 +1196,7 @@ W `hash.ts`, obok `h.float(s.storedEnergy)`:
 import { describe, expect, it } from 'vitest';
 import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS } from '../src/sim/state.js';
-import { applyCommand } from '../src/sim/commands.js';
+import { BUILDINGS } from '../src/sim/defs.js';
 import { currentCycle, DEFAULT_RUN, evacUnlocked, updateRules } from '../src/sim/rules.js';
 
 const planet = createPlanet({ seed: 91 });
@@ -1196,7 +1204,9 @@ const cfg = DEFAULT_RUN;
 
 function withCore() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -1422,6 +1432,7 @@ import type { Planet } from '../world/planet.js';
 import { updateBurning } from './burning.js';
 import { updateCombat } from './combat.js';
 import { applyCommand, type Command } from './commands.js';
+import { BUILDINGS } from './defs.js';
 import { updateEconomy } from './economy.js';
 import { buildAllFlowFields } from './flowfield.js';
 import { lightField, sunDirection } from './light.js';
@@ -1455,8 +1466,13 @@ export class Sim {
       radius: planet.radius,
     };
 
-    // CORE stawiany bez kosztu na komórce startowej — to punkt wyjścia runu, nie decyzja gracza.
-    applyCommand(this.s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+    // CORE na komórce startowej: punkt wyjścia runu, nie decyzja gracza — więc bez kosztu
+    // i WPROST do stanu, nie przez `applyCommand`. `canBuild` odrzuca CORE niezależnie od
+    // komórki (`playerBuildable: false`), bo inaczej gracz mnożyłby go za darmo — patrz
+    // notatka pod tym blokiem. Ten sam zapis stosują pomocniki testowe Fazy 1B.
+    this.s.buildings[planet.startCell] = {
+      cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+    };
   }
 
   get state(): SimState { return this.s; }
@@ -1471,7 +1487,12 @@ export class Sim {
    * bez aktualizacji testów determinizmu.
    */
   step(): void {
-    if (this.s.phase !== 'RUNNING') return;
+    if (this.s.phase !== 'RUNNING') {
+      // Kolejka opróżniana TAKŻE tutaj. Komenda zakolejkowana po końcu runu nie może
+      // przeleżeć do chwili, w której stan wróciłby do RUNNING, i wykonać się z opóźnieniem.
+      this.pending.length = 0;
+      return;
+    }
 
     for (const cmd of this.pending) applyCommand(this.s, cmd);
     this.pending.length = 0;
