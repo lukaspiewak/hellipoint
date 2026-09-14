@@ -26,7 +26,7 @@
 ### Task 1: Monorepo, toolchain i strażnik zero-zależności
 
 **Files:**
-- Create: `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `vitest.config.ts`
+- Create: `package.json`, `pnpm-workspace.yaml`, `tsconfig.json`, `tsconfig.base.json`, `vitest.config.ts`
 - Create: `packages/sim/package.json`, `packages/sim/tsconfig.json`, `packages/sim/src/index.ts`
 - Test: `packages/sim/test/contract.test.ts`
 
@@ -57,6 +57,21 @@ packages:
   }
 }
 ```
+
+`tsconfig.json` (root) — **wymagany**, bo skrypt `typecheck` to `tsc -b`, a tryb build bez
+solution-tsconfigu z referencjami nie ma czego zbudować i cicho nic nie sprawdza:
+```json
+{
+  "files": [],
+  "references": [{ "path": "packages/sim" }]
+}
+```
+
+> Po ukończeniu zadania **zweryfikuj, że typecheck faktycznie coś sprawdza**: wstaw tymczasowo
+> plik `packages/sim/src/__probe.ts` z treścią `export const probe: number = "string";`,
+> uruchom `pnpm typecheck` i potwierdź błąd `TS2322`, po czym usuń plik razem z `packages/sim/dist`
+> i plikami `*.tsbuildinfo`. Zielony typecheck, który niczego nie sprawdza, dawałby fałszywe
+> poczucie bezpieczeństwa przez wszystkie kolejne zadania.
 
 `tsconfig.base.json`:
 ```json
@@ -159,10 +174,18 @@ describe('kontrakt pakietu sim', () => {
 - [ ] **Step 4: Zainstaluj zależności i uruchom testy**
 
 ```bash
-corepack enable && corepack prepare pnpm@latest --activate
+corepack enable
+# NIE używaj pnpm@latest: rozwiązuje się do pnpm 12.x, które jest zepsute pod
+# corepack 0.34.0 (szuka legacy bin/pnpm.cjs → MODULE_NOT_FOUND).
+corepack prepare pnpm@11.17.0 --activate
+pnpm --version    # musi wypisać 11.17.0, ZANIM pójdziesz dalej
 pnpm add -D -w typescript vitest @types/node
 pnpm test
 ```
+Jeśli 11.17.0 jest niedostępne, weź najnowszą wersję, którą `pnpm --version` faktycznie
+uruchamia, i zapisz ją w `wersje.txt` w kroku 5. Wersje `typescript`, `vitest` i `@types/node`
+celowo NIE są przypięte w tym planie — instalator rozwiązuje bieżące i krok 5 je zapisuje.
+
 Oczekiwane: **3 testy przechodzą**. Jeśli `globSync` nie istnieje w zainstalowanej wersji Node, podmień na `node:fs/promises` + ręczną rekurencję — test ma działać, nie być elegancki.
 
 - [ ] **Step 5: Zapisz rozwiązane wersje i commituj**
@@ -939,13 +962,17 @@ const N = 1442;
 const T = 180;
 
 describe('niezmiennik N2 — promień planety nie wpływa na rozgrywkę', () => {
-  it('czas przejazdu terminatora jest identyczny dla skrajnie różnych promieni', () => {
-    const a = terminatorCrossingTime(10, T, N);
-    const b = terminatorCrossingTime(10, T, N);
-    expect(a).toBe(b);
+  it('cellSpacing skaluje się LINIOWO z promieniem', () => {
+    expect(cellSpacing(100, N)).toBeCloseTo(2 * cellSpacing(50, N), 10);
+    expect(cellSpacing(1000, N)).toBeCloseTo(20 * cellSpacing(50, N), 10);
   });
 
-  it('odstęp komórek podzielony przez prędkość terminatora nie zależy od promienia', () => {
+  it('terminatorSpeedWorld skaluje się LINIOWO z promieniem', () => {
+    expect(terminatorSpeedWorld(100, T)).toBeCloseTo(2 * terminatorSpeedWorld(50, T), 10);
+    expect(terminatorSpeedWorld(1000, T)).toBeCloseTo(20 * terminatorSpeedWorld(50, T), 10);
+  });
+
+  it('przez co ich iloraz — czas pokonania komórki — od promienia NIE zależy', () => {
     const ratio = (r: number) => cellSpacing(r, N) / terminatorSpeedWorld(r, T);
     expect(ratio(50)).toBeCloseTo(ratio(100), 10);
     expect(ratio(100)).toBeCloseTo(ratio(1000), 10);
@@ -1047,7 +1074,9 @@ export const burnEscapeDepth = (
 - [ ] **Step 4: Uruchom testy i commituj**
 
 Run: `pnpm vitest run packages/sim/test/scale.test.ts`
-Oczekiwane: **9 testów przechodzi.**
+Oczekiwane: **10 testów przechodzi.** Trzy pierwsze działają razem: dwie osobno zweryfikowane
+liniowości sprawiają, że skracanie się promienia w teście ilorazowym jest ich dowiedzioną
+konsekwencją, a nie zbiegiem okoliczności.
 
 ```bash
 git add packages/sim/src/world/scale.ts packages/sim/test/scale.test.ts
