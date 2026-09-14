@@ -623,6 +623,7 @@ git commit -m "feat(sim): sfera geodezyjna z topologiczną deduplikacją wierzch
 `packages/sim/test/dual.test.ts`:
 ```ts
 import { describe, expect, it } from 'vitest';
+import { add, normalize, scale, type Vec3 } from '../src/math/vec3.js';
 import { buildGeodesic } from '../src/world/geodesic.js';
 import { buildDual } from '../src/world/dual.js';
 
@@ -683,6 +684,79 @@ describe('buildDual', () => {
 
   it('jest deterministyczny', () => {
     expect(buildDual(buildGeodesic(4))).toEqual(buildDual(buildGeodesic(4)));
+  });
+
+  it('narożniki i sąsiedzi są współbieżnie uporządkowane: sąsiad k leży za krawędzią między narożnikami k i k+1', () => {
+    // Test at multiple frequencies to catch regressions early
+    const frequencies = [1, 4, 12];
+    let totalEdgeChecks = 0;
+
+    for (const freq of frequencies) {
+      const mesh = buildGeodesic(freq);
+      const dual = buildDual(mesh);
+
+      // Precompute face centroids using the same formula as buildDual
+      const faceCentroids: Vec3[] = mesh.faces.map(([a, b, c]) =>
+        normalize(scale(add(add(mesh.vertices[a], mesh.vertices[b]), mesh.vertices[c]), 1 / 3)),
+      );
+
+      // For each cell
+      for (let v = 0; v < dual.centers.length; v++) {
+        const corners = dual.corners[v];
+        const neighbors = dual.neighbors[v];
+
+        // For each edge in the cell
+        for (let k = 0; k < neighbors.length; k++) {
+          const neighbor = neighbors[k];
+          const cornerCurrent = corners[k];
+          const cornerNext = corners[(k + 1) % corners.length];
+
+          // Find the two faces that share edge (v, neighbor)
+          const sharedFaces: number[] = [];
+          for (let f = 0; f < mesh.faces.length; f++) {
+            const [a, b, c] = mesh.faces[f];
+            if (
+              ((a === v || b === v || c === v) && (a === neighbor || b === neighbor || c === neighbor))
+            ) {
+              sharedFaces.push(f);
+            }
+          }
+
+          // There must be exactly 2 faces sharing this edge
+          expect(sharedFaces).toHaveLength(2);
+
+          // Get the centroids of the two shared faces
+          const centroid1 = faceCentroids[sharedFaces[0]];
+          const centroid2 = faceCentroids[sharedFaces[1]];
+
+          // The two centroids should match the two adjacent corners (in either order)
+          const eps = 1e-9;
+          const match1 = (
+            Math.abs(centroid1.x - cornerCurrent.x) < eps &&
+            Math.abs(centroid1.y - cornerCurrent.y) < eps &&
+            Math.abs(centroid1.z - cornerCurrent.z) < eps &&
+            Math.abs(centroid2.x - cornerNext.x) < eps &&
+            Math.abs(centroid2.y - cornerNext.y) < eps &&
+            Math.abs(centroid2.z - cornerNext.z) < eps
+          );
+
+          const match2 = (
+            Math.abs(centroid2.x - cornerCurrent.x) < eps &&
+            Math.abs(centroid2.y - cornerCurrent.y) < eps &&
+            Math.abs(centroid2.z - cornerCurrent.z) < eps &&
+            Math.abs(centroid1.x - cornerNext.x) < eps &&
+            Math.abs(centroid1.y - cornerNext.y) < eps &&
+            Math.abs(centroid1.z - cornerNext.z) < eps
+          );
+
+          expect(match1 || match2).toBe(true);
+          totalEdgeChecks++;
+        }
+      }
+    }
+
+    // Log edge checks performed for regression tracking
+    expect(totalEdgeChecks).toBeGreaterThan(0);
   });
 });
 ```
@@ -785,7 +859,13 @@ function tangentBasis(n: Vec3): { tangent: Vec3; bitangent: Vec3 } {
 - [ ] **Step 4: Uruchom testy i commituj**
 
 Run: `pnpm vitest run packages/sim/test/dual.test.ts`
-Oczekiwane: **8 testów przechodzi.** Test „dokładnie 12 pentagonów" jest najważniejszy — to twarda konsekwencja geometrii bryły i fundament całej warstwy map control (§2 specu).
+Oczekiwane: **9 testów przechodzi.** Test „dokładnie 12 pentagonów" jest najważniejszy — to twarda konsekwencja geometrii bryły i fundament całej warstwy map control (§2 specu).
+
+Ostatni test jest strażnikiem regresji dla niezmiennika współindeksowania z nagłówka tego
+zadania. Liczy centroidy i przyległość ścian **niezależnie od `dual.ts`** — inaczej sprawdzałby
+implementację samą ze sobą. Przy obrocie `neighbors` o dowolny offset względem `corners` wywala
+się na pierwszym `k`, bo pary kolejnych indeksów w cyklu długości ≥5 są parami różne jako zbiory.
+Bez niego kontrakt, który Task 7 konsumuje pozycyjnie, nie miałby w repozytorium żadnej ochrony.
 
 ```bash
 git add packages/sim/src/world/dual.ts packages/sim/test/dual.test.ts
