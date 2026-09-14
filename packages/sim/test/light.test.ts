@@ -28,10 +28,12 @@ describe('sunDirection', () => {
     expect(b.z).toBeCloseTo(-a.z, 9);
   });
 
-  it('wyrzuca błąd dla rotationPeriod <= 0', () => {
+  it('wyrzuca błąd dla rotationPeriod <= 0 lub nieskończonego', () => {
     expect(() => sunDirection(0, 0)).toThrow(RangeError);
     expect(() => sunDirection(0, -180)).toThrow(RangeError);
     expect(() => sunDirection(0, NaN)).toThrow(RangeError);
+    expect(() => sunDirection(0, Infinity)).toThrow(RangeError);
+    expect(() => sunDirection(0, -Infinity)).toThrow(RangeError);
   });
 });
 
