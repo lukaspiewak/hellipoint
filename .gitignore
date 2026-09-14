@@ -1,0 +1,27 @@
+# deps
+node_modules/
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/releases
+
+# build
+dist/
+build/
+*.tsbuildinfo
+
+# test / narzędzia
+coverage/
+.vitest/
+tools/headless/out/
+
+# env
+.env
+.env.*
+!.env.example
+
+# edytor / system
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
