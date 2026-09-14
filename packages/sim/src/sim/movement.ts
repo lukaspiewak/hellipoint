@@ -47,21 +47,12 @@ export function updateMovement(
     const angleStep = (speedWorld * TICK_SECONDS) / ctx.radius;
 
     if (angleStep >= cellAngularSpacing) {
-      // Konkatenacja `+` na zwykłych literałach, CELOWO nie literał szablonowy
-      // (`` `...${x}...` ``): dalej w tym pliku jest doc-comment do slerpToward
-      // z sąsiadującymi parami literałów szablonowych bez podstawień
-      // (`` `from` ``/`` `to` ``). Zmierzone: literał szablonowy z podstawieniem
-      // TUTAJ rozjeżdża prosty skaner tokenów z contract.test.ts (nie wywołuje
-      // on reScanTemplateToken po `}` kończącym `${...}`), przez co dalszy,
-      // niepowiązany komentarz bywa odczytany jako kod — fałszywy trop
-      // "importu" spoza pakietu. Błąd samego skanera-strażnika, nie tego kodu;
-      // zgłoszone osobno, tu tylko obchodzone najprostszym sposobem.
       throw new RangeError(
-        'updateMovement: jednostka ' + u.type + ' (speedFactor=' + def.speedFactor + ') pokonuje ' +
-        angleStep + ' rad/tick — nie mniej niż kątowy rozstaw komórek (' + cellAngularSpacing + ' rad). ' +
-        'nearestLocalCell przeszukuje tylko bieżącą komórkę i jej sąsiadów, więc taki krok cicho ' +
-        'rozjeżdża cellId z prawdziwą pozycją. Obniż speedFactor tego typu w ENEMIES (defs.ts) albo ' +
-        'zmień MotionContext (termSpeedCells/spacing/radius).',
+        `updateMovement: jednostka ${u.type} (speedFactor=${def.speedFactor}) pokonuje ` +
+          `${angleStep} rad/tick — nie mniej niż kątowy rozstaw komórek (${cellAngularSpacing} rad). ` +
+          'nearestLocalCell przeszukuje tylko bieżącą komórkę i jej sąsiadów, więc taki krok cicho ' +
+          'rozjeżdża cellId z prawdziwą pozycją. Obniż speedFactor tego typu w ENEMIES (defs.ts) albo ' +
+          'zmień MotionContext (termSpeedCells/spacing/radius).',
       );
     }
 
