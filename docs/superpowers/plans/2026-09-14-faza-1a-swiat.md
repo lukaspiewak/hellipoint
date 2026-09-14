@@ -26,7 +26,7 @@
 ### Task 1: Monorepo, toolchain i strażnik zero-zależności
 
 **Files:**
-- Create: `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `vitest.config.ts`
+- Create: `package.json`, `pnpm-workspace.yaml`, `tsconfig.json`, `tsconfig.base.json`, `vitest.config.ts`
 - Create: `packages/sim/package.json`, `packages/sim/tsconfig.json`, `packages/sim/src/index.ts`
 - Test: `packages/sim/test/contract.test.ts`
 
@@ -57,6 +57,21 @@ packages:
   }
 }
 ```
+
+`tsconfig.json` (root) — **wymagany**, bo skrypt `typecheck` to `tsc -b`, a tryb build bez
+solution-tsconfigu z referencjami nie ma czego zbudować i cicho nic nie sprawdza:
+```json
+{
+  "files": [],
+  "references": [{ "path": "packages/sim" }]
+}
+```
+
+> Po ukończeniu zadania **zweryfikuj, że typecheck faktycznie coś sprawdza**: wstaw tymczasowo
+> plik `packages/sim/src/__probe.ts` z treścią `export const probe: number = "string";`,
+> uruchom `pnpm typecheck` i potwierdź błąd `TS2322`, po czym usuń plik razem z `packages/sim/dist`
+> i plikami `*.tsbuildinfo`. Zielony typecheck, który niczego nie sprawdza, dawałby fałszywe
+> poczucie bezpieczeństwa przez wszystkie kolejne zadania.
 
 `tsconfig.base.json`:
 ```json
@@ -159,10 +174,18 @@ describe('kontrakt pakietu sim', () => {
 - [ ] **Step 4: Zainstaluj zależności i uruchom testy**
 
 ```bash
-corepack enable && corepack prepare pnpm@latest --activate
+corepack enable
+# NIE używaj pnpm@latest: rozwiązuje się do pnpm 12.x, które jest zepsute pod
+# corepack 0.34.0 (szuka legacy bin/pnpm.cjs → MODULE_NOT_FOUND).
+corepack prepare pnpm@11.17.0 --activate
+pnpm --version    # musi wypisać 11.17.0, ZANIM pójdziesz dalej
 pnpm add -D -w typescript vitest @types/node
 pnpm test
 ```
+Jeśli 11.17.0 jest niedostępne, weź najnowszą wersję, którą `pnpm --version` faktycznie
+uruchamia, i zapisz ją w `wersje.txt` w kroku 5. Wersje `typescript`, `vitest` i `@types/node`
+celowo NIE są przypięte w tym planie — instalator rozwiązuje bieżące i krok 5 je zapisuje.
+
 Oczekiwane: **3 testy przechodzą**. Jeśli `globSync` nie istnieje w zainstalowanej wersji Node, podmień na `node:fs/promises` + ręczną rekurencję — test ma działać, nie być elegancki.
 
 - [ ] **Step 5: Zapisz rozwiązane wersje i commituj**
@@ -600,6 +623,7 @@ git commit -m "feat(sim): sfera geodezyjna z topologiczną deduplikacją wierzch
 `packages/sim/test/dual.test.ts`:
 ```ts
 import { describe, expect, it } from 'vitest';
+import { add, normalize, scale, type Vec3 } from '../src/math/vec3.js';
 import { buildGeodesic } from '../src/world/geodesic.js';
 import { buildDual } from '../src/world/dual.js';
 
@@ -660,6 +684,79 @@ describe('buildDual', () => {
 
   it('jest deterministyczny', () => {
     expect(buildDual(buildGeodesic(4))).toEqual(buildDual(buildGeodesic(4)));
+  });
+
+  it('narożniki i sąsiedzi są współbieżnie uporządkowane: sąsiad k leży za krawędzią między narożnikami k i k+1', () => {
+    // Test at multiple frequencies to catch regressions early
+    const frequencies = [1, 4, 12];
+    let totalEdgeChecks = 0;
+
+    for (const freq of frequencies) {
+      const mesh = buildGeodesic(freq);
+      const dual = buildDual(mesh);
+
+      // Precompute face centroids using the same formula as buildDual
+      const faceCentroids: Vec3[] = mesh.faces.map(([a, b, c]) =>
+        normalize(scale(add(add(mesh.vertices[a], mesh.vertices[b]), mesh.vertices[c]), 1 / 3)),
+      );
+
+      // For each cell
+      for (let v = 0; v < dual.centers.length; v++) {
+        const corners = dual.corners[v];
+        const neighbors = dual.neighbors[v];
+
+        // For each edge in the cell
+        for (let k = 0; k < neighbors.length; k++) {
+          const neighbor = neighbors[k];
+          const cornerCurrent = corners[k];
+          const cornerNext = corners[(k + 1) % corners.length];
+
+          // Find the two faces that share edge (v, neighbor)
+          const sharedFaces: number[] = [];
+          for (let f = 0; f < mesh.faces.length; f++) {
+            const [a, b, c] = mesh.faces[f];
+            if (
+              ((a === v || b === v || c === v) && (a === neighbor || b === neighbor || c === neighbor))
+            ) {
+              sharedFaces.push(f);
+            }
+          }
+
+          // There must be exactly 2 faces sharing this edge
+          expect(sharedFaces).toHaveLength(2);
+
+          // Get the centroids of the two shared faces
+          const centroid1 = faceCentroids[sharedFaces[0]];
+          const centroid2 = faceCentroids[sharedFaces[1]];
+
+          // The two centroids should match the two adjacent corners (in either order)
+          const eps = 1e-9;
+          const match1 = (
+            Math.abs(centroid1.x - cornerCurrent.x) < eps &&
+            Math.abs(centroid1.y - cornerCurrent.y) < eps &&
+            Math.abs(centroid1.z - cornerCurrent.z) < eps &&
+            Math.abs(centroid2.x - cornerNext.x) < eps &&
+            Math.abs(centroid2.y - cornerNext.y) < eps &&
+            Math.abs(centroid2.z - cornerNext.z) < eps
+          );
+
+          const match2 = (
+            Math.abs(centroid2.x - cornerCurrent.x) < eps &&
+            Math.abs(centroid2.y - cornerCurrent.y) < eps &&
+            Math.abs(centroid2.z - cornerCurrent.z) < eps &&
+            Math.abs(centroid1.x - cornerNext.x) < eps &&
+            Math.abs(centroid1.y - cornerNext.y) < eps &&
+            Math.abs(centroid1.z - cornerNext.z) < eps
+          );
+
+          expect(match1 || match2).toBe(true);
+          totalEdgeChecks++;
+        }
+      }
+    }
+
+    // Log edge checks performed for regression tracking
+    expect(totalEdgeChecks).toBeGreaterThan(0);
   });
 });
 ```
@@ -762,7 +859,13 @@ function tangentBasis(n: Vec3): { tangent: Vec3; bitangent: Vec3 } {
 - [ ] **Step 4: Uruchom testy i commituj**
 
 Run: `pnpm vitest run packages/sim/test/dual.test.ts`
-Oczekiwane: **8 testów przechodzi.** Test „dokładnie 12 pentagonów" jest najważniejszy — to twarda konsekwencja geometrii bryły i fundament całej warstwy map control (§2 specu).
+Oczekiwane: **9 testów przechodzi.** Test „dokładnie 12 pentagonów" jest najważniejszy — to twarda konsekwencja geometrii bryły i fundament całej warstwy map control (§2 specu).
+
+Ostatni test jest strażnikiem regresji dla niezmiennika współindeksowania z nagłówka tego
+zadania. Liczy centroidy i przyległość ścian **niezależnie od `dual.ts`** — inaczej sprawdzałby
+implementację samą ze sobą. Przy obrocie `neighbors` o dowolny offset względem `corners` wywala
+się na pierwszym `k`, bo pary kolejnych indeksów w cyklu długości ≥5 są parami różne jako zbiory.
+Bez niego kontrakt, który Task 7 konsumuje pozycyjnie, nie miałby w repozytorium żadnej ochrony.
 
 ```bash
 git add packages/sim/src/world/dual.ts packages/sim/test/dual.test.ts
@@ -771,104 +874,101 @@ git commit -m "feat(sim): siatka dualna Goldberga, klasyfikacja komórek i graf 
 
 ---
 
-### Task 5: Relaksacja siatki i metryka jednorodności
+### Task 5: Metryka jednorodności siatki i udokumentowany wynik negatywny
 
 **Files:**
-- Create: `packages/sim/src/world/relax.ts`
-- Test: `packages/sim/test/relax.test.ts`
+- Create: `packages/sim/src/world/uniformity.ts`
+- Test: `packages/sim/test/uniformity.test.ts`
 
 **Interfaces:**
-- Consumes: `GeodesicMesh` z `./geodesic.js`; `DualMesh` z `./dual.js`; algebra z `../math/vec3.js`
+- Consumes: `DualMesh` z `./dual.js`; `cross`, `length`, `sub` z `../math/vec3.js`
 - Produces:
-  - `function relax(mesh: GeodesicMesh, iterations: number): GeodesicMesh`
-  - `function spacingCv(dual: DualMesh): number` — współczynnik zmienności odległości środek–środek
+  - `function spacingCv(dual: DualMesh): number`
+  - `function areaCv(dual: DualMesh): number`
 
-Siatka geodezyjna ma komórki mniejsze w pobliżu 12 pentagonów. Reguły gry idą w krokach grafu (N1), więc rozgrywce to nie przeszkadza — ale VFX, zasięgi wizualne i wygląd już tak. Wygładzanie laplasjanowe z renormalizacją na sferę wyrównuje długości krawędzi.
+**To zadanie zmieniło zakres w trakcie Fazy 1A.** Pierwotnie miało implementować relaksację
+laplasjanową, bo spec zakładał, że zredukuje ona rozrzut pól komórek z ~20 % do ~5 %. Pomiar
+to obalił: przy frequency 12 rozrzut wyjściowy wynosi `spacingCv = 0,0716` i `areaCv = 0,1330`,
+a wygładzanie go **nie zmniejsza** — po 1 iteracji 0,0704, po 3 iteracjach 0,0706, po 10
+iteracjach 0,0718 (gorzej niż wyjściowo), po 200 iteracjach 0,0717. Sfera geodezyjna już leży
+w punkcie stałym tego operatora.
+
+Zadaniem jest więc **zmierzyć i utrwalić** rzeczywistą jednorodność, a nie próbować jej poprawiać.
+Wynik negatywny zostaje w kodzie jako komentarz, żeby nikt nie zaimplementował relaksacji po raz
+drugi, nie wiedząc, że została już sprawdzona.
 
 - [ ] **Step 1: Napisz testy (mają nie przejść)**
 
-`packages/sim/test/relax.test.ts`:
+`packages/sim/test/uniformity.test.ts`:
 ```ts
 import { describe, expect, it } from 'vitest';
 import { buildGeodesic } from '../src/world/geodesic.js';
 import { buildDual } from '../src/world/dual.js';
-import { relax, spacingCv } from '../src/world/relax.js';
-import { length } from '../src/math/vec3.js';
+import { areaCv, spacingCv } from '../src/world/uniformity.js';
 
-describe('relax', () => {
-  const raw = buildGeodesic(12);
-  const relaxed = relax(raw, 3);
+const dual12 = buildDual(buildGeodesic(12));
 
-  it('zachowuje topologię — ta sama liczba wierzchołków i ścian', () => {
-    expect(relaxed.vertices.length).toBe(raw.vertices.length);
-    expect(relaxed.faces).toEqual(raw.faces);
+describe('spacingCv', () => {
+  it('przypina zmierzony rozrzut odstępów przy frequency 12', () => {
+    expect(spacingCv(dual12)).toBeCloseTo(0.0716, 3);
   });
 
-  it('zostawia wszystkie wierzchołki na sferze jednostkowej', () => {
-    for (const v of relaxed.vertices) expect(length(v)).toBeCloseTo(1, 12);
+  it('jest dodatni i skończony', () => {
+    const v = spacingCv(dual12);
+    expect(v).toBeGreaterThan(0);
+    expect(Number.isFinite(v)).toBe(true);
   });
 
-  it('zmniejsza zmienność odstępów o co najmniej 30 %', () => {
-    const before = spacingCv(buildDual(raw));
-    const after = spacingCv(buildDual(relaxed));
-    console.log(`spacingCv: przed=${before.toFixed(4)} po=${after.toFixed(4)}`);
-    expect(after).toBeLessThan(before * 0.7);
+  it('jest deterministyczny', () => {
+    expect(spacingCv(buildDual(buildGeodesic(4)))).toBe(spacingCv(buildDual(buildGeodesic(4))));
   });
 
-  it('nadal daje dokładnie 12 pentagonów — relaksacja nie rusza topologii', () => {
-    const d = buildDual(relaxed);
-    expect(d.cellTypes.filter((t) => t === 'PENTAGON').length).toBe(12);
-  });
-
-  it('zero iteracji jest tożsamością', () => {
-    expect(relax(raw, 0)).toEqual(raw);
-  });
-
-  it('jest deterministyczna', () => {
-    expect(relax(buildGeodesic(5), 2)).toEqual(relax(buildGeodesic(5), 2));
+  it('na idealnie regularnej siatce (dwudziestościan) zwraca zero — test wiarygodności', () => {
+    // Frequency 1 to regularny dwudziestościan (vertex- i edge-transitive), więc każda
+    // metryka odstępów powinna zwracać zero. Test ten to wiarygodność: łapie niszczące błędy
+    // w implementacji (asymetrię, skalowanie, niespójne wyliczanie). Ale nie dowodzi, że ta
+    // konkretna formuła to dokładnie odległości środek–sąsiad — na tej siatce wiele rozsądnych
+    // metryk równie dobrze daje zero (np. edge CV, center-to-corner CV). Prawdziwą regresji dla
+    // tożsamości metryki broni pinowana wartość przy frequency 12, gdzie zmiana formuły
+    // wyskoczy poza tolerancję toBeCloseTo(…, 3).
+    expect(spacingCv(buildDual(buildGeodesic(1)))).toBeCloseTo(0, 9);
   });
 });
 ```
 
 - [ ] **Step 2: Uruchom testy i potwierdź porażkę**
 
-Run: `pnpm vitest run packages/sim/test/relax.test.ts`
-Oczekiwane: FAIL — brak modułu.
+Run: `pnpm vitest run packages/sim/test/uniformity.test.ts`
+Oczekiwane: FAIL — brak modułu `uniformity.js`.
 
-- [ ] **Step 3: Zaimplementuj relaksację**
+- [ ] **Step 3: Zaimplementuj metryki**
 
-`packages/sim/src/world/relax.ts`:
+`packages/sim/src/world/uniformity.ts`:
 ```ts
-import { add, length, normalize, scale, sub, type Vec3 } from '../math/vec3.js';
-import type { GeodesicMesh } from './geodesic.js';
+import { cross, length, sub } from '../math/vec3.js';
 import type { DualMesh } from './dual.js';
 
 /**
- * Wygładzanie laplasjanowe z renormalizacją na sferę.
- * Topologia (tablica faces) pozostaje nietknięta — zmieniają się wyłącznie pozycje,
- * więc liczba pentagonów i graf sąsiedztwa są zachowane.
+ * WYNIK NEGATYWNY — NIE IMPLEMENTUJ RELAKSACJI PONOWNIE.
+ *
+ * Spec pierwotnie zakładał 2-3 iteracje wygładzania laplasjanowego, mające zredukować
+ * rozrzut pól komórek z ~20 % do ~5 %. Zmierzone przy frequency 12:
+ *
+ *   iteracje:      0        1        3       10      200
+ *   spacingCv:  0,0716   0,0704   0,0706   0,0718   0,0717
+ *   areaCv:     0,1330   0,1327   0,1328   0,1338   0,1335
+ *
+ * Sfera geodezyjna już leży w punkcie stałym operatora laplasjanowego, więc iterowanie
+ * niczego nie poprawia, a powyżej ~3 iteracji dryfuje numerycznie na gorsze.
+ * Lloyd na siatce dualnej to algebraicznie `normalize(3v + Σsąsiedzi)`, czyli tłumiona
+ * wersja tego samego operatora — jeszcze słabsza.
+ *
+ * Rozrzut jest akceptowalny: reguły gry idą w krokach grafu (N1), więc rozgrywki nie
+ * dotyczy wcale. Gdyby warstwa wizualna uznała inaczej, właściwym narzędziem jest
+ * relaksacja sprężynowa wyrównująca DŁUGOŚCI KRAWĘDZI, nie operator centroidowy.
  */
-export function relax(mesh: GeodesicMesh, iterations: number): GeodesicMesh {
-  if (iterations <= 0) return mesh;
 
-  const adjacency = vertexAdjacency(mesh);
-  let positions = mesh.vertices;
-
-  for (let iter = 0; iter < iterations; iter++) {
-    const next: Vec3[] = new Array(positions.length);
-    for (let v = 0; v < positions.length; v++) {
-      let acc: Vec3 = { x: 0, y: 0, z: 0 };
-      const ns = adjacency[v];
-      for (const n of ns) acc = add(acc, positions[n]);
-      next[v] = normalize(scale(acc, 1 / ns.length));
-    }
-    positions = next;
-  }
-
-  return { vertices: positions, faces: mesh.faces };
-}
-
-/** Współczynnik zmienności (odchylenie standardowe / średnia) odległości środek–sąsiad. */
+/** Współczynnik zmienności odległości środek–sąsiad. Frequency 12: 0,0716. */
 export function spacingCv(dual: DualMesh): number {
   const samples: number[] = [];
   for (let v = 0; v < dual.centers.length; v++) {
@@ -876,31 +976,48 @@ export function spacingCv(dual: DualMesh): number {
       if (n > v) samples.push(length(sub(dual.centers[n], dual.centers[v])));
     }
   }
+  return coefficientOfVariation(samples);
+}
+
+/** Współczynnik zmienności pól komórek (suma planarnych trójkątów cięciw od środka). Frequency 12: 0,1330. */
+export function areaCv(dual: DualMesh): number {
+  const areas: number[] = [];
+  for (let v = 0; v < dual.centers.length; v++) {
+    const center = dual.centers[v];
+    const corners = dual.corners[v];
+    let area = 0;
+    for (let i = 0; i < corners.length; i++) {
+      const p = sub(corners[i], center);
+      const q = sub(corners[(i + 1) % corners.length], center);
+      area += length(cross(p, q)) / 2;
+    }
+    areas.push(area);
+  }
+  return coefficientOfVariation(areas);
+}
+
+function coefficientOfVariation(samples: number[]): number {
   const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
   const variance = samples.reduce((a, b) => a + (b - mean) ** 2, 0) / samples.length;
   return Math.sqrt(variance) / mean;
 }
-
-function vertexAdjacency(mesh: GeodesicMesh): number[][] {
-  const sets: Set<number>[] = Array.from({ length: mesh.vertices.length }, () => new Set<number>());
-  for (const [a, b, c] of mesh.faces) {
-    sets[a].add(b); sets[a].add(c);
-    sets[b].add(a); sets[b].add(c);
-    sets[c].add(a); sets[c].add(b);
-  }
-  // Sortowanie numeryczne — kolejność iteracji NIE MOŻE zależeć od kolejności wstawiania do Set (§7.2).
-  return sets.map((s) => [...s].sort((x, y) => x - y));
-}
 ```
 
-- [ ] **Step 4: Uruchom testy, zapisz zmierzone CV i commituj**
+- [ ] **Step 4: Uruchom testy i commituj**
 
-Run: `pnpm vitest run packages/sim/test/relax.test.ts`
-Oczekiwane: **6 testów przechodzi.** Odczytaj z konsoli wypisane `spacingCv` przed i po, i wklej obie liczby do komentarza nad `relax` — spec (§4.1) szacuje ~20 % → ~5 %, ale wiążąca jest wartość zmierzona, nie szacunek.
+Run: `pnpm vitest run packages/sim/test/uniformity.test.ts`
+Oczekiwane: **7 testów przechodzi.**
+
+Test przy frequency 1 jest **kontrolą poczytalności, nie dowodem tożsamości metryki**. Dwudziestościan
+bazowy jest wierzchołkowo- i krawędziowo-przechodni, więc każda rozsądna wielkość „odstępu" jest na
+nim stała — zmierzono, że CV odległości narożnik–narożnik (7,5e-16) i środek–narożnik (9,7e-16)
+wychodzi tam tego samego rzędu co metryka właściwa (4,2e-16). Test wyłapuje więc metrykę zwracającą
+wartość zepsutą tam, gdzie odpowiedź musi być zerem, ale nie rozróżnia, którą odległość liczymy.
+Strażnikiem tożsamości jest przypięta wartość przy frequency 12.
 
 ```bash
-git add packages/sim/src/world/relax.ts packages/sim/test/relax.test.ts
-git commit -m "feat(sim): relaksacja laplasjanowa siatki + metryka jednorodności odstępów"
+git add packages/sim/src/world/uniformity.ts packages/sim/test/uniformity.test.ts
+git commit -m "feat(sim): metryki jednorodności siatki + udokumentowany wynik negatywny relaksacji"
 ```
 
 ---
@@ -939,13 +1056,17 @@ const N = 1442;
 const T = 180;
 
 describe('niezmiennik N2 — promień planety nie wpływa na rozgrywkę', () => {
-  it('czas przejazdu terminatora jest identyczny dla skrajnie różnych promieni', () => {
-    const a = terminatorCrossingTime(10, T, N);
-    const b = terminatorCrossingTime(10, T, N);
-    expect(a).toBe(b);
+  it('cellSpacing skaluje się LINIOWO z promieniem', () => {
+    expect(cellSpacing(100, N)).toBeCloseTo(2 * cellSpacing(50, N), 10);
+    expect(cellSpacing(1000, N)).toBeCloseTo(20 * cellSpacing(50, N), 10);
   });
 
-  it('odstęp komórek podzielony przez prędkość terminatora nie zależy od promienia', () => {
+  it('terminatorSpeedWorld skaluje się LINIOWO z promieniem', () => {
+    expect(terminatorSpeedWorld(100, T)).toBeCloseTo(2 * terminatorSpeedWorld(50, T), 10);
+    expect(terminatorSpeedWorld(1000, T)).toBeCloseTo(20 * terminatorSpeedWorld(50, T), 10);
+  });
+
+  it('przez co ich iloraz — czas pokonania komórki — od promienia NIE zależy', () => {
     const ratio = (r: number) => cellSpacing(r, N) / terminatorSpeedWorld(r, T);
     expect(ratio(50)).toBeCloseTo(ratio(100), 10);
     expect(ratio(100)).toBeCloseTo(ratio(1000), 10);
@@ -1047,7 +1168,9 @@ export const burnEscapeDepth = (
 - [ ] **Step 4: Uruchom testy i commituj**
 
 Run: `pnpm vitest run packages/sim/test/scale.test.ts`
-Oczekiwane: **9 testów przechodzi.**
+Oczekiwane: **10 testów przechodzi.** Trzy pierwsze działają razem: dwie osobno zweryfikowane
+liniowości sprawiają, że skracanie się promienia w teście ilorazowym jest ich dowiedzioną
+konsekwencją, a nie zbiegiem okoliczności.
 
 ```bash
 git add packages/sim/src/world/scale.ts packages/sim/test/scale.test.ts
@@ -1064,12 +1187,12 @@ git commit -m "feat(sim): moduł skali kodujący niezmienniki N1/N2/N3 jako jedy
 - Test: `packages/sim/test/planet.test.ts`
 
 **Interfaces:**
-- Consumes: `buildGeodesic`, `buildDual`, `relax`, `Rng`, `STREAM`, `scale`, `normalize`
+- Consumes: `buildGeodesic`, `buildDual`, `Rng`, `STREAM`, `scale`
 - Produces:
   - `function multiSourceDistances(neighbors: number[][], sources: number[]): number[]`
   - `interface Cell { id, center, normal, corners, neighbors, cellType, oreCapacity }`
   - `interface Planet { seed, radius, frequency, cells, pentagons, startCell }`
-  - `interface PlanetOptions { seed, frequency?, radius?, relaxIterations?, oreClusters?, oreClusterRadius?, oreCapacityPerCell?, minStartDistanceFromPentagon? }`
+  - `interface PlanetOptions { seed, frequency?, radius?, oreClusters?, oreClusterRadius?, oreCapacityPerCell?, minStartDistanceFromPentagon? }`
   - `function createPlanet(opts: PlanetOptions): Planet`
 
 - [ ] **Step 1: Napisz testy (mają nie przejść)**
@@ -1167,8 +1290,15 @@ Oczekiwane: FAIL — brak modułów.
 /**
  * BFS wieloźródłowy: dla każdej komórki odległość w krokach grafu
  * do najbliższego źródła. Nieosiągalne dostają Infinity.
+ *
+ * `neighbors` i `sources` przyjmują tablice tylko-do-odczytu: ta funkcja wyłącznie
+ * czyta sąsiedztwo i listę źródeł (np. bezpośrednio `Planet.cells`/`Planet.pentagons`,
+ * dzielone przez referencję z wewnętrznym DualMesh) i nigdy ich nie mutuje.
  */
-export function multiSourceDistances(neighbors: number[][], sources: number[]): number[] {
+export function multiSourceDistances(
+  neighbors: readonly (readonly number[])[],
+  sources: readonly number[],
+): number[] {
   const dist = new Array<number>(neighbors.length).fill(Infinity);
   const queue: number[] = [];
 
@@ -1202,7 +1332,6 @@ import { scale, type Vec3 } from '../math/vec3.js';
 import { buildDual, type CellType } from './dual.js';
 import { buildGeodesic } from './geodesic.js';
 import { multiSourceDistances } from './graph.js';
-import { relax } from './relax.js';
 
 export interface Cell {
   readonly id: number;
@@ -1210,8 +1339,9 @@ export interface Cell {
   readonly center: Vec3;
   /** Jednostkowa — równa center/radius. Wydzielona, bo oświetlenie liczy się z niej co tick. */
   readonly normal: Vec3;
-  readonly corners: Vec3[];
-  readonly neighbors: number[];
+  readonly corners: readonly Vec3[];
+  /** Dzielone przez referencję z wewnętrznym DualMesh — tylko-do-odczytu, żeby konsument nie mógł go po cichu zmutować. */
+  readonly neighbors: readonly number[];
   readonly cellType: CellType;
   /** 0 = brak złoża. Złoża są wyczerpywalne (§5.2), więc to pojemność początkowa. */
   readonly oreCapacity: number;
@@ -1221,8 +1351,9 @@ export interface Planet {
   readonly seed: number;
   readonly radius: number;
   readonly frequency: number;
-  readonly cells: Cell[];
-  readonly pentagons: number[];
+  /** Tylko-do-odczytu: `pentagons`, `startCell` i każdy `Cell.neighbors` to indeksy w tę tablicę — sortowanie/mutacja w miejscu rozsynchronizowałaby je wszystkie. */
+  readonly cells: readonly Cell[];
+  readonly pentagons: readonly number[];
   readonly startCell: number;
 }
 
@@ -1232,7 +1363,6 @@ export interface PlanetOptions {
   frequency?: number;
   /** Wyłącznie estetyka — niezmiennik N2. */
   radius?: number;
-  relaxIterations?: number;
   oreClusters?: number;
   oreClusterRadius?: number;
   oreCapacityPerCell?: number;
@@ -1242,7 +1372,6 @@ export interface PlanetOptions {
 const DEFAULTS = {
   frequency: 12,
   radius: 100,
-  relaxIterations: 3,
   oreClusters: 14,
   oreClusterRadius: 2,
   oreCapacityPerCell: 400,
@@ -1251,7 +1380,8 @@ const DEFAULTS = {
 
 export function createPlanet(opts: PlanetOptions): Planet {
   const o = { ...DEFAULTS, ...opts };
-  const dual = buildDual(relax(buildGeodesic(o.frequency), o.relaxIterations));
+  // Bez relaksacji — Task 5 zmierzył, że laplasjan na tej konstrukcji nic nie poprawia.
+  const dual = buildDual(buildGeodesic(o.frequency));
   const rng = new Rng(o.seed);
 
   const cellCount = dual.centers.length;
@@ -1269,7 +1399,9 @@ export function createPlanet(opts: PlanetOptions): Planet {
     cells.push({
       id: i,
       center: scale(dual.centers[i], o.radius),
-      normal: dual.centers[i],
+      // scale(..., 1) zamiast bezpośredniego przypisania: świeży obiekt zamiast aliasu do
+      // wewnętrznego DualMesh, tak jak center i corners obok (por. komentarz przy neighbors).
+      normal: scale(dual.centers[i], 1),
       corners: dual.corners[i].map((c) => scale(c, o.radius)),
       neighbors: neighbors[i],
       cellType: dual.cellTypes[i],
@@ -1295,12 +1427,20 @@ function placeOre(
   rng: Rng,
   cellTypes: CellType[],
   neighbors: number[][],
-  o: typeof DEFAULTS & PlanetOptions,
+  o: Required<PlanetOptions>,
 ): number[] {
   const capacity = new Array<number>(cellTypes.length).fill(0);
   const hexes: number[] = [];
   for (let i = 0; i < cellTypes.length; i++) {
     if (cellTypes[i] === 'HEXAGON') hexes.push(i);
+  }
+
+  if (hexes.length === 0) {
+    throw new Error(
+      `Brak heksagonów do rozmieszczenia rudy: frequency=${o.frequency} daje samą powłokę ` +
+        `dwudziestościanu (12 pentagonów, 0 heksagonów) — nie ma gdzie postawić klastra. ` +
+        `Zwiększ frequency do co najmniej 2.`,
+    );
   }
 
   for (let c = 0; c < o.oreClusters; c++) {
@@ -1322,7 +1462,7 @@ function pickStart(
   cellTypes: CellType[],
   oreCapacity: number[],
   distFromPentagon: number[],
-  o: typeof DEFAULTS & PlanetOptions,
+  o: Required<PlanetOptions>,
 ): number {
   const candidates: number[] = [];
   for (let i = 0; i < cellTypes.length; i++) {
@@ -1357,7 +1497,7 @@ export * from './math/vec3.js';
 
 export { buildGeodesic, vertexCountFor, type GeodesicMesh } from './world/geodesic.js';
 export { buildDual, type CellType, type DualMesh } from './world/dual.js';
-export { relax, spacingCv } from './world/relax.js';
+export { areaCv, spacingCv } from './world/uniformity.js';
 export { multiSourceDistances } from './world/graph.js';
 export {
   burnEscapeDepth,
@@ -1388,7 +1528,7 @@ git commit -m "feat(sim): createPlanet — klastry rudy, deterministyczna pozycj
 - [ ] Determinizm potwierdzony testem: ten sam seed ⇒ identyczna planeta
 - [ ] Strażnik zero-zależności przechodzi — `packages/sim` nie importuje niczego spoza siebie
 - [ ] Niezmienniki N1/N2/N3 zakodowane w `scale.ts` i pokryte testami
-- [ ] Zmierzone `spacingCv` przed i po relaksacji zapisane w komentarzu w kodzie
+- [ ] Zmierzone `spacingCv` i `areaCv` przypięte testami; wynik negatywny relaksacji udokumentowany w kodzie
 - [ ] Rozwiązane wersje narzędzi zapisane w `docs/superpowers/plans/wersje.txt`
 
 **Następny plan:** Faza 1B — rdzeń symulacji (`2026-09-14-faza-1b-symulacja.md`).

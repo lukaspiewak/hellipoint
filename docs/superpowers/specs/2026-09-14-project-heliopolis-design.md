@@ -52,18 +52,29 @@ Pięć decyzji podjętych świadomie; każda zmiana którejkolwiek wymaga rewizj
 
 ### 4.1 Geometria
 
-Siatka dualna (bryła Goldberga) z `IcosahedronGeometry(R, detail)`.
+Siatka dualna (bryła Goldberga) nad sferą geodezyjną o zadanej **częstotliwości**.
 
 ```
-N = 10·(detail+1)² + 2          liczba komórek
+N = 10·frequency² + 2           liczba komórek
 ```
 
-Zawsze dokładnie **12 pentagonów**, reszta heksagony. Wartość startowa `detail = 11` → **N = 1442** (1430 hex + 12 pent).
+Zawsze dokładnie **12 pentagonów**, reszta heksagony. Wartość startowa `frequency = 12` → **N = 1442** (1430 hex + 12 pent).
+
+> **Konwencja nazewnicza — uwaga przy czytaniu starszych notatek.** Three.js parametryzuje
+> `IcosahedronGeometry` argumentem `detail`, gdzie `frequency = detail + 1`. Kod symulacji
+> operuje wyłącznie na `frequency`, bo nie używa Three.js w ogóle. `detail = 11` z wcześniejszej
+> wersji tego dokumentu to ta sama siatka co dzisiejsze `frequency = 12`.
 
 Pipeline generowania:
-1. `IcosahedronGeometry` zwraca geometrię **nieindeksowaną** z duplikatami wierzchołków → wymagane weldowanie przez spatial hash z epsilonem.
+1. **Sferę geodezyjną generuje sam rdzeń symulacji, indeksowaną, bez Three.js.** Każda ściana
+dwudziestościanu dzielona jest siatką barycentryczną, a punkty wspólne krawędzi i narożników
+deduplikowane **kluczem topologicznym** (pozycja w siatce: narożnik / krawędź / wnętrze ściany),
+nie geometrycznym. To eliminuje weldowanie przez spatial hash z epsilonem, którego pierwotnie
+wymagała nieindeksowana geometria z Three.js, i czyni tożsamość wierzchołka **dokładną** zamiast
+zależnej od tolerancji — co jest powodem, dla którego determinizm §7.2 jest strukturalny,
+a nie szczęśliwy.
 2. Konwersja do siatki dualnej: dla każdego wierzchołka oryginału tworzona jest komórka, której wierzchołkami są centroidy przyległych trójkątów.
-3. **2–3 iteracje relaksacji Lloyda** — redukuje wariancję powierzchni komórek z ~20 % do ~5 %. Konieczne, bo VFX i wizualne zasięgi operują w metrach, podczas gdy reguły w krokach grafu.
+3. **Bez relaksacji.** Pierwotnie zakładano 2–3 iteracje wygładzania, mające zredukować wariancję pól komórek z ~20 % do ~5 %. **Zmierzone w Fazie 1A i obalone:** rzeczywisty rozrzut przy frequency 12 to `spacingCv = 0,0716` i `areaCv = 0,1330`, a wygładzanie laplasjanowe go nie zmniejsza — po 1 iteracji 0,0704, po 3 iteracjach 0,0706, po 10 iteracjach **0,0718 (gorzej niż wyjściowo)**, po 200 iteracjach 0,0717. Sfera geodezyjna już znajduje się w punkcie stałym tego operatora, więc iterowanie tylko dryfuje numerycznie. Rozrzut jest zresztą akceptowalny: reguły idą w krokach grafu (N1), więc rozgrywki nie dotyczy w ogóle, a 13 % rozrzutu pól na 1442 komórkach jest wizualnie łagodne. Gdyby Faza 4 uznała inaczej, właściwym narzędziem jest relaksacja sprężynowa wyrównująca **długości krawędzi**, a nie jakikolwiek operator centroidowy — Lloyd na siatce dualnej jest algebraicznie tłumioną wersją laplasjanu (`normalize(3v + Σsąsiedzi)`), czyli jeszcze słabszą.
 4. Klasyfikacja: 5 sąsiadów → `PENTAGON`, 6 sąsiadów → `HEXAGON`.
 
 **Niezmiennik N1 — jednostki.** Wszystkie reguły rozgrywki (zasięgi, promienie, prędkości, zasięg sieci energetycznej) wyrażone są w **krokach grafu** i **krokach/sekundę**. Jednostki świata występują wyłącznie w renderze i VFX. Draft mieszał obie konwencje w jednym obiekcie konfiguracji (`range: 15` w metrach obok `connectionRadius: 3` w heksach) — to jest zakazane.
@@ -75,16 +86,22 @@ Pipeline generowania:
 ### 4.2 Struktura danych komórki
 
 ```ts
-interface CellData {
-  id: number;
-  center: Vec3;            // stała w przestrzeni świata — planeta się nie obraca
-  normal: Vec3;
-  neighbors: number[];     // 5 lub 6
-  cellType: 'HEXAGON' | 'PENTAGON';
-  building: BuildingId | null;
-  oreRemaining: number;    // 0 = brak złoża lub wyczerpane
+interface Cell {
+  readonly id: number;              // zawsze równe indeksowi w Planet.cells
+  readonly center: Vec3;            // stała w przestrzeni świata — planeta się nie obraca
+  readonly normal: Vec3;            // jednostkowa; oświetlenie liczy się z niej co tick
+  readonly corners: readonly Vec3[];
+  readonly neighbors: readonly number[];   // 5 albo 6
+  readonly cellType: 'HEXAGON' | 'PENTAGON';
+  readonly oreCapacity: number;     // 0 = brak złoża. POJEMNOŚĆ POCZĄTKOWA, nie stan bieżący
 }
 ```
+
+**Komórka jest niemutowalna i nie trzyma stanu rozgrywki.** Budynki i pozostała ruda żyją
+w `SimState` jako tablice indeksowane `cellId` (§7.2) — dzięki temu `Planet` da się zbudować raz
+z seeda i współdzielić między zapisami stanu, a snapshot symulacji nie musi nieść geometrii.
+Wszystkie pola są `readonly` łącznie z tablicami: indeksy w `neighbors`, `pentagons` i `startCell`
+wskazują na `cells`, więc mutacja w miejscu rozspójniłaby całą strukturę.
 
 Stan oświetlenia **nie jest polem komórki** — jest funkcją `light(cell, t) = saturate(dot(cell.normal, sunDir(t)))`, wyliczaną na żądanie. Brak stanu = brak desynchronizacji w multiplayerze.
 

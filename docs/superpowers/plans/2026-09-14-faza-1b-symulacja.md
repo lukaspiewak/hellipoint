@@ -14,6 +14,29 @@
 
 ---
 
+## Dwie rzeczy wyniesione z przeglądu końcowego Fazy 1A
+
+Obie są tanie teraz i drogie później, bo dotyczą kształtu API, wokół którego ta faza zastygnie.
+
+**`Rng` musi dostać snapshot i restore — w Task 1, razem ze stanem.** Dzisiejszy `Rng` trzyma
+stan w `private readonly s` i nie da się go ani odczytać, ani odtworzyć. Faza 1C umieszcza
+strumień fal na obiekcie `Sim`, a nie w `SimState`, więc `stateHash` go nie obejmuje. Dla testu
+determinizmu startującego od ticka 0 to bez znaczenia — i niewidoczne aż do pierwszej rzeczy,
+która od ticka 0 nie startuje: zapisu gry, dołączenia klienta, resynchronizacji autorytatywnego
+snapshotu w Fazie 5. Wtedy odtworzenie `SimState` restartuje strumień fal od pozycji zero
+i rozjeżdża spawny wobec serwera. Dodaj `getState()` i `fromState()` do `Rng`, i **rozstrzygnij
+jawnie**, czy generatory symulacji mieszkają w `SimState` — to jest decyzja, nie szczegół.
+
+**`multiSourceDistances` zwraca `Infinity` dla nieosiągalnych, a `JSON.stringify(Infinity)`
+daje `null`.** W Fazie 1A nieszkodliwe, bo `Planet` nie przechowuje żadnych odległości. Ale
+Task 5 (sieć energetyczna) i Task 8 (pola przepływu) tej fazy wołają tę funkcję, a `SimState`
+ma być **w pełni serializowalny**. W momencie, w którym którykolwiek wynik BFS-a zostanie
+zapisany do stanu, snapshot i restore po cichu go uszkodzą — `Infinity` wróci jako `null`,
+a `null` w arytmetyce da `0`, czyli „osiągalne w zero kroków". Albo wprowadź sentinel `-1`,
+albo zapisz jako twardą regułę, że wynik BFS-a nigdy nie wchodzi do `SimState`.
+
+---
+
 ## Global Constraints
 
 - **Zero zależności runtime w `packages/sim`** — strażnik z Fazy 1A Task 1 musi zostać zielony.
