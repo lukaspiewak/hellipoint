@@ -196,10 +196,19 @@ describe('updateMovement', () => {
 
     const fields = buildAllFlowFields(s);
     const before = dot(normalize(s.units[0].pos), sunDir);
-    for (let i = 0; i < 100; i++) updateMovement(s, fields, light, sunDir, ctx);
+    for (let i = 0; i < 300; i++) updateMovement(s, fields, light, sunDir, ctx);
     const after = dot(normalize(s.units[0].pos), sunDir);
 
     expect(after).toBeLessThan(before); // oddaliła się od punktu podsłonecznego
+
+    // Asercja NOŚNA. Sam kierunek nie wystarcza: zmierzona ablacja (gałąź ucieczki
+    // wycięta, jednostka tylko podąża polem przepływu) też oddala się od słońca dla
+    // tego seeda — o 0,034 zamiast 0,294, bo CORE leży akurat w stronę nieco ciemniejszą.
+    // Kierunkowy test przechodziłby więc z USUNIĘTĄ funkcją, którą nazywa.
+    // Dotarcie do cienia rozróżnia absolutnie: ucieczka osiąga światło dokładnie 0
+    // po 222 tickach, a ablacja siada na CORE i zostaje na 0,4973 również po 600.
+    // 300 ticków to 222 plus zapas.
+    expect(light[s.units[0].cellId]).toBe(0);
   });
 
   it('jest deterministyczny', () => {
