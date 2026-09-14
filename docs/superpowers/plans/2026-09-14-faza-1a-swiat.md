@@ -874,104 +874,111 @@ git commit -m "feat(sim): siatka dualna Goldberga, klasyfikacja komórek i graf 
 
 ---
 
-### Task 5: Relaksacja siatki i metryka jednorodności
+### Task 5: Metryka jednorodności siatki i udokumentowany wynik negatywny
 
 **Files:**
-- Create: `packages/sim/src/world/relax.ts`
-- Test: `packages/sim/test/relax.test.ts`
+- Create: `packages/sim/src/world/uniformity.ts`
+- Test: `packages/sim/test/uniformity.test.ts`
 
 **Interfaces:**
-- Consumes: `GeodesicMesh` z `./geodesic.js`; `DualMesh` z `./dual.js`; algebra z `../math/vec3.js`
+- Consumes: `DualMesh` z `./dual.js`; `cross`, `length`, `sub` z `../math/vec3.js`
 - Produces:
-  - `function relax(mesh: GeodesicMesh, iterations: number): GeodesicMesh`
-  - `function spacingCv(dual: DualMesh): number` — współczynnik zmienności odległości środek–środek
+  - `function spacingCv(dual: DualMesh): number`
+  - `function areaCv(dual: DualMesh): number`
 
-Siatka geodezyjna ma komórki mniejsze w pobliżu 12 pentagonów. Reguły gry idą w krokach grafu (N1), więc rozgrywce to nie przeszkadza — ale VFX, zasięgi wizualne i wygląd już tak. Wygładzanie laplasjanowe z renormalizacją na sferę wyrównuje długości krawędzi.
+**To zadanie zmieniło zakres w trakcie Fazy 1A.** Pierwotnie miało implementować relaksację
+laplasjanową, bo spec zakładał, że zredukuje ona rozrzut pól komórek z ~20 % do ~5 %. Pomiar
+to obalił: przy frequency 12 rozrzut wyjściowy wynosi `spacingCv = 0,0716` i `areaCv = 0,1330`,
+a wygładzanie go **nie zmniejsza** — po 1 iteracji 0,0704, po 3 iteracjach 0,0706, po 10
+iteracjach 0,0718 (gorzej niż wyjściowo), po 200 iteracjach 0,0717. Sfera geodezyjna już leży
+w punkcie stałym tego operatora.
+
+Zadaniem jest więc **zmierzyć i utrwalić** rzeczywistą jednorodność, a nie próbować jej poprawiać.
+Wynik negatywny zostaje w kodzie jako komentarz, żeby nikt nie zaimplementował relaksacji po raz
+drugi, nie wiedząc, że została już sprawdzona.
 
 - [ ] **Step 1: Napisz testy (mają nie przejść)**
 
-`packages/sim/test/relax.test.ts`:
+`packages/sim/test/uniformity.test.ts`:
 ```ts
 import { describe, expect, it } from 'vitest';
 import { buildGeodesic } from '../src/world/geodesic.js';
 import { buildDual } from '../src/world/dual.js';
-import { relax, spacingCv } from '../src/world/relax.js';
-import { length } from '../src/math/vec3.js';
+import { areaCv, spacingCv } from '../src/world/uniformity.js';
 
-describe('relax', () => {
-  const raw = buildGeodesic(12);
-  const relaxed = relax(raw, 3);
+const dual12 = buildDual(buildGeodesic(12));
 
-  it('zachowuje topologię — ta sama liczba wierzchołków i ścian', () => {
-    expect(relaxed.vertices.length).toBe(raw.vertices.length);
-    expect(relaxed.faces).toEqual(raw.faces);
+describe('spacingCv', () => {
+  it('przypina zmierzony rozrzut odstępów przy frequency 12', () => {
+    expect(spacingCv(dual12)).toBeCloseTo(0.0716, 3);
   });
 
-  it('zostawia wszystkie wierzchołki na sferze jednostkowej', () => {
-    for (const v of relaxed.vertices) expect(length(v)).toBeCloseTo(1, 12);
+  it('jest dodatni i skończony', () => {
+    const v = spacingCv(dual12);
+    expect(v).toBeGreaterThan(0);
+    expect(Number.isFinite(v)).toBe(true);
   });
 
-  it('zmniejsza zmienność odstępów o co najmniej 30 %', () => {
-    const before = spacingCv(buildDual(raw));
-    const after = spacingCv(buildDual(relaxed));
-    console.log(`spacingCv: przed=${before.toFixed(4)} po=${after.toFixed(4)}`);
-    expect(after).toBeLessThan(before * 0.7);
+  it('jest deterministyczny', () => {
+    expect(spacingCv(buildDual(buildGeodesic(4)))).toBe(spacingCv(buildDual(buildGeodesic(4))));
   });
 
-  it('nadal daje dokładnie 12 pentagonów — relaksacja nie rusza topologii', () => {
-    const d = buildDual(relaxed);
-    expect(d.cellTypes.filter((t) => t === 'PENTAGON').length).toBe(12);
+  it('siatka idealnie regularna miałaby zerowy rozrzut — dwudziestościan bazowy jest taki', () => {
+    // Przy frequency 1 wszystkie krawędzie dwudziestościanu są równe z konstrukcji,
+    // więc rozrzut musi być numerycznie zerowy. To kalibruje samą metrykę:
+    // gdyby liczyła coś innego niż odległości środek-sąsiad, tu by nie wyszło zero.
+    expect(spacingCv(buildDual(buildGeodesic(1)))).toBeCloseTo(0, 9);
+  });
+});
+
+describe('areaCv', () => {
+  it('przypina zmierzony rozrzut pól przy frequency 12', () => {
+    expect(areaCv(dual12)).toBeCloseTo(0.1330, 3);
   });
 
-  it('zero iteracji jest tożsamością', () => {
-    expect(relax(raw, 0)).toEqual(raw);
+  it('rozrzut pól jest większy niż rozrzut odstępów — pole skaluje się kwadratowo', () => {
+    expect(areaCv(dual12)).toBeGreaterThan(spacingCv(dual12));
   });
 
-  it('jest deterministyczna', () => {
-    expect(relax(buildGeodesic(5), 2)).toEqual(relax(buildGeodesic(5), 2));
+  it('jest deterministyczny', () => {
+    expect(areaCv(buildDual(buildGeodesic(4)))).toBe(areaCv(buildDual(buildGeodesic(4))));
   });
 });
 ```
 
 - [ ] **Step 2: Uruchom testy i potwierdź porażkę**
 
-Run: `pnpm vitest run packages/sim/test/relax.test.ts`
-Oczekiwane: FAIL — brak modułu.
+Run: `pnpm vitest run packages/sim/test/uniformity.test.ts`
+Oczekiwane: FAIL — brak modułu `uniformity.js`.
 
-- [ ] **Step 3: Zaimplementuj relaksację**
+- [ ] **Step 3: Zaimplementuj metryki**
 
-`packages/sim/src/world/relax.ts`:
+`packages/sim/src/world/uniformity.ts`:
 ```ts
-import { add, length, normalize, scale, sub, type Vec3 } from '../math/vec3.js';
-import type { GeodesicMesh } from './geodesic.js';
+import { cross, length, sub } from '../math/vec3.js';
 import type { DualMesh } from './dual.js';
 
 /**
- * Wygładzanie laplasjanowe z renormalizacją na sferę.
- * Topologia (tablica faces) pozostaje nietknięta — zmieniają się wyłącznie pozycje,
- * więc liczba pentagonów i graf sąsiedztwa są zachowane.
+ * WYNIK NEGATYWNY — NIE IMPLEMENTUJ RELAKSACJI PONOWNIE.
+ *
+ * Spec pierwotnie zakładał 2-3 iteracje wygładzania laplasjanowego, mające zredukować
+ * rozrzut pól komórek z ~20 % do ~5 %. Zmierzone przy frequency 12:
+ *
+ *   iteracje:      0        1        3       10      200
+ *   spacingCv:  0,0716   0,0704   0,0706   0,0718   0,0717
+ *   areaCv:     0,1330   0,1327   0,1328   0,1338   0,1335
+ *
+ * Sfera geodezyjna już leży w punkcie stałym operatora laplasjanowego, więc iterowanie
+ * niczego nie poprawia, a powyżej ~3 iteracji dryfuje numerycznie na gorsze.
+ * Lloyd na siatce dualnej to algebraicznie `normalize(3v + Σsąsiedzi)`, czyli tłumiona
+ * wersja tego samego operatora — jeszcze słabsza.
+ *
+ * Rozrzut jest akceptowalny: reguły gry idą w krokach grafu (N1), więc rozgrywki nie
+ * dotyczy wcale. Gdyby warstwa wizualna uznała inaczej, właściwym narzędziem jest
+ * relaksacja sprężynowa wyrównująca DŁUGOŚCI KRAWĘDZI, nie operator centroidowy.
  */
-export function relax(mesh: GeodesicMesh, iterations: number): GeodesicMesh {
-  if (iterations <= 0) return mesh;
 
-  const adjacency = vertexAdjacency(mesh);
-  let positions = mesh.vertices;
-
-  for (let iter = 0; iter < iterations; iter++) {
-    const next: Vec3[] = new Array(positions.length);
-    for (let v = 0; v < positions.length; v++) {
-      let acc: Vec3 = { x: 0, y: 0, z: 0 };
-      const ns = adjacency[v];
-      for (const n of ns) acc = add(acc, positions[n]);
-      next[v] = normalize(scale(acc, 1 / ns.length));
-    }
-    positions = next;
-  }
-
-  return { vertices: positions, faces: mesh.faces };
-}
-
-/** Współczynnik zmienności (odchylenie standardowe / średnia) odległości środek–sąsiad. */
+/** Współczynnik zmienności odległości środek–sąsiad. Frequency 12: 0,0716. */
 export function spacingCv(dual: DualMesh): number {
   const samples: number[] = [];
   for (let v = 0; v < dual.centers.length; v++) {
@@ -979,31 +986,45 @@ export function spacingCv(dual: DualMesh): number {
       if (n > v) samples.push(length(sub(dual.centers[n], dual.centers[v])));
     }
   }
+  return coefficientOfVariation(samples);
+}
+
+/** Współczynnik zmienności pól komórek. Frequency 12: 0,1330. */
+export function areaCv(dual: DualMesh): number {
+  const areas: number[] = [];
+  for (let v = 0; v < dual.centers.length; v++) {
+    const center = dual.centers[v];
+    const corners = dual.corners[v];
+    let area = 0;
+    for (let i = 0; i < corners.length; i++) {
+      const p = sub(corners[i], center);
+      const q = sub(corners[(i + 1) % corners.length], center);
+      area += length(cross(p, q)) / 2;
+    }
+    areas.push(area);
+  }
+  return coefficientOfVariation(areas);
+}
+
+function coefficientOfVariation(samples: number[]): number {
   const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
   const variance = samples.reduce((a, b) => a + (b - mean) ** 2, 0) / samples.length;
   return Math.sqrt(variance) / mean;
 }
-
-function vertexAdjacency(mesh: GeodesicMesh): number[][] {
-  const sets: Set<number>[] = Array.from({ length: mesh.vertices.length }, () => new Set<number>());
-  for (const [a, b, c] of mesh.faces) {
-    sets[a].add(b); sets[a].add(c);
-    sets[b].add(a); sets[b].add(c);
-    sets[c].add(a); sets[c].add(b);
-  }
-  // Sortowanie numeryczne — kolejność iteracji NIE MOŻE zależeć od kolejności wstawiania do Set (§7.2).
-  return sets.map((s) => [...s].sort((x, y) => x - y));
-}
 ```
 
-- [ ] **Step 4: Uruchom testy, zapisz zmierzone CV i commituj**
+- [ ] **Step 4: Uruchom testy i commituj**
 
-Run: `pnpm vitest run packages/sim/test/relax.test.ts`
-Oczekiwane: **6 testów przechodzi.** Odczytaj z konsoli wypisane `spacingCv` przed i po, i wklej obie liczby do komentarza nad `relax` — spec (§4.1) szacuje ~20 % → ~5 %, ale wiążąca jest wartość zmierzona, nie szacunek.
+Run: `pnpm vitest run packages/sim/test/uniformity.test.ts`
+Oczekiwane: **7 testów przechodzi.**
+
+Test przy frequency 1 jest kalibracją samej metryki: krawędzie dwudziestościanu bazowego są równe
+z konstrukcji, więc rozrzut musi tam wyjść numerycznie zerowy. Gdyby `spacingCv` liczyło cokolwiek
+innego niż odległości środek–sąsiad, ten test by to wykrył.
 
 ```bash
-git add packages/sim/src/world/relax.ts packages/sim/test/relax.test.ts
-git commit -m "feat(sim): relaksacja laplasjanowa siatki + metryka jednorodności odstępów"
+git add packages/sim/src/world/uniformity.ts packages/sim/test/uniformity.test.ts
+git commit -m "feat(sim): metryki jednorodności siatki + udokumentowany wynik negatywny relaksacji"
 ```
 
 ---
@@ -1173,12 +1194,12 @@ git commit -m "feat(sim): moduł skali kodujący niezmienniki N1/N2/N3 jako jedy
 - Test: `packages/sim/test/planet.test.ts`
 
 **Interfaces:**
-- Consumes: `buildGeodesic`, `buildDual`, `relax`, `Rng`, `STREAM`, `scale`, `normalize`
+- Consumes: `buildGeodesic`, `buildDual`, `Rng`, `STREAM`, `scale`
 - Produces:
   - `function multiSourceDistances(neighbors: number[][], sources: number[]): number[]`
   - `interface Cell { id, center, normal, corners, neighbors, cellType, oreCapacity }`
   - `interface Planet { seed, radius, frequency, cells, pentagons, startCell }`
-  - `interface PlanetOptions { seed, frequency?, radius?, relaxIterations?, oreClusters?, oreClusterRadius?, oreCapacityPerCell?, minStartDistanceFromPentagon? }`
+  - `interface PlanetOptions { seed, frequency?, radius?, oreClusters?, oreClusterRadius?, oreCapacityPerCell?, minStartDistanceFromPentagon? }`
   - `function createPlanet(opts: PlanetOptions): Planet`
 
 - [ ] **Step 1: Napisz testy (mają nie przejść)**
@@ -1311,7 +1332,6 @@ import { scale, type Vec3 } from '../math/vec3.js';
 import { buildDual, type CellType } from './dual.js';
 import { buildGeodesic } from './geodesic.js';
 import { multiSourceDistances } from './graph.js';
-import { relax } from './relax.js';
 
 export interface Cell {
   readonly id: number;
@@ -1341,7 +1361,6 @@ export interface PlanetOptions {
   frequency?: number;
   /** Wyłącznie estetyka — niezmiennik N2. */
   radius?: number;
-  relaxIterations?: number;
   oreClusters?: number;
   oreClusterRadius?: number;
   oreCapacityPerCell?: number;
@@ -1351,7 +1370,6 @@ export interface PlanetOptions {
 const DEFAULTS = {
   frequency: 12,
   radius: 100,
-  relaxIterations: 3,
   oreClusters: 14,
   oreClusterRadius: 2,
   oreCapacityPerCell: 400,
@@ -1360,7 +1378,8 @@ const DEFAULTS = {
 
 export function createPlanet(opts: PlanetOptions): Planet {
   const o = { ...DEFAULTS, ...opts };
-  const dual = buildDual(relax(buildGeodesic(o.frequency), o.relaxIterations));
+  // Bez relaksacji — Task 5 zmierzył, że laplasjan na tej konstrukcji nic nie poprawia.
+  const dual = buildDual(buildGeodesic(o.frequency));
   const rng = new Rng(o.seed);
 
   const cellCount = dual.centers.length;
@@ -1466,7 +1485,7 @@ export * from './math/vec3.js';
 
 export { buildGeodesic, vertexCountFor, type GeodesicMesh } from './world/geodesic.js';
 export { buildDual, type CellType, type DualMesh } from './world/dual.js';
-export { relax, spacingCv } from './world/relax.js';
+export { areaCv, spacingCv } from './world/uniformity.js';
 export { multiSourceDistances } from './world/graph.js';
 export {
   burnEscapeDepth,
@@ -1497,7 +1516,7 @@ git commit -m "feat(sim): createPlanet — klastry rudy, deterministyczna pozycj
 - [ ] Determinizm potwierdzony testem: ten sam seed ⇒ identyczna planeta
 - [ ] Strażnik zero-zależności przechodzi — `packages/sim` nie importuje niczego spoza siebie
 - [ ] Niezmienniki N1/N2/N3 zakodowane w `scale.ts` i pokryte testami
-- [ ] Zmierzone `spacingCv` przed i po relaksacji zapisane w komentarzu w kodzie
+- [ ] Zmierzone `spacingCv` i `areaCv` przypięte testami; wynik negatywny relaksacji udokumentowany w kodzie
 - [ ] Rozwiązane wersje narzędzi zapisane w `docs/superpowers/plans/wersje.txt`
 
 **Następny plan:** Faza 1B — rdzeń symulacji (`2026-09-14-faza-1b-symulacja.md`).
