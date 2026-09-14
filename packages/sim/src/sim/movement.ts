@@ -30,11 +30,40 @@ export function updateMovement(
   ctx: MotionContext,
 ): void {
   const cells = s.planet.cells;
+  // Niezmiennik, na którym stoi nearestLocalCell (patrz jej doc-comment niżej):
+  // przeszukuje WYŁĄCZNIE {bieżąca komórka} ∪ sąsiedzi, więc jest poprawna tylko
+  // dopóki jednostka pokonuje w jednym ticku kąt MNIEJSZY niż kątowy rozstaw
+  // komórek — inaczej przeskoczyłaby sąsiada, którego funkcja w ogóle nie widzi,
+  // i cellId cicho rozjechałby się z prawdziwą pozycją (zmierzone w przeglądzie:
+  // przy sztucznie podbitej prędkości rozjazd sięgał 15 kroków grafu, bez
+  // żadnego wyjątku). speedFactor jest [STROJENIE] (Faza 3 dostroi go
+  // headlessem) — margines dziś jest ~25× (zmierzone w raporcie Taska 1), ale
+  // bez twardej straży przyszłe strojenie mogłoby go po cichu przekroczyć.
+  const cellAngularSpacing = ctx.spacing / ctx.radius;
 
   for (const u of s.units) {
     const def = ENEMIES[u.type];
     const speedWorld = def.speedFactor * ctx.termSpeedCells * ctx.spacing;
     const angleStep = (speedWorld * TICK_SECONDS) / ctx.radius;
+
+    if (angleStep >= cellAngularSpacing) {
+      // Konkatenacja `+` na zwykłych literałach, CELOWO nie literał szablonowy
+      // (`` `...${x}...` ``): dalej w tym pliku jest doc-comment do slerpToward
+      // z sąsiadującymi parami literałów szablonowych bez podstawień
+      // (`` `from` ``/`` `to` ``). Zmierzone: literał szablonowy z podstawieniem
+      // TUTAJ rozjeżdża prosty skaner tokenów z contract.test.ts (nie wywołuje
+      // on reScanTemplateToken po `}` kończącym `${...}`), przez co dalszy,
+      // niepowiązany komentarz bywa odczytany jako kod — fałszywy trop
+      // "importu" spoza pakietu. Błąd samego skanera-strażnika, nie tego kodu;
+      // zgłoszone osobno, tu tylko obchodzone najprostszym sposobem.
+      throw new RangeError(
+        'updateMovement: jednostka ' + u.type + ' (speedFactor=' + def.speedFactor + ') pokonuje ' +
+        angleStep + ' rad/tick — nie mniej niż kątowy rozstaw komórek (' + cellAngularSpacing + ' rad). ' +
+        'nearestLocalCell przeszukuje tylko bieżącą komórkę i jej sąsiadów, więc taki krok cicho ' +
+        'rozjeżdża cellId z prawdziwą pozycją. Obniż speedFactor tego typu w ENEMIES (defs.ts) albo ' +
+        'zmień MotionContext (termSpeedCells/spacing/radius).',
+      );
+    }
 
     let targetDir: Vec3;
 
@@ -46,14 +75,21 @@ export function updateMovement(
       const next = fields[u.type].next[u.cellId];
       // Brak celu, albo następna komórka jest zabudowana — stoimy.
       // Zabudowa nie jest przeszkodą absolutną: zajmie się nią walka (Task 2).
+      // Ten wczesny `continue` musi zostać — Task 2 czyta `next` już PO tym
+      // wywołaniu (`ahead = buildings[next]`), żeby wybrać cel walki.
       if (next < 0 || s.buildings[next] !== null) continue;
       targetDir = cells[next].normal;
     }
 
     const from = scale(u.pos, 1 / ctx.radius);
     const moved = slerpToward(from, targetDir, angleStep);
+    const candidate = nearestLocalCell(s, u.cellId, moved);
+    // Zabudowa blokuje tak samo w ucieczce, jak w marszu do celu (D3). Warunek
+    // `candidate !== u.cellId` jest konieczny: bez niego jednostka, pod którą ktoś
+    // postawi budynek, zamarza na zawsze zamiast z niego zejść.
+    if (candidate !== u.cellId && s.buildings[candidate] !== null) continue;
     u.pos = scale(moved, ctx.radius);
-    u.cellId = nearestLocalCell(s, u.cellId, moved);
+    u.cellId = candidate;
   }
 }
 

@@ -112,13 +112,99 @@ describe('updateMovement', () => {
     const ring = planet.cells[planet.startCell].neighbors;
     for (const n of ring) applyCommand(s, { kind: 'BUILD', cellId: n, type: 'BARRICADE' });
 
+    // ARMOR, nie SWARM: SWARM ma targetPriority NEAREST_BUILDING, więc sam
+    // pierścień barykad staje się celem pola przepływu (zmierzone: distance=0,
+    // next=-1 na KAŻDEJ komórce pierścienia). Bez sprawdzenia `s.buildings[next]`
+    // w movement.ts SWARM zatrzymałby się i tak — bo next<0 na samym pierścieniu —
+    // więc ten test w ogóle nie ćwiczyłby strażnika, który nazywa (zmierzone:
+    // usunięcie `s.buildings[next] !== null` zostawiało całą suitę zieloną).
+    // ARMOR ma targetPriority CORE: jedynym celem jest sam CORE, pierścień jest
+    // WYŁĄCZNIE przeszkodą na drodze do niego, nigdy celem samym w sobie —
+    // strażnik jest jedyną rzeczą, która ARMOR-a zatrzymuje.
     const outside = atSteps(3);
-    spawnUnit(s, 'SWARM', outside);
+    spawnUnit(s, 'ARMOR', outside);
     const fields = buildAllFlowFields(s);
+
+    // Zmierzone: ARMOR (speedFactor 0,85, najwolniejszy typ) osiąga ścianę i
+    // zamraża się na niej po 34 tickach — budżet 2000 ma ~58× zapasu, nie jest
+    // dobrany "w ciemno".
     for (let i = 0; i < 2000; i++) updateMovement(s, fields, dark, sunDir, ctx);
 
-    // Nie może wejść do środka pierścienia bez rozbicia barykady.
-    expect(s.units[0].cellId).not.toBe(planet.startCell);
+    const finalCell = s.units[0].cellId;
+    const finalNext = fields.ARMOR.next[finalCell];
+
+    // Nie weszła do CORE.
+    expect(finalCell).not.toBe(planet.startCell);
+    // Naprawdę dotarła do ściany i TO ONA ją trzyma: własny "next" jednostki to
+    // konkretnie zabudowana komórka PIERŚCIENIA (nie -1, nie coś przypadkowego),
+    // czyli stoi dokładnie o krok od muru, zablokowana przez sam mur.
+    expect(finalNext).toBeGreaterThanOrEqual(0);
+    expect(ring).toContain(finalNext);
+    expect(s.buildings[finalNext]?.type).toBe('BARRICADE');
+    // I jest bliżej ściany niż punkt startowy w metryce pola przepływu — nie
+    // utknęła gdzieś przypadkiem po drodze z innego powodu.
+    expect(fields.ARMOR.distance[finalCell]).toBeLessThan(fields.ARMOR.distance[outside]);
+  });
+
+  it('uciekająca jednostka zatrzymuje się przed barykadą zamiast przez nią przechodzić', () => {
+    const s = withCore();
+    let lit = 0;
+    for (let i = 0; i < N; i++) {
+      if (dot(planet.cells[i].normal, sunDir) > 0.8) { lit = i; break; }
+    }
+    // Komórka, w którą ucieczka (kierunek -sunDir) faktycznie pcha jednostkę
+    // jako pierwszą — ta sama, do której naprawdę zmierza gałąź ucieczki.
+    let blocker = -1;
+    let bestAlign = -Infinity;
+    for (const n of planet.cells[lit].neighbors) {
+      const align = dot(planet.cells[n].normal, scale(sunDir, -1));
+      if (align > bestAlign) { bestAlign = align; blocker = n; }
+    }
+    applyCommand(s, { kind: 'BUILD', cellId: blocker, type: 'BARRICADE' });
+    spawnUnit(s, 'SWARM', lit);
+
+    const light = new Float32Array(N);
+    for (let i = 0; i < N; i++) light[i] = Math.max(0, dot(planet.cells[i].normal, sunDir));
+    const fields = buildAllFlowFields(s);
+
+    // Zmierzone PRZED poprawką (gałąź ucieczki bez sprawdzenia `s.buildings`):
+    // jednostka wchodziła w tę samą barykadę na ticku o indeksie 12. 100 ticków
+    // to spory zapas ponad ten moment.
+    for (let i = 0; i < 100; i++) updateMovement(s, fields, light, sunDir, ctx);
+
+    expect(s.units[0].cellId).not.toBe(blocker);
+    // Zamarła dokładnie tam, gdzie stała — jedyny sąsiad, do którego ucieczka ją
+    // pcha, jest zabudowany, więc nie weszła NIGDZIE indziej.
+    expect(s.units[0].cellId).toBe(lit);
+  });
+
+  it('jednostka otoczona zabudową ze wszystkich stron stoi w miejscu zamiast się psuć', () => {
+    const s = withCore();
+    let lit = 0;
+    for (let i = 0; i < N; i++) {
+      if (dot(planet.cells[i].normal, sunDir) > 0.8) { lit = i; break; }
+    }
+    for (const n of planet.cells[lit].neighbors) {
+      applyCommand(s, { kind: 'BUILD', cellId: n, type: 'BARRICADE' });
+    }
+    spawnUnit(s, 'SWARM', lit);
+
+    const light = new Float32Array(N);
+    for (let i = 0; i < N; i++) light[i] = Math.max(0, dot(planet.cells[i].normal, sunDir));
+    const fields = buildAllFlowFields(s);
+
+    for (let i = 0; i < 300; i++) updateMovement(s, fields, light, sunDir, ctx);
+
+    // Uwięziona: żaden sąsiad nie jest wolny, więc nigdzie nie weszła — i nadal
+    // stoi dokładnie na powierzchni planety, żadnego NaN-a ani ucieczki z celu.
+    // `hp`/`exposure` nie są dotykane przez ten moduł (spalanie to inny system,
+    // poza zakresem Taska 1) — sprawdzane jest wyłącznie to, co updateMovement
+    // faktycznie robi: ruch, nie zapłon.
+    expect(s.units[0].cellId).toBe(lit);
+    expect(length(s.units[0].pos)).toBeCloseTo(planet.radius, 6);
+    expect(Number.isFinite(s.units[0].pos.x)).toBe(true);
+    expect(Number.isFinite(s.units[0].pos.y)).toBe(true);
+    expect(Number.isFinite(s.units[0].pos.z)).toBe(true);
   });
 
   it('jednostka w świetle ucieka OD słońca, nie do celu', () => {
@@ -160,6 +246,30 @@ describe('updateMovement', () => {
       return s.units.map((u) => [u.cellId, u.pos.x, u.pos.y, u.pos.z]);
     };
     expect(run()).toEqual(run());
+  });
+});
+
+describe('straż niezmiennika nearestLocalCell: angleStep musi być mniejszy niż kątowy rozstaw komórek', () => {
+  it('nie rzuca dla dzisiejszych ENEMIES przy T=180, N=1442 (margines zmierzony w raporcie)', () => {
+    const s = withCore();
+    spawnUnit(s, 'SWARM', atSteps(6)); // najszybszy typ (speedFactor 2,3) — najciaśniejszy margines
+    const fields = buildAllFlowFields(s);
+    expect(() => updateMovement(s, fields, dark, sunDir, ctx)).not.toThrow();
+  });
+
+  it('rzuca RangeError, gdy skonfigurowana prędkość nie jest mniejsza niż rozstaw kątowy komórek', () => {
+    const s = withCore();
+    spawnUnit(s, 'SWARM', atSteps(6));
+    const fields = buildAllFlowFields(s);
+    // angleStep / kątowyRozstaw = speedFactor × termSpeedCells × TICK_SECONDS —
+    // spacing i radius się skracają, więc próg nie zależy od geometrii planety.
+    // 2× ponad próg, żeby test nie balansował na krawędzi zaokrągleń float.
+    const brokenCtx: MotionContext = {
+      ...ctx,
+      termSpeedCells: 2 / (ENEMIES.SWARM.speedFactor * TICK_SECONDS),
+    };
+    expect(() => updateMovement(s, fields, dark, sunDir, brokenCtx)).toThrow(RangeError);
+    expect(() => updateMovement(s, fields, dark, sunDir, brokenCtx)).toThrow(/SWARM/);
   });
 });
 
