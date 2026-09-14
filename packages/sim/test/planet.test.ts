@@ -84,4 +84,11 @@ describe('createPlanet', () => {
       /komórkę startową/,
     );
   });
+
+  it('odrzuca frequency, przy której nie ma heksagonów na rudę, zamiast rzucić niejasny błąd z BFS', () => {
+    // frequency 1 to sam bazowy dwudziestościan: 12 wierzchołków, wszystkie stopnia 5 ⇒
+    // wszystkie PENTAGON, zero HEXAGON. buildGeodesic akceptuje frequency=1 jako poprawne
+    // (por. uniformity.test.ts), więc to osiągalne wejście, nie tylko teoretyczny przypadek.
+    expect(() => createPlanet({ seed: 1, frequency: 1 })).toThrow(/heksagonów/);
+  });
 });

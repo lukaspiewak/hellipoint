@@ -2,13 +2,13 @@
  * BFS wieloźródłowy: dla każdej komórki odległość w krokach grafu
  * do najbliższego źródła. Nieosiągalne dostają Infinity.
  *
- * `neighbors` przyjmuje tablice tylko-do-odczytu: ta funkcja wyłącznie czyta
- * sąsiedztwo (np. bezpośrednio `Cell.neighbors`, dzielone przez referencję
- * z wewnętrznym DualMesh) i nigdy go nie mutuje.
+ * `neighbors` i `sources` przyjmują tablice tylko-do-odczytu: ta funkcja wyłącznie
+ * czyta sąsiedztwo i listę źródeł (np. bezpośrednio `Planet.cells`/`Planet.pentagons`,
+ * dzielone przez referencję z wewnętrznym DualMesh) i nigdy ich nie mutuje.
  */
 export function multiSourceDistances(
   neighbors: readonly (readonly number[])[],
-  sources: number[],
+  sources: readonly number[],
 ): number[] {
   const dist = new Array<number>(neighbors.length).fill(Infinity);
   const queue: number[] = [];

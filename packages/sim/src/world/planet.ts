@@ -22,8 +22,9 @@ export interface Planet {
   readonly seed: number;
   readonly radius: number;
   readonly frequency: number;
-  readonly cells: Cell[];
-  readonly pentagons: number[];
+  /** Tylko-do-odczytu: `pentagons`, `startCell` i każdy `Cell.neighbors` to indeksy w tę tablicę — sortowanie/mutacja w miejscu rozsynchronizowałaby je wszystkie. */
+  readonly cells: readonly Cell[];
+  readonly pentagons: readonly number[];
   readonly startCell: number;
 }
 
@@ -69,7 +70,9 @@ export function createPlanet(opts: PlanetOptions): Planet {
     cells.push({
       id: i,
       center: scale(dual.centers[i], o.radius),
-      normal: dual.centers[i],
+      // scale(..., 1) zamiast bezpośredniego przypisania: świeży obiekt zamiast aliasu do
+      // wewnętrznego DualMesh, tak jak center i corners obok (por. komentarz przy neighbors).
+      normal: scale(dual.centers[i], 1),
       corners: dual.corners[i].map((c) => scale(c, o.radius)),
       neighbors: neighbors[i],
       cellType: dual.cellTypes[i],
@@ -101,6 +104,14 @@ function placeOre(
   const hexes: number[] = [];
   for (let i = 0; i < cellTypes.length; i++) {
     if (cellTypes[i] === 'HEXAGON') hexes.push(i);
+  }
+
+  if (hexes.length === 0) {
+    throw new Error(
+      `Brak heksagonów do rozmieszczenia rudy: frequency=${o.frequency} daje samą powłokę ` +
+        `dwudziestościanu (12 pentagonów, 0 heksagonów) — nie ma gdzie postawić klastra. ` +
+        `Zwiększ frequency do co najmniej 2.`,
+    );
   }
 
   for (let c = 0; c < o.oreClusters; c++) {
