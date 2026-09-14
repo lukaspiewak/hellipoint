@@ -54,7 +54,8 @@ albo zapisz jako twardą regułę, że wynik BFS-a nigdy nie wchodzi do `SimStat
 
 **Files:**
 - Create: `packages/sim/src/sim/state.ts`, `packages/sim/src/sim/hash.ts`
-- Test: `packages/sim/test/state.test.ts`
+- Modify: `packages/sim/src/math/rng.ts` (migawka generatora — patrz krok 6)
+- Test: `packages/sim/test/state.test.ts`, `packages/sim/test/math.test.ts`
 
 **Interfaces:**
 - Consumes: `Planet`, `createPlanet` z Fazy 1A
@@ -72,11 +73,26 @@ albo zapisz jako twardą regułę, że wynik BFS-a nigdy nie wchodzi do `SimStat
 `packages/sim/test/state.test.ts`:
 ```ts
 import { describe, expect, it } from 'vitest';
+import { vec3 } from '../src/math/vec3.js';
 import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS } from '../src/sim/state.js';
 import { stateHash } from '../src/sim/hash.js';
 
 const planet = createPlanet({ seed: 1 });
+
+/**
+ * Stan z jednym budynkiem (domyślnie na indeksie 0) i jedną jednostką — wspólny
+ * punkt odniesienia dla testów wrażliwości hasha na pola budynków/jednostek,
+ * których `createState` sam z siebie nigdy nie populuje. `buildingIndex`
+ * parametryzowany, żeby test pozycyjności (§cellId) mógł postawić IDENTYCZNY
+ * budynek pod innym indeksem bez ręcznego powielania jego pól.
+ */
+function withBuildingAndUnit(buildingIndex = 0) {
+  const s = createState(planet, 150);
+  s.buildings[buildingIndex] = { cellId: 0, type: 'PYLON', hp: 80, powered: false };
+  s.units.push({ id: 1, type: 'SWARM', cellId: 0, pos: vec3(1, 2, 3), hp: 30, exposure: 0.25 });
+  return s;
+}
 
 describe('createState', () => {
   it('startuje z zadaną rudą i pustą planszą', () => {
@@ -124,6 +140,110 @@ describe('stateHash', () => {
     const a = createState(planet, 150); a.storedEnergy = 1;
     const b = createState(planet, 150); b.storedEnergy = 1 + Number.EPSILON;
     expect(stateHash(a)).not.toBe(stateHash(b));
+  });
+
+  // `createState` zawsze zwraca puste `buildings`/`units`, więc bez poniższych
+  // pętle po budynkach i jednostkach w hash.ts nigdy by się nie wykonały w całym
+  // pakiecie testów — regresja w którejkolwiek z nich przeszłaby niezauważona.
+
+  it('budynek: zmiana `type` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.buildings[0]!.type = 'BARRICADE';
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('budynek: zmiana `hp` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.buildings[0]!.hp += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('budynek: zmiana `powered` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.buildings[0]!.powered = true;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('budynek: `cellId` jest niesiony POZYCYJNIE przez indeks tablicy, nie przez pole — ten sam budynek pod innym indeksem zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit(0));
+    const moved = withBuildingAndUnit(1);
+    expect(stateHash(moved)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `id` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.units[0].id += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `type` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.units[0].type = 'ARMOR';
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `cellId` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.units[0].cellId += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `pos.x` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    const p = variant.units[0].pos;
+    variant.units[0].pos = vec3(p.x + 1, p.y, p.z);
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `pos.y` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    const p = variant.units[0].pos;
+    variant.units[0].pos = vec3(p.x, p.y + 1, p.z);
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `pos.z` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    const p = variant.units[0].pos;
+    variant.units[0].pos = vec3(p.x, p.y, p.z + 1);
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `hp` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.units[0].hp += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('jednostka: zmiana `exposure` zmienia hash', () => {
+    const h = stateHash(withBuildingAndUnit());
+    const variant = withBuildingAndUnit();
+    variant.units[0].exposure += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('zmiana `nextUnitId` zmienia hash', () => {
+    const h = stateHash(createState(planet, 150));
+    const variant = createState(planet, 150);
+    variant.nextUnitId += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('zmiana `phase` zmienia hash', () => {
+    const h = stateHash(createState(planet, 150));
+    const variant = createState(planet, 150);
+    variant.phase = 'VICTORY';
+    expect(stateHash(variant)).not.toBe(h);
   });
 });
 ```
@@ -277,10 +397,71 @@ class Fnv {
 }
 ```
 
-- [ ] **Step 5: Uruchom testy i commituj**
+- [ ] **Step 5: Zaimplementuj migawkę generatora**
 
-Run: `pnpm vitest run packages/sim/test/state.test.ts`
-Oczekiwane: **6 testów przechodzi.**
+Wynika z przeglądu końcowego Fazy 1A (patrz sekcja „Dwie rzeczy wyniesione…" na górze planu).
+`Rng` trzyma stan w `private readonly s` i nie da się go odczytać ani odtworzyć, a Faza 1C
+umieszcza strumień fal poza `SimState`. Dla testu startującego od ticka 0 to niewidoczne —
+i pozostaje niewidoczne aż do pierwszej rzeczy, która od ticka 0 nie startuje.
+
+Dopisz do `packages/sim/src/math/rng.ts`:
+```ts
+  /**
+   * Migawka pełnego stanu generatora: cztery słowa robocze xoshiro ORAZ seed.
+   * Seed jest częścią migawki, nie tylko `s` — `fork()` zależy wyłącznie od
+   * seeda (patrz wyżej), więc bez niego generator odtworzony z migawki dawałby
+   * INNE poddrzewa strumieni niż oryginał w tym samym punkcie.
+   *
+   * Zwykła krotka liczb, nie Uint32Array — musi przetrwać JSON.stringify/parse
+   * (zapis gry, resynchronizacja klienta/serwera), a TypedArray tego nie gwarantuje.
+   */
+  getState(): RngState {
+    return { seed: this.seed, s: [this.s[0], this.s[1], this.s[2], this.s[3]] };
+  }
+
+  /**
+   * Odtwarza generator z migawki `getState()`: kontynuuje IDENTYCZNĄ sekwencję
+   * od miejsca, w którym migawka została zrobiona. Bez tego, odtworzenie
+   * `SimState` po zapisie/resynchronizacji restartowałoby dowolny strumień
+   * trzymany poza stanem (np. fale, Faza 1C) od pozycji zero i rozjeżdżało
+   * spawny wobec serwera, który nie przestawał liczyć.
+   */
+  static fromState(state: RngState): Rng {
+    const rng = new Rng(state.seed);
+    rng.s.set(state.s);
+    return rng;
+  }
+```
+
+oraz, poza klasą:
+```ts
+export interface RngState {
+  readonly seed: number;
+  readonly s: readonly [number, number, number, number];
+}
+```
+
+**Stan MUSI być zwykłą krotką, nie `Uint32Array`.** `JSON.stringify(new Uint32Array([10,20]))`
+daje `{"0":10,"1":20}`, a podanie tego z powrotem do `.set()` **nie rzuca wyjątku** — po cichu
+zostawia zera. Migawka, która nie przeżywa podróży przez JSON, jest gorsza niż jej brak.
+`seed` wchodzi do migawki, bo `fork()` zależy wyłącznie od niego.
+
+Testy w `packages/sim/test/math.test.ts`: przywrócony generator kontynuuje **identyczną**
+sekwencję; migawka przeżywa `JSON.parse(JSON.stringify(...))`; migawka nie jest aliasem
+żywego stanu w żadną stronę.
+
+**Nie dodawaj pola rng do `SimState`** — czy generatory symulacji mieszkają w stanie, rozstrzyga
+Faza 1C. Tu chodzi o to, żeby było to *możliwe*.
+
+- [ ] **Step 6: Uruchom testy i commituj**
+
+Run: `pnpm vitest run packages/sim/test/state.test.ts packages/sim/test/math.test.ts`
+Oczekiwane: **20 testów w state.test.ts** (6 podstawowych + 14 asercji czułości hasza na pola
+`Building`, `Unit`, `nextUnitId` i `phase`) **oraz 12 w math.test.ts** (9 podstawowych + 3 migawki).
+
+Asercje czułości są tu istotą, nie dodatkiem: `createState` zawsze zwraca puste `buildings`
+i `units`, więc bez nich obie pętle w `hash.ts` **nie wykonują się ani razu** — a wszystkie
+pozostałe zadania tej fazy budują swój test determinizmu na tym haszu.
 
 ```bash
 git add packages/sim/src/sim packages/sim/test/state.test.ts
@@ -300,6 +481,7 @@ git commit -m "feat(sim): kształt stanu symulacji + hash FNV-1a do testów dete
 - Produces:
   - `type EnergyOutput = { kind: 'NONE' } | { kind: 'CONSTANT'; rate: number } | { kind: 'SOLAR'; peakRate: number }`
   - `function evaluateEnergyOutput(out: EnergyOutput, light: number): number`
+  - `type CellRequirement = 'ANY' | 'HEXAGON' | 'PENTAGON' | 'ORE_HEXAGON'`
   - `interface BuildingDef { … }`, `const BUILDINGS: Record<BuildingType, BuildingDef>`
   - `interface EnemyDef { … }`, `const ENEMIES: Record<EnemyType, EnemyDef>`
   - `const BROWNOUT_ORDER: BuildingType[]`
@@ -358,6 +540,32 @@ describe('BUILDINGS', () => {
       expect(def.connectionRadius).toBeLessThanOrEqual(6);
     }
   });
+
+  it('energyInfrastructure przypisania są poprawne', () => {
+    const infrastructure = (Object.entries(BUILDINGS)
+      .filter(([_, def]) => def.energyInfrastructure)
+      .map(([type]) => type)
+      .sort());
+    expect(infrastructure).toEqual([
+      'BATTERY', 'CORE', 'EVACUATION_MODULE', 'GEOTHERMAL_CAP', 'PYLON', 'SOLAR_PANEL',
+    ]);
+  });
+
+  it('spójność zakresu i celowania: range > 0 => targeting !== NONE', () => {
+    for (const def of Object.values(BUILDINGS)) {
+      if (def.range > 0) {
+        expect(def.targeting).not.toBe('NONE');
+      }
+    }
+  });
+
+  it('spójność uszkodzenia i zakresu: dps > 0 => range > 0', () => {
+    for (const def of Object.values(BUILDINGS)) {
+      if (def.dps > 0) {
+        expect(def.range).toBeGreaterThan(0);
+      }
+    }
+  });
 });
 
 describe('BROWNOUT_ORDER', () => {
@@ -395,6 +603,12 @@ describe('ENEMIES', () => {
   it('każdy typ ma inny priorytet celu', () => {
     const priorities = Object.values(ENEMIES).map((e) => e.targetPriority);
     expect(new Set(priorities).size).toBe(3);
+  });
+
+  it('targetPriority przypisania są poprawne', () => {
+    expect(ENEMIES.SWARM.targetPriority).toBe('NEAREST_BUILDING');
+    expect(ENEMIES.ARMOR.targetPriority).toBe('CORE');
+    expect(ENEMIES.DISRUPTOR.targetPriority).toBe('ENERGY_INFRASTRUCTURE');
   });
 });
 ```
@@ -549,7 +763,13 @@ export const ENEMIES: Record<EnemyType, EnemyDef> = {
 - [ ] **Step 4: Uruchom testy i commituj**
 
 Run: `pnpm vitest run packages/sim/test/defs.test.ts`
-Oczekiwane: **14 testów przechodzi.**
+Oczekiwane: **19 testów przechodzi.**
+
+Cztery z nich przypinają **pola strukturalne**, i to jest istota, nie dodatek. Liczby balansowe
+słusznie zostają nieprzypięte — Faza 3 je przestroi i każde strojenie łamałoby test bez pożytku.
+Ale `targetPriority`, `energyInfrastructure` i spójność `range`/`targeting`/`dps` to nie balans,
+tylko zachowanie: zamiana priorytetów ARMOR↔DISRUPTOR przeszłaby cały pozostały zestaw tej fazy,
+łącznie z testami Task 8, który to pole konsumuje — a odwróciłaby rdzeń rozgrywki.
 
 ```bash
 git add packages/sim/src/sim/defs.ts packages/sim/test/defs.test.ts
@@ -603,7 +823,16 @@ describe('sunDirection', () => {
     const a = sunDirection(0, T);
     const b = sunDirection(T / 2, T);
     expect(b.x).toBeCloseTo(-a.x, 9);
+    expect(b.y).toBeCloseTo(-a.y, 9);
     expect(b.z).toBeCloseTo(-a.z, 9);
+  });
+
+  it('wyrzuca błąd dla rotationPeriod <= 0 lub nieskończonego', () => {
+    expect(() => sunDirection(0, 0)).toThrow(RangeError);
+    expect(() => sunDirection(0, -180)).toThrow(RangeError);
+    expect(() => sunDirection(0, NaN)).toThrow(RangeError);
+    expect(() => sunDirection(0, Infinity)).toThrow(RangeError);
+    expect(() => sunDirection(0, -Infinity)).toThrow(RangeError);
   });
 });
 
@@ -616,6 +845,11 @@ describe('lightAt', () => {
 
   it('daje 0 na terminatorze', () => {
     expect(lightAt(vec3(0, 0, 1), sun)).toBeCloseTo(0, 12);
+  });
+
+  it('daje wartość pośrednią dla kąta pośredniego', () => {
+    // Normal at 60° to sun: cos(60°) = 0.5
+    expect(lightAt(vec3(0.5, 0, 0.866), sun)).toBeCloseTo(0.5, 12);
   });
 
   it('obcina stronę nocną do 0, nigdy do wartości ujemnej', () => {
@@ -636,7 +870,9 @@ describe('lightField', () => {
     }
   });
 
-  it('oświetla mniej więcej połowę planety — na kuli nie ma globalnej nocy (D1)', () => {
+  it('dzieli planetę na mniej więcej równe połowy — brak możliwości globalnej nocy (D1)', () => {
+    // Test validates that the lit/dark split is roughly even (~50/50),
+    // disproving a "global night phase". Orientation is pinned by lightAt tests.
     const f = lightField(planet, sunDirection(0, T));
     const lit = [...f].filter((v) => v > 0).length;
     expect(lit / f.length).toBeGreaterThan(0.45);
@@ -671,6 +907,9 @@ import type { Planet } from '../world/planet.js';
  * a pozycje komórek są stałe w przestrzeni świata — co upraszcza serializację.
  */
 export function sunDirection(elapsedSeconds: number, rotationPeriod: number): Vec3 {
+  if (!Number.isFinite(rotationPeriod) || rotationPeriod <= 0) {
+    throw new RangeError(`rotationPeriod must be positive and finite, got ${rotationPeriod}`);
+  }
   const angle = (2 * Math.PI * elapsedSeconds) / rotationPeriod;
   return { x: Math.cos(angle), y: 0, z: Math.sin(angle) };
 }
@@ -694,7 +933,17 @@ export function lightField(planet: Planet, sunDir: Vec3): Float32Array {
 - [ ] **Step 4: Uruchom testy i commituj**
 
 Run: `pnpm vitest run packages/sim/test/light.test.ts`
-Oczekiwane: **9 testów przechodzi.** Test „oświetla mniej więcej połowę planety" jest formalnym potwierdzeniem D1 — globalna faza dnia i nocy z draftu była geometrycznie niemożliwa.
+Oczekiwane: **13 testów przechodzi.**
+
+> **Uwaga do kierunku naliczania kosztu — naprawiony defekt planu.** Wcześniejsza wersja tego
+> kroku relaksowała `distance[cur] + entryCost(cur)`, czyli obciążała sąsiadów kosztem komórki
+> JUŻ ROZSTRZYGNIĘTEJ. To jest błędne w obie strony: HP samego celu doliczało się jako stała do
+> odległości KAŻDEJ osiągalnej komórki, a budynek nigdy nie podnosił kosztu WŁASNEJ komórki —
+> ujawniał się dopiero o krok dalej. Poprawnie jest `distance[cur] + entryCost(n)`: wróg stojący
+> w `n` płaci za wejście do `n`, więc porównując sąsiadów widzi realny koszt kroku.
+> Zmierzone po naprawie (seed 41, Armor dps 50): sąsiad Core na pustej planecie 1,00 (czysty krok
+> BFS), ta sama komórka z barykadą 4,00, ten sam mur przy dps 10 → 16,00, przy dps 100 → 2,50.
+> Ostatnia para to D3 na żywo: ten sam mur kosztuje słabego szesnaście, a silnego dwa i pół. Test „oświetla mniej więcej połowę planety" jest formalnym potwierdzeniem D1 — globalna faza dnia i nocy z draftu była geometrycznie niemożliwa.
 
 ```bash
 git add packages/sim/src/sim/light.ts packages/sim/test/light.test.ts
@@ -798,6 +1047,14 @@ describe('applyCommand', () => {
     applyCommand(s, { kind: 'DEMOLISH', cellId: planet.startCell });
     expect(s.buildings[planet.startCell]).not.toBeNull();
   });
+
+  it('DEMOLISH z cellId poza zakresem (ujemny, za duży, NaN) jest po cichu ignorowany, nie rzuca — komendy przychodzą z sieci', () => {
+    const s = createState(planet, 100);
+    for (const badCellId of [-1, planet.cells.length + 999, NaN]) {
+      expect(() => applyCommand(s, { kind: 'DEMOLISH', cellId: badCellId })).not.toThrow();
+    }
+    expect(s.ore).toBe(100);
+  });
 });
 ```
 
@@ -811,7 +1068,12 @@ import type { Command } from '../src/sim/commands.js';
 
 const CONFIG = { rotationPeriod: 180, startingOre: 150 };
 
-function runScripted(seed: number, ticks: number): string {
+/**
+ * `withCommands = false` daje IDENTYCZNĄ pętlę step() bez żadnej komendy w kolejce —
+ * potrzebne, żeby odróżnić "hash różni się, bo komendy coś zmieniły" od "hash różni
+ * się, bo `oreRemaining` (seedowane z rozmieszczenia rudy) jest inne dla innego seeda".
+ */
+function runScripted(seed: number, ticks: number, withCommands = true): string {
   const planet = createPlanet({ seed });
   const sim = new Sim(planet, CONFIG);
 
@@ -823,11 +1085,13 @@ function runScripted(seed: number, ticks: number): string {
     .map((c) => c.id);
   const [c1, c2] = [buildable[0], buildable[1]];
 
-  const script: Array<[number, Command]> = [
-    [10, { kind: 'BUILD', cellId: c1, type: 'PYLON' }],
-    [25, { kind: 'BUILD', cellId: c2, type: 'BARRICADE' }],
-    [40, { kind: 'DEMOLISH', cellId: c1 }],
-  ];
+  const script: Array<[number, Command]> = withCommands
+    ? [
+        [10, { kind: 'BUILD', cellId: c1, type: 'PYLON' }],
+        [25, { kind: 'BUILD', cellId: c2, type: 'BARRICADE' }],
+        [40, { kind: 'DEMOLISH', cellId: c1 }],
+      ]
+    : [];
   for (let t = 0; t < ticks; t++) {
     for (const [at, cmd] of script) if (at === t) sim.enqueue(cmd);
     sim.step();
@@ -840,8 +1104,17 @@ describe('determinizm (§7.2)', () => {
     expect(runScripted(2026, 1200)).toBe(runScripted(2026, 1200));
   });
 
-  it('inny seed ⇒ inny hash', () => {
+  // UWAGA na zakres tego testu: NIE dowodzi, że komendy/step() biorą udział w hashu —
+  // `stateHash` hashuje `oreRemaining`, a to jest seedowane wprost z rozmieszczenia rudy
+  // (`planet.cells[].oreCapacity`), różnego dla różnych seedów już w `createState`,
+  // zanim jakikolwiek `step()` się wykona. Dowód, że komendy naprawdę zmieniają hash,
+  // jest w teście `komendy zmieniają hash` niżej.
+  it('różne ziarno ⇒ różny hash — już od stanu startowego (oreRemaining), niezależnie od komend czy step()', () => {
     expect(runScripted(2026, 600)).not.toBe(runScripted(2027, 600));
+  });
+
+  it('komendy zmieniają hash: ten sam seed i liczba ticków, z komendami vs. bez komend w kolejce, dają różny hash', () => {
+    expect(runScripted(2026, 1200, true)).not.toBe(runScripted(2026, 1200, false));
   });
 
   it('czas symulacji wynika wyłącznie z liczby ticków, nie z zegara', () => {
@@ -849,6 +1122,65 @@ describe('determinizm (§7.2)', () => {
     for (let i = 0; i < 20; i++) sim.step();
     expect(sim.elapsedSeconds).toBeCloseTo(1, 12);
     expect(sim.state.tick).toBe(20);
+  });
+});
+
+/**
+ * `pending` w Sim to zwykła tablica z push + for...of — poprawne dziś tylko dlatego,
+ * że nikt tego nie zmienił. Faza 5 będzie polegać na kolejności FIFO przy replayu
+ * komend z sieci, więc przyszła zmiana struktury kolejki mogłaby złamać ten kontrakt
+ * niewidocznie, gdyby nic go nie pilnowało.
+ */
+describe('kolejność komend w jednym ticku', () => {
+  it('dwie komendy dotykające tej samej komórki w tym samym ticku stosowane są w kolejności enqueue (FIFO) — wygrywa PIERWSZA, nie druga', () => {
+    const planet = createPlanet({ seed: 4 });
+    const target = planet.cells.find(
+      (c) => c.cellType === 'HEXAGON' && c.oreCapacity === 0 && c.id !== planet.startCell,
+    )!.id;
+    const sim = new Sim(planet, CONFIG);
+
+    sim.enqueue({ kind: 'BUILD', cellId: target, type: 'PYLON' });
+    sim.enqueue({ kind: 'BUILD', cellId: target, type: 'BARRICADE' });
+    sim.step();
+
+    // Gdyby kolejność była odwrócona (albo niezdeterminowana), na komórce
+    // stanąłby BARRICADE — druga komenda — a nie PYLON, pierwsza.
+    expect(sim.state.buildings[target]).toMatchObject({ type: 'PYLON' });
+  });
+});
+
+/**
+ * `rotationPeriod` zły przepływa do `terminatorSpeedWorld`/`terminatorSpeedCells`/
+ * `terminatorCrossingTime` w scale.ts, które dzielą przez nie bez żadnej straży —
+ * zdegenerowana wartość dałaby ciche Infinity/0 dopiero w Fazie 1C, bez błędu
+ * w tym miejscu. Walidacja w konstruktorze chroni WSZYSTKICH konsumentów naraz.
+ * `!(x > 0)` NIE łapie Infinity (Infinity > 0 jest prawdziwe) — stąd Number.isFinite.
+ */
+describe('SimConfig — walidacja w konstruktorze Sim', () => {
+  const planet = createPlanet({ seed: 1 });
+
+  it('odrzuca rotationPeriod <= 0 lub nieskończony', () => {
+    expect(() => new Sim(planet, { rotationPeriod: 0, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: -180, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: NaN, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: Infinity, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: -Infinity, startingOre: 100 })).toThrow(RangeError);
+  });
+
+  it('odrzuca startingOre ujemny lub nieskończony', () => {
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -1 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: NaN })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: Infinity })).toThrow(RangeError);
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -Infinity })).toThrow(RangeError);
+  });
+
+  it('akceptuje startingOre = 0 — niezerowa dolna granica byłaby błędem (pole jest NIEUJEMNE, nie dodatnie)', () => {
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: 0 })).not.toThrow();
+  });
+
+  it('komunikat błędu nazywa pole i wartość, a nie tylko ogólnikowo "invalid config"', () => {
+    expect(() => new Sim(planet, { rotationPeriod: -5, startingOre: 100 })).toThrow(/rotationPeriod.*-5/);
+    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -5 })).toThrow(/startingOre.*-5/);
   });
 });
 ```
@@ -903,7 +1235,10 @@ export function applyCommand(s: SimState, cmd: Command): void {
     }
     case 'DEMOLISH': {
       const b = s.buildings[cmd.cellId];
-      if (b === null || b.type === 'CORE') return;
+      // `== null`, nie `===`: cellId poza zakresem (ujemny, za duży, NaN) daje
+      // `undefined` z gęstej tablicy, nie `null` — komendy przychodzą z zewnątrz,
+      // więc obie wartości muszą być traktowane jak "nic tu nie ma do zburzenia".
+      if (b == null || b.type === 'CORE') return;
       s.ore += Math.floor(BUILDINGS[b.type].costOre / 2); // [STROJENIE] zwrot 50 %
       s.buildings[cmd.cellId] = null;
       return;
@@ -938,6 +1273,16 @@ export class Sim {
   private readonly pending: Command[] = [];
 
   constructor(planet: Planet, config: SimConfig) {
+    // `!(x > 0)` NIE łapie Infinity (Infinity > 0 jest prawdziwe) — stąd Number.isFinite.
+    // Walidacja tu, a nie w scale.ts, chroni WSZYSTKICH konsumentów rotationPeriod naraz:
+    // terminatorSpeedWorld/terminatorSpeedCells/terminatorCrossingTime dzielą przez nie
+    // bez żadnej straży i po cichu dają Infinity/0 zamiast rzucić błąd.
+    if (!Number.isFinite(config.rotationPeriod) || config.rotationPeriod <= 0) {
+      throw new RangeError(`SimConfig.rotationPeriod must be finite and positive, got ${config.rotationPeriod}`);
+    }
+    if (!Number.isFinite(config.startingOre) || config.startingOre < 0) {
+      throw new RangeError(`SimConfig.startingOre must be finite and non-negative, got ${config.startingOre}`);
+    }
     this.config = config;
     this.s = createState(planet, config.startingOre);
   }
@@ -971,7 +1316,15 @@ export class Sim {
 - [ ] **Step 5: Uruchom testy i commituj**
 
 Run: `pnpm vitest run packages/sim/test/commands.test.ts packages/sim/test/determinism.test.ts`
-Oczekiwane: **12 testów przechodzi.**
+Oczekiwane: **20 testów przechodzi** (11 w commands.test.ts, 9 w determinism.test.ts).
+
+Trzy z nich zamykają luki, które wyszły dopiero w przeglądzie i warto wiedzieć, po co są.
+`DEMOLISH` z `cellId` poza zakresem: `s.buildings` jest gęstą tablicą, więc indeks poza zakresem
+daje `undefined`, nie `null` — stąd `b == null`, nie `b === null`. Test „komendy zmieniają hasz":
+porównanie różnych seedów NIE dowodzi niczego o tym zadaniu, bo `oreRemaining` trafia do stanu
+wprost z planety i hasze różnią się już po `createState`; dopiero ten sam seed z skryptem i bez
+izoluje efekt `applyCommand`. Kolejność FIFO: poprawna dziś tylko dlatego, że `pending` to zwykła
+tablica, a Faza 5 oprze na tym odtwarzanie komend z sieci.
 
 ```bash
 git add packages/sim/src/sim/commands.ts packages/sim/src/sim/loop.ts packages/sim/test/commands.test.ts packages/sim/test/determinism.test.ts
@@ -1198,7 +1551,7 @@ import { applyCommand } from '../src/sim/commands.js';
 import { updatePower } from '../src/sim/power.js';
 import { multiSourceDistances } from '../src/world/graph.js';
 
-const planet = createPlanet({ seed: 21 });
+const planet = createPlanet({ seed: 8 });
 const neighbors = planet.cells.map((c) => c.neighbors);
 const dist = multiSourceDistances(neighbors, [planet.startCell]);
 
@@ -1210,6 +1563,40 @@ function nearbyHexes(count: number): number[] {
     }
   }
   if (out.length < count) throw new Error('za mało pustych heksów blisko startu');
+  return out;
+}
+
+/**
+ * Jak `nearbyHexes`, ale zwraca heksy ZE złożem (`oreCapacity > 0`) — jedyne, na których
+ * `canBuild` wpuszcza EXTRACTOR (`allowedCells: 'ORE_HEXAGON'` wymaga `oreRemaining > 0`,
+ * a świeży stan ma `oreRemaining === oreCapacity`). `nearbyHexes` celowo filtruje odwrotnie
+ * (`oreCapacity === 0`), więc nie nadaje się do stawiania ekstraktora.
+ */
+function nearbyOreHexes(count: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < dist.length && out.length < count; i++) {
+    if (dist[i] >= 1 && dist[i] <= 2 && planet.cells[i].cellType === 'HEXAGON' && planet.cells[i].oreCapacity > 0) {
+      out.push(i);
+    }
+  }
+  if (out.length < count) throw new Error('za mało heksów ze złożem blisko startu');
+  return out;
+}
+
+/**
+ * Heksy (dowolny status rudy) w promieniu do 3 kroków od startu — zasięg connectionRadius
+ * samego CORE, więc każdy zwrócony heks jest połączony wprost, bez łańcucha PYLON-ów
+ * pośredniczących. Szerszy zasięg niż `nearbyHexes`/`nearbyOreHexes` (1-2 kroki), bo do
+ * przebicia podaży samego CORE trzeba więcej komórek, niż mieści pierścień o promieniu 2.
+ */
+function nearbyHexesForPylons(count: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < dist.length && out.length < count; i++) {
+    if (dist[i] >= 1 && dist[i] <= 3 && planet.cells[i].cellType === 'HEXAGON') {
+      out.push(i);
+    }
+  }
+  if (out.length < count) throw new Error('za mało heksów w zasięgu CORE na tyle PYLON-ów');
   return out;
 }
 
@@ -1244,26 +1631,44 @@ describe('updatePower', () => {
 
   it('niepodłączony budynek nie produkuje i nie pobiera', () => {
     const s = base();
-    const orphan = planet.cells.find(
-      (c) => c.cellType === 'HEXAGON' && c.oreCapacity === 0 && dist[c.id] > 8,
-    )!.id;
-    applyCommand(s, { kind: 'BUILD', cellId: orphan, type: 'SOLAR_PANEL' });
-    expect(updatePower(s, fullLight).supply).toBeCloseTo(10, 6);
-    expect(s.buildings[orphan]!.powered).toBe(false);
+    // Dwa różne odcięte heksy: jeden pod producenta, drugi pod odbiorcę — sama
+    // SOLAR_PANEL (drain 0) dowodzi tylko połowy kontraktu (odcięty producent nie
+    // dolicza się do podaży); KINETIC_TURRET (drain 3) dowodzi drugiej połowy
+    // (odcięty odbiorca nie dolicza się do popytu ani nie zostaje zasilony).
+    const [orphanProducer, orphanConsumer] = planet.cells
+      .filter((c) => c.cellType === 'HEXAGON' && c.oreCapacity === 0 && dist[c.id] > 8)
+      .map((c) => c.id);
+    applyCommand(s, { kind: 'BUILD', cellId: orphanProducer, type: 'SOLAR_PANEL' });
+    applyCommand(s, { kind: 'BUILD', cellId: orphanConsumer, type: 'KINETIC_TURRET' });
+
+    const r = updatePower(s, fullLight);
+    expect(r.supply).toBeCloseTo(10, 6);
+    expect(r.demand).toBeCloseTo(0, 6);
+    expect(s.buildings[orphanProducer]!.powered).toBe(false);
+    expect(s.buildings[orphanConsumer]!.powered).toBe(false);
   });
 
   it('nadwyżka ładuje magazyn, ale nie ponad pojemność', () => {
     const s = base();
-    s.storedEnergy = 0;
-    for (let i = 0; i < 100; i++) updatePower(s, noLight);
     const coreStorage = 200;
-    expect(s.storedEnergy).toBeLessThanOrEqual(coreStorage);
-    expect(s.storedEnergy).toBeGreaterThan(0);
+    // Tuż pod pojemnością: CORE bez odbiorców daje +0,5/s nadwyżki (10 · 0,05), więc
+    // jeden tick bez obcięcia wylądowałby na 200,15 — WYRAŹNIE ponad pojemność, nie
+    // tylko "gdzieś niżej niż nigdy nieosiągnięty sufit" (100 ticków od zera dawało
+    // 50 — dziesięciokrotnie za mało, by w ogóle dotknąć sufitu).
+    s.storedEnergy = coreStorage - 0.15;
+    updatePower(s, noLight);
+    expect(s.storedEnergy).toBe(coreStorage);
+
+    // Dalsza nadwyżka nie podnosi go wyżej — pozostaje przypięty do sufitu, nie tylko
+    // go dotknął przypadkiem w jednym ticku.
+    updatePower(s, noLight);
+    expect(s.storedEnergy).toBe(coreStorage);
   });
 
   it('przy niedoborze gasi EKSTRAKTORY przed obroną (§5.1)', () => {
     const s = base();
-    const [a, b, c, d] = nearbyHexes(4);
+    const [a] = nearbyOreHexes(1);
+    const [b, c, d] = nearbyHexes(3);
     applyCommand(s, { kind: 'BUILD', cellId: a, type: 'EXTRACTOR' });
     applyCommand(s, { kind: 'BUILD', cellId: b, type: 'KINETIC_TURRET' });
     applyCommand(s, { kind: 'BUILD', cellId: c, type: 'LASER_TURRET' });
@@ -1283,7 +1688,8 @@ describe('updatePower', () => {
 
   it('gasi lasery dopiero jako ostatnie', () => {
     const s = base();
-    const [a, b, c] = nearbyHexes(3);
+    const [a] = nearbyOreHexes(1);
+    const [b, c] = nearbyHexes(2);
     applyCommand(s, { kind: 'BUILD', cellId: a, type: 'EXTRACTOR' });
     applyCommand(s, { kind: 'BUILD', cellId: b, type: 'KINETIC_TURRET' });
     applyCommand(s, { kind: 'BUILD', cellId: c, type: 'LASER_TURRET' });
@@ -1299,7 +1705,7 @@ describe('updatePower', () => {
 
   it('magazyn pokrywa chwilowy niedobór zamiast natychmiast gasić', () => {
     const s = base();
-    const [a, b, c] = nearbyHexes(3);
+    const [a, b, c] = nearbyOreHexes(3);
     applyCommand(s, { kind: 'BUILD', cellId: a, type: 'EXTRACTOR' });
     applyCommand(s, { kind: 'BUILD', cellId: b, type: 'EXTRACTOR' });
     applyCommand(s, { kind: 'BUILD', cellId: c, type: 'EXTRACTOR' });
@@ -1311,6 +1717,31 @@ describe('updatePower', () => {
     expect(r.shedTypes).toEqual([]);
     expect(s.storedEnergy).toBeLessThan(before);
     expect(s.storedEnergy).toBeCloseTo(before + (10 - 15) * TICK_SECONDS, 6);
+  });
+
+  it('PYLON liczy się do popytu, ale nigdy nie jest gaszony — magazyn ląduje na zerze, nie poniżej (§5.1)', () => {
+    const s = base();
+    // 30 PYLON-ów × 0,5/s = 15/s popytu wyłącznie z infrastruktury sieci, wobec 10/s
+    // z samego CORE — trwały niedobór 5/s. PYLON jest poza BROWNOUT_ORDER (rozspójniłby
+    // sieć), więc nic tu nigdy nie gaśnie: deficyt może tylko drenować magazyn.
+    const pylonCells = nearbyHexesForPylons(30);
+    for (const cellId of pylonCells) {
+      applyCommand(s, { kind: 'BUILD', cellId, type: 'PYLON' });
+    }
+    s.storedEnergy = 0;
+
+    const r = updatePower(s, noLight);
+    expect(r.demand).toBeCloseTo(15, 9); // popyt PYLON-ów NAPRAWDĘ policzony, nie pominięty
+    expect(r.shedTypes).toEqual([]);
+    expect(r.shedTypes).not.toContain('PYLON'); // ani teraz, ani przy dalszym drenażu niżej
+    expect(s.storedEnergy).toBe(0); // od razu na zerze, nie poniżej
+
+    // Bez obcięcia 50 kolejnych ticków (× -0,25/s netto) zjechałoby wyraźnie na minus.
+    for (let i = 0; i < 50; i++) {
+      const r2 = updatePower(s, noLight);
+      expect(r2.shedTypes).toEqual([]);
+    }
+    expect(s.storedEnergy).toBe(0);
   });
 });
 ```
@@ -1330,6 +1761,12 @@ import { TICK_SECONDS, type BuildingType, type SimState } from './state.js';
 
 export interface PowerReport {
   supply: number;
+  /**
+   * Popyt PO kaskadzie gaszenia, nie surowe zapotrzebowanie sprzed niej: akumulowany
+   * dla wszystkich podłączonych odbiorców, a potem pomniejszany w miejscu przy każdym
+   * zgaszeniu. UI pokazujący „potrzebowano X/s, było Y/s" chce wartości SPRZED kaskady —
+   * to pole jej nie niesie.
+   */
   demand: number;
   /** Typy, które faktycznie zgaszono w tym ticku, w kolejności gaszenia. */
   shedTypes: BuildingType[];
@@ -1385,6 +1822,15 @@ export function updatePower(s: SimState, light: Float32Array): PowerReport {
   return { supply, demand, shedTypes };
 }
 ```
+
+> **Uwaga do seeda i helperów — wynik naprawy defektu planu.** Ten plik używa `seed: 8`
+> i dwóch osobnych helperów doboru komórek: `nearbyHexes` (heksy BEZ rudy, pod wszystko poza
+> ekstraktorem) oraz `nearbyOreHexes` (heksy ZE złożem, wyłącznie pod EXTRACTOR). Wcześniejsza
+> wersja używała `seed: 21` i stawiała ekstraktory przez `nearbyHexes`, co było **niewykonalne**:
+> `EXTRACTOR.allowedCells` to `ORE_HEXAGON`, więc `canBuild` odrzucał je z `WRONG_CELL_TYPE`,
+> a przy seedzie 21 najbliższa ruda leży i tak 7 skoków od bazy, czyli poza zasięgiem Core (3).
+> Zmierzone: seed 21 → 0 komórek rudy w zasięgu 3; seed 8 → 16. Nie zmieniaj seeda ani helperów
+> bez ponownego sprawdzenia tej geometrii — arytmetyka popytu w testach kaskady od niej zależy.
 
 - [ ] **Step 4: Dopnij system do pętli**
 
@@ -1487,6 +1933,39 @@ describe('updateEconomy', () => {
     expect(s.oreRemaining[oreCell]).toBe(0);
     expect(s.ore).toBeCloseTo(capacity, 6);
   });
+
+  it('typ gmachu — tylko EXTRACTOR wydobywa, inne typy mają wstęp zamknięty', () => {
+    const s = createState(planet, 0);
+
+    // Trzy żyzne komórki — różne składy.
+    const fertileCells = planet.cells.filter((c) => c.oreCapacity > 0).slice(0, 3);
+    const extractorCell = fertileCells[0].id;
+    const pylonCell = fertileCells[1].id;
+    const extractor2Cell = fertileCells[2].id;
+
+    // Zmienne początkowe.
+    const extractorCapacity = s.oreRemaining[extractorCell];
+    const pylonCapacity = s.oreRemaining[pylonCell];
+    const extractor2Capacity = s.oreRemaining[extractor2Cell];
+
+    // EXTRACTOR na pierwszej, PYLON na drugiej (typem chroniony), drugi EXTRACTOR na trzeciej.
+    s.buildings[extractorCell] = { cellId: extractorCell, type: 'EXTRACTOR', hp: 120, powered: true };
+    s.buildings[pylonCell] = { cellId: pylonCell, type: 'PYLON', hp: 80, powered: true };
+    s.buildings[extractor2Cell] = { cellId: extractor2Cell, type: 'EXTRACTOR', hp: 120, powered: true };
+
+    const perTick = ORE_PER_SECOND * TICK_SECONDS;
+    updateEconomy(s);
+
+    // Oba ekstraktory wydobyły po perTick.
+    expect(s.ore).toBeCloseTo(perTick * 2, 9);
+
+    // Każdy EXTRACTOR uszczuplił swoje złoże.
+    expect(s.oreRemaining[extractorCell]).toBeCloseTo(extractorCapacity - perTick, 9);
+    expect(s.oreRemaining[extractor2Cell]).toBeCloseTo(extractor2Capacity - perTick, 9);
+
+    // PYLON na typem zablokowany — jego złoże nietknięte.
+    expect(s.oreRemaining[pylonCell]).toBe(pylonCapacity);
+  });
 });
 ```
 
@@ -1587,6 +2066,29 @@ describe('MinHeap', () => {
     for (let i = 10; i > 0; i--) h.push(i, i);
     expect(h.size).toBe(10);
     expect(h.pop()).toBe(1);
+    expect(h.size).toBe(9);
+  });
+
+  it('przy remisach kosztów kolejność jest niemalejąca i identyczna między uruchomieniami', () => {
+    const pairs = [[1, 5], [2, 5], [3, 1], [4, 1], [5, 5], [6, 1]] as const;
+    const costOf = new Map<number, number>(pairs);
+
+    function drain(): number[] {
+      const h = new MinHeap(4); // mniej niż liczba elementów — wymusza `grow()` w trakcie remisów.
+      for (const [n, c] of pairs) h.push(n, c);
+      const order: number[] = [];
+      for (let popped = h.pop(); popped !== undefined; popped = h.pop()) order.push(popped);
+      return order;
+    }
+
+    const a = drain();
+    const b = drain();
+    const costsA = a.map((n) => costOf.get(n)!);
+    for (let i = 1; i < costsA.length; i++) expect(costsA[i]).toBeGreaterThanOrEqual(costsA[i - 1]);
+    // Ruch Fazy 1C rozstrzyga remisy odległości tą samą kolejnością co kopiec, więc kolejność
+    // wyciągania MUSI być deterministyczna, nie tylko "poprawna": ten sam ciąg push() ma dawać
+    // dokładnie ten sam ciąg pop(), nie tylko ciąg o tych samych kosztach.
+    expect(a).toEqual(b);
   });
 });
 
@@ -1662,9 +2164,19 @@ describe('buildFlowField', () => {
     expect(f.distance[ring[0]]).toBeGreaterThan(0); // barykada nie jest
   });
 
-  it('bez żadnego celu wszystkie odległości są nieskończone', () => {
+  it('bez żadnego celu wszystkie odległości są nieskończone, a `next` nigdzie nie wskazuje', () => {
     const f = buildFlowField(createState(planet, 0), 'CORE', 50);
     for (const d of f.distance) expect(d).toBe(Infinity);
+    for (const n of f.next) expect(n).toBe(-1);
+  });
+
+  it('wyrzuca błąd dla attackerDps <= 0 lub nieskończonego', () => {
+    const s = withCore();
+    expect(() => buildFlowField(s, 'CORE', 0)).toThrow(RangeError);
+    expect(() => buildFlowField(s, 'CORE', -10)).toThrow(RangeError);
+    expect(() => buildFlowField(s, 'CORE', NaN)).toThrow(RangeError);
+    expect(() => buildFlowField(s, 'CORE', Infinity)).toThrow(RangeError);
+    expect(() => buildFlowField(s, 'CORE', -Infinity)).toThrow(RangeError);
   });
 });
 
@@ -1674,10 +2186,13 @@ describe('buildAllFlowFields', () => {
     expect(Object.keys(fields).sort()).toEqual(['ARMOR', 'DISRUPTOR', 'SWARM']);
   });
 
-  it('jest deterministyczne', () => {
+  it('jest deterministyczne dla każdego typu wroga, `distance` i `next`', () => {
     const a = buildAllFlowFields(withCore());
     const b = buildAllFlowFields(withCore());
-    expect([...a.SWARM.next]).toEqual([...b.SWARM.next]);
+    for (const type of ['SWARM', 'ARMOR', 'DISRUPTOR'] as const) {
+      expect([...a[type].distance]).toEqual([...b[type].distance]);
+      expect([...a[type].next]).toEqual([...b[type].next]);
+    }
   });
 });
 ```
@@ -1782,6 +2297,15 @@ type Priority = EnemyDef['targetPriority'];
  *   • w MP nie da się zamurować gracza na głucho.
  */
 export function buildFlowField(s: SimState, priority: Priority, attackerDps: number): FlowField {
+  // `attackerDps <= 0` niepostrzeżenie robi `entryCost` = Infinity (podział przez 0 przy
+  // dodatnim hp), więc CORE otoczony pierścieniem staje się PRAWDZIWIE nieosiągalne —
+  // dokładnie porażka D3, którą ten moduł ma wykluczyć, tylko cicha. `Number.isFinite`,
+  // NIE `!(x > 0)` — to drugie przepuszcza Infinity (Infinity > 0 jest prawdziwe), co dawałoby
+  // odwrotnie zdegenerowany przypadek: każdy mur za darmo. Ten sam idiom co `sunDirection`
+  // w light.ts i konstruktor `Sim` w loop.ts.
+  if (!Number.isFinite(attackerDps) || attackerDps <= 0) {
+    throw new RangeError(`attackerDps must be positive and finite, got ${attackerDps}`);
+  }
   const cells = s.planet.cells;
   const distance = new Float64Array(cells.length).fill(Infinity);
   const next = new Int32Array(cells.length).fill(-1);
@@ -1801,11 +2325,16 @@ export function buildFlowField(s: SimState, priority: Priority, attackerDps: num
     if (settled[cur]) continue;
     settled[cur] = 1;
 
-    // Wchodzimy DO `cur` z sąsiada, więc koszt wejścia dotyczy komórki `cur`.
-    const stepCost = entryCost(s, cur, attackerDps);
     for (const n of cells[cur].neighbors) {
       if (settled[n]) continue;
-      const candidate = distance[cur] + stepCost;
+      // Wchodzimy DO `n` z (już rozstrzygniętego, bliższego celowi) `cur`,
+      // więc koszt wejścia dotyczy komórki `n`, NIE `cur`. `cur` może samo być
+      // celem (dystans 0) — jego własny koszt zniszczenia nie ma się nigdzie
+      // "przeciekać" do sąsiadów, inaczej HP celu doliczałoby się do odległości
+      // KAŻDEJ osiągalnej komórki jako stała, a zabudowana komórka nigdy nie
+      // byłaby droższa od pustej pod WŁASNYM indeksem (koszt jej budynku
+      // ujawniałby się dopiero na sąsiadach o jeden krok dalej).
+      const candidate = distance[cur] + entryCost(s, n, attackerDps);
       if (candidate < distance[n]) {
         distance[n] = candidate;
         next[n] = cur;

@@ -52,6 +52,37 @@ export class Rng {
   fork(streamId: number): Rng {
     return new Rng((this.seed ^ Math.imul(streamId + 1, 0x9e3779b9)) | 0);
   }
+
+  /**
+   * Migawka pełnego stanu generatora: cztery słowa robocze xoshiro ORAZ seed.
+   * Seed jest częścią migawki, nie tylko `s` — `fork()` zależy wyłącznie od
+   * seeda (patrz wyżej), więc bez niego generator odtworzony z migawki dawałby
+   * INNE poddrzewa strumieni niż oryginał w tym samym punkcie.
+   *
+   * Zwykła krotka liczb, nie Uint32Array — musi przetrwać JSON.stringify/parse
+   * (zapis gry, resynchronizacja klienta/serwera), a TypedArray tego nie gwarantuje.
+   */
+  getState(): RngState {
+    return { seed: this.seed, s: [this.s[0], this.s[1], this.s[2], this.s[3]] };
+  }
+
+  /**
+   * Odtwarza generator z migawki `getState()`: kontynuuje IDENTYCZNĄ sekwencję
+   * od miejsca, w którym migawka została zrobiona. Bez tego, odtworzenie
+   * `SimState` po zapisie/resynchronizacji restartowałoby dowolny strumień
+   * trzymany poza stanem (np. fale, Faza 1C) od pozycji zero i rozjeżdżało
+   * spawny wobec serwera, który nie przestawał liczyć.
+   */
+  static fromState(state: RngState): Rng {
+    const rng = new Rng(state.seed);
+    rng.s.set(state.s);
+    return rng;
+  }
+}
+
+export interface RngState {
+  readonly seed: number;
+  readonly s: readonly [number, number, number, number];
 }
 
 function rotl(x: number, k: number): number {

@@ -66,7 +66,7 @@ import { applyCommand } from '../src/sim/commands.js';
 import { buildAllFlowFields } from '../src/sim/flowfield.js';
 import { spawnUnit, updateMovement, type MotionContext } from '../src/sim/movement.js';
 import { cellSpacing, terminatorSpeedCells } from '../src/world/scale.js';
-import { ENEMIES } from '../src/sim/defs.js';
+import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
 import { length, scale, sub, normalize, dot } from '../src/math/vec3.js';
 import { multiSourceDistances } from '../src/world/graph.js';
 
@@ -85,7 +85,9 @@ const sunDir = { x: 1, y: 0, z: 0 };
 
 function withCore() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -369,7 +371,9 @@ const planet = createPlanet({ seed: 61 });
 
 function withCore() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -677,13 +681,12 @@ Faza 1A dowiodła niezmiennika N3 **na wzorze**. Ten task dowodzi go **na żywej
 import { describe, expect, it } from 'vitest';
 import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS } from '../src/sim/state.js';
-import { applyCommand } from '../src/sim/commands.js';
 import { buildAllFlowFields } from '../src/sim/flowfield.js';
 import { spawnUnit, updateMovement, type MotionContext } from '../src/sim/movement.js';
 import { SHADOW_RECOVERY_RATE, updateBurning } from '../src/sim/burning.js';
 import { lightField, sunDirection } from '../src/sim/light.js';
 import { cellSpacing, terminatorSpeedCells } from '../src/world/scale.js';
-import { ENEMIES } from '../src/sim/defs.js';
+import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
 import { dot } from '../src/math/vec3.js';
 
 const planet = createPlanet({ seed: 71 });
@@ -701,7 +704,9 @@ const noLight = new Float32Array(N).fill(0);
 
 function withCore() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -925,6 +930,7 @@ import { createState } from '../src/sim/state.js';
 import { applyCommand } from '../src/sim/commands.js';
 import { DEFAULT_SPAWN, updateSpawning } from '../src/sim/spawning.js';
 import { Rng, STREAM } from '../src/math/rng.js';
+import { BUILDINGS } from '../src/sim/defs.js';
 
 const planet = createPlanet({ seed: 81 });
 const N = planet.cells.length;
@@ -934,7 +940,9 @@ const allLit = new Float32Array(N).fill(1);
 
 function fresh() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -1153,7 +1161,41 @@ git commit -m "feat(sim): spawn z zaciemnionych pentagonów i erupcje zatkanych 
 **Files:**
 - Create: `packages/sim/src/sim/rules.ts`
 - Modify: `packages/sim/src/sim/state.ts`, `packages/sim/src/sim/hash.ts`, `packages/sim/src/sim/loop.ts`, `packages/sim/src/index.ts`
+- Modify (migracja wywołań, patrz Krok 0): `packages/sim/test/determinism.test.ts`, `packages/sim/test/state.test.ts`
 - Test: `packages/sim/test/rules.test.ts`, `packages/sim/test/fullrun.test.ts`
+
+> **Krok 0 — migracja istniejących wywołań `new Sim(...)`. Zrób to PRZED pisaniem testów,
+> inaczej `tsc` nie przejdzie i nie odróżnisz swojego czerwonego od cudzego.**
+>
+> Faza 1B ma **21 wywołań `new Sim(planet, config)`** — 20 w `determinism.test.ts`, 1 w
+> `state.test.ts` — i wszystkie podają `SimConfig`, czyli `{ rotationPeriod, startingOre }`.
+> To zadanie zmienia drugi parametr na `RunConfig` z ośmioma **wymaganymi** polami, więc
+> każde z tych 21 wywołań przestaje się kompilować.
+>
+> **Rozstrzygnięcie: `RunConfig` ZASTĘPUJE `SimConfig`, a wywołania migrują jawnie.**
+> Sprawdzone: `SimConfig` nie ma żadnego konsumenta poza `loop.ts`, który to zadanie i tak
+> podmienia w całości — więc nie zostawiamy dwóch typów konfiguracji ani dziedziczenia między
+> nimi. Usuń `export interface SimConfig`, zostaw sam `RunConfig`, i **popraw treść komunikatów
+> `RangeError` w konstruktorze z `SimConfig.…` na `RunConfig.…`** (są asercjowane po fragmencie
+> tekstu — sprawdź, czy testy walidacji dopasowują się do nowego brzmienia).
+>
+> Nie robimy za to pól opcjonalnych scalanych po cichu z `DEFAULT_RUN` w konstruktorze. Powód:
+> reszta planu przekazuje `cfg: RunConfig` do `updateRules` i `evacUnlocked` jako komplet, więc
+> konfiguracja częściowa i tak musiałaby być materializowana w `Sim` — zostałby nam typ o dwóch
+> kształtach, inny przy konstrukcji niż wszędzie indziej, i każda kolejna faza musiałaby o tym
+> pamiętać. Jednorazowy koszt 21 mechanicznych edycji jest tańszy niż stała dwuznaczność.
+>
+> Wzorzec migracji — dopisz rozwinięcie, zostaw nadpisane pole:
+> ```ts
+> // było:  new Sim(planet, { rotationPeriod: 0, startingOre: 100 })
+> // jest:  new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 0, startingOre: 100 })
+> ```
+> **Dziesięć z tych wywołań (`determinism.test.ts`) to testy walidacji konstruktora** —
+> sprawdzają, że `rotationPeriod` i `startingOre` są odrzucane dla zera, wartości ujemnych,
+> `NaN` i nieskończoności, plus podłoga `rotationPeriod < TICK_SECONDS`. **Mają przetrwać
+> migrację co do jednego i dalej oblewać, gdy straż zniknie.** Po migracji usuń jedną strażnicę
+> z `loop.ts`, potwierdź, że odpowiedni test oblewa, i przywróć ją — dopiero wtedy wiesz,
+> że migracja niczego nie wykastrowała. Zaraportuj, którą strażnicę usunąłeś i który test oblał.
 
 **Interfaces:**
 - Consumes: wszystko powyższe
@@ -1188,7 +1230,7 @@ W `hash.ts`, obok `h.float(s.storedEnergy)`:
 import { describe, expect, it } from 'vitest';
 import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS } from '../src/sim/state.js';
-import { applyCommand } from '../src/sim/commands.js';
+import { BUILDINGS } from '../src/sim/defs.js';
 import { currentCycle, DEFAULT_RUN, evacUnlocked, updateRules } from '../src/sim/rules.js';
 
 const planet = createPlanet({ seed: 91 });
@@ -1196,7 +1238,9 @@ const cfg = DEFAULT_RUN;
 
 function withCore() {
   const s = createState(planet, 100000);
-  applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
   return s;
 }
 
@@ -1422,6 +1466,7 @@ import type { Planet } from '../world/planet.js';
 import { updateBurning } from './burning.js';
 import { updateCombat } from './combat.js';
 import { applyCommand, type Command } from './commands.js';
+import { BUILDINGS } from './defs.js';
 import { updateEconomy } from './economy.js';
 import { buildAllFlowFields } from './flowfield.js';
 import { lightField, sunDirection } from './light.js';
@@ -1455,8 +1500,13 @@ export class Sim {
       radius: planet.radius,
     };
 
-    // CORE stawiany bez kosztu na komórce startowej — to punkt wyjścia runu, nie decyzja gracza.
-    applyCommand(this.s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
+    // CORE na komórce startowej: punkt wyjścia runu, nie decyzja gracza — więc bez kosztu
+    // i WPROST do stanu, nie przez `applyCommand`. `canBuild` odrzuca CORE niezależnie od
+    // komórki (`playerBuildable: false`), bo inaczej gracz mnożyłby go za darmo — patrz
+    // notatka pod tym blokiem. Ten sam zapis stosują pomocniki testowe Fazy 1B.
+    this.s.buildings[planet.startCell] = {
+      cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+    };
   }
 
   get state(): SimState { return this.s; }
@@ -1471,7 +1521,12 @@ export class Sim {
    * bez aktualizacji testów determinizmu.
    */
   step(): void {
-    if (this.s.phase !== 'RUNNING') return;
+    if (this.s.phase !== 'RUNNING') {
+      // Kolejka opróżniana TAKŻE tutaj. Komenda zakolejkowana po końcu runu nie może
+      // przeleżeć do chwili, w której stan wróciłby do RUNNING, i wykonać się z opóźnieniem.
+      this.pending.length = 0;
+      return;
+    }
 
     for (const cmd of this.pending) applyCommand(this.s, cmd);
     this.pending.length = 0;
@@ -1498,12 +1553,24 @@ export class Sim {
 }
 ```
 
-> **Uwaga:** `Sim` stawia teraz CORE sam, więc testy z Fazy 1B, które stawiały go ręcznie przez `applyCommand`, mogą wymagać drobnej korekty. `canBuild` odrzuci drugi CORE przez `CELL_OCCUPIED`, więc zachowanie pozostaje poprawne — sprawdź, czy asercje nadal opisują to, co chcesz przetestować.
+> **Uwaga — poprawione po przeglądzie końcowym Fazy 1B.** Wcześniejsza wersja tej notatki
+> twierdziła, że „`canBuild` odrzuci drugi CORE przez `CELL_OCCUPIED`, więc zachowanie pozostaje
+> poprawne". **To było fałszywe.** `CELL_OCCUPIED` odrzuca drugi CORE wyłącznie NA TEJ SAMEJ
+> KOMÓRCE; każdy inny pusty heks przyjmował kolejny za darmo, bo `CORE.costOre = 0`. Zmierzone
+> na skompilowanym module: **50 rdzeni przy zerowej rudzie, 500 energii na sekundę.** Przy
+> warunku przegranej `!s.buildings.some(b => b?.type === 'CORE')` z §5.6 dawałoby to graczowi
+> darmową nieśmiertelność, a w Fazie 5 — niezautentykowanemu graczowi nieskończoną energię
+> i nieskończony zasięg sieci.
+>
+> Faza 1B zamyka to polem `playerBuildable` w `BuildingDef`: `canBuild` odrzuca CORE niezależnie
+> od komórki i zasobów. **Konsekwencja dla tego zadania: `Sim` NIE MOŻE stawiać CORE przez
+> `applyCommand`** — musi zapisać go wprost do stanu przy konstrukcji.
 
 - [ ] **Step 6: Wystaw publiczne API**
 
 Dopisz do `packages/sim/src/index.ts`:
 ```ts
+export { type RngState } from './math/rng.js';
 export { TICK_SECONDS, createState } from './sim/state.js';
 export type { Building, BuildingType, EnemyType, Phase, SimState, Unit } from './sim/state.js';
 export { stateHash } from './sim/hash.js';
@@ -1894,6 +1961,17 @@ pnpm --filter @heliopolis/headless bench 1000 0
 
 Pierwszy raport zapisz do `docs/superpowers/plans/pierwszy-raport-balansu.txt`. Nie ma być dobry — ma **istnieć** i być powtarzalny. To on wyznacza pracę Fazy 3.
 
+> **Zakres słowa „powtarzalny" — przeczytaj, zanim oprzesz coś na tym raporcie.** Powtarzalny
+> znaczy tu: **ten sam proces i ta sama maszyna**, dwa przebiegi z tymi samymi seedami dają
+> identyczne liczby. Mocniejszego twierdzenia — że ten sam seed da te same liczby na cudzym
+> komputerze albo w CI — **ten plan NIE stawia** i Faza 3 nie może go założyć bez sprawdzenia.
+> Powód jest zapisany w komentarzu nad `lightField` w `packages/sim/src/sim/light.ts`:
+> `Math.cos`/`Math.sin` to przybliżenia zależne od silnika JS, a ECMAScript nie gwarantuje
+> wyniku co do bitu między platformami. Tłumienie przez `Float32Array` większość rozbieżności
+> zjada, ale **nie wszystkie** — zmierzona resztka jest w tamtym komentarzu. Dlatego test
+> determinizmu w Tasku 5 porównuje dwa przebiegi w jednym procesie (`expect(run()).toBe(run())`),
+> a nie przypięty literał hasza. Nie zamieniaj go na literał bez rozstrzygnięcia tej kwestii.
+
 ```bash
 git add -A
 git commit -m "feat(headless): runner balansowy ze skryptową polityką i raportem rozkładów (§8.3)"
@@ -1906,14 +1984,14 @@ git commit -m "feat(headless): runner balansowy ze skryptową polityką i raport
 - [ ] `pnpm test` zielony, `pnpm typecheck` bez błędów, strażnik zero-zależności nadal przechodzi
 - [ ] Determinizm potwierdzony na pełnym runie przez 8000 ticków, nie tylko na modułach
 - [ ] Run przechodzi się bez renderu od startu do porażki albo zwycięstwa
-- [ ] Headless runner wykonuje 1000 runów i wypisuje powtarzalny raport rozkładów
+- [ ] Headless runner wykonuje 1000 runów i wypisuje raport rozkładów powtarzalny **w tym samym procesie i na tej samej maszynie** (zakres tego słowa — patrz ramka w Tasku 6)
 - [ ] Niezmiennik N3 zweryfikowany na żywej symulacji: ARMOR ginie, SWARM ucieka z tej samej pozycji
 - [ ] D3 zweryfikowane: CORE w pełnym pierścieniu barykad pozostaje osiągalny
 - [ ] D1 zweryfikowane: oświetlony pentagon nie spawnuje, oświetlona jest zawsze ~połowa planety
 - [ ] §5.3 zweryfikowane: 12 zatkanych capów nadal generuje zagrożenie — `allCapsOverloadTimeSeconds` jest zbędne
 - [ ] Wszystkie liczby balansowe oznaczone `// [STROJENIE]`
 - [ ] **Q2, Q3 i Q4 przeniesione w §11 specu z „otwarte" do rozstrzygniętych**, z uzasadnieniem z sekcji Global Constraints tego planu
-- [ ] `docs/superpowers/plans/pierwszy-raport-balansu.txt` istnieje i jest powtarzalny
+- [ ] `docs/superpowers/plans/pierwszy-raport-balansu.txt` istnieje i jest powtarzalny w powyższym zakresie
 
 **Następna faza:** Faza 2 — warstwa renderu i sterowania. Plan powstaje **po** Fazie 0, bo to jej wynik rozstrzyga model kamery (Q1).
 
