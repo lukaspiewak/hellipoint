@@ -1,0 +1,184 @@
+import { describe, expect, it } from 'vitest';
+import { createPlanet } from '../src/world/planet.js';
+import { createState, TICK_SECONDS } from '../src/sim/state.js';
+import { applyCommand } from '../src/sim/commands.js';
+import { buildAllFlowFields } from '../src/sim/flowfield.js';
+import { spawnUnit } from '../src/sim/movement.js';
+import { cellsWithinSteps, updateCombat } from '../src/sim/combat.js';
+import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
+import { multiSourceDistances } from '../src/world/graph.js';
+
+const planet = createPlanet({ seed: 61 });
+
+function withCore() {
+  const s = createState(planet, 100000);
+  s.buildings[planet.startCell] = {
+    cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+  };
+  return s;
+}
+
+/** Pusty heks w zadanej liczbie kroków od komórki startowej. */
+function plainHexAt(steps: number): number {
+  const found = cellsWithinSteps(withCore(), planet.startCell, steps).find(
+    (i) =>
+      planet.cells[i].cellType === 'HEXAGON' &&
+      planet.cells[i].oreCapacity === 0 &&
+      i !== planet.startCell,
+  );
+  if (found === undefined) throw new Error(`brak pustego heksa w ${steps} krokach`);
+  return found;
+}
+
+describe('cellsWithinSteps', () => {
+  it('zero kroków to sama komórka', () => {
+    expect(cellsWithinSteps(withCore(), planet.startCell, 0)).toEqual([planet.startCell]);
+  });
+
+  it('jeden krok to komórka plus jej sąsiedzi', () => {
+    const got = cellsWithinSteps(withCore(), planet.startCell, 1);
+    expect(got).toHaveLength(1 + planet.cells[planet.startCell].neighbors.length);
+  });
+
+  it('zwraca komórki posortowane rosnąco — kolejność nie może zależeć od BFS', () => {
+    const got = cellsWithinSteps(withCore(), planet.startCell, 3);
+    expect([...got].sort((a, b) => a - b)).toEqual(got);
+  });
+});
+
+describe('walka: jednostki kontra budynki', () => {
+  it('jednostka stojąca przed budynkiem zadaje mu ciągły DPS (Q2)', () => {
+    const s = withCore();
+    const wall = planet.cells[planet.startCell].neighbors[0];
+    applyCommand(s, { kind: 'BUILD', cellId: wall, type: 'BARRICADE' });
+
+    const outside = planet.cells[wall].neighbors.find((n) => s.buildings[n] === null)!;
+    spawnUnit(s, 'SWARM', outside);
+
+    const fields = buildAllFlowFields(s);
+    const before = s.buildings[wall]!.hp;
+    updateCombat(s, fields);
+    expect(s.buildings[wall]!.hp).toBeCloseTo(before - ENEMIES.SWARM.dps * TICK_SECONDS, 6);
+  });
+
+  it('budynek zbity do zera znika z planszy', () => {
+    const s = withCore();
+    const wall = planet.cells[planet.startCell].neighbors[0];
+    applyCommand(s, { kind: 'BUILD', cellId: wall, type: 'BARRICADE' });
+    s.buildings[wall]!.hp = 0.01;
+
+    const outside = planet.cells[wall].neighbors.find((n) => s.buildings[n] === null)!;
+    spawnUnit(s, 'SWARM', outside);
+    updateCombat(s, buildAllFlowFields(s));
+    expect(s.buildings[wall]).toBeNull();
+  });
+
+  it('DISRUPTOR wyłącza budynki w promieniu EMP zamiast drenować magazyn (Q4)', () => {
+    const s = withCore();
+    const victim = plainHexAt(1);
+    applyCommand(s, { kind: 'BUILD', cellId: victim, type: 'SOLAR_PANEL' });
+    s.buildings[victim]!.powered = true;
+
+    spawnUnit(s, 'DISRUPTOR', victim);
+    updateCombat(s, buildAllFlowFields(s));
+    expect(s.buildings[victim]!.powered).toBe(false);
+  });
+});
+
+describe('walka: wieże kontra jednostki', () => {
+  function turretAndUnit(type: 'KINETIC_TURRET' | 'LASER_TURRET', unitSteps: number) {
+    const s = withCore();
+    const turret = plainHexAt(1);
+    applyCommand(s, { kind: 'BUILD', cellId: turret, type });
+    s.buildings[turret]!.powered = true;
+
+    const targets = cellsWithinSteps(s, turret, unitSteps).filter(
+      (c) => cellsWithinSteps(s, turret, unitSteps - 1).indexOf(c) < 0,
+    );
+    for (const c of targets.slice(0, 3)) spawnUnit(s, 'SWARM', c);
+    return { s, turret };
+  }
+
+  it('zasilona wieża zadaje obrażenia jednostce w zasięgu', () => {
+    const { s } = turretAndUnit('KINETIC_TURRET', 1);
+    const before = s.units[0].hp;
+    updateCombat(s, buildAllFlowFields(s));
+    expect(s.units[0].hp).toBeLessThan(before);
+  });
+
+  it('NIEZASILONA wieża nie strzela — brownout ma realne skutki', () => {
+    const { s, turret } = turretAndUnit('KINETIC_TURRET', 1);
+    s.buildings[turret]!.powered = false;
+    const before = s.units.map((u) => u.hp);
+    updateCombat(s, buildAllFlowFields(s));
+    expect(s.units.map((u) => u.hp)).toEqual(before);
+  });
+
+  it('SINGLE trafia dokładnie jedną jednostkę, AOE trafia wszystkie', () => {
+    const single = turretAndUnit('KINETIC_TURRET', 1);
+    updateCombat(single.s, buildAllFlowFields(single.s));
+    expect(single.s.units.filter((u) => u.hp < ENEMIES.SWARM.hp)).toHaveLength(1);
+
+    const aoe = turretAndUnit('LASER_TURRET', 1);
+    updateCombat(aoe.s, buildAllFlowFields(aoe.s));
+    expect(aoe.s.units.every((u) => u.hp < ENEMIES.SWARM.hp)).toBe(true);
+  });
+
+  it('SINGLE wybiera cel deterministycznie — najniższe id', () => {
+    const { s } = turretAndUnit('KINETIC_TURRET', 1);
+    updateCombat(s, buildAllFlowFields(s));
+    const hit = s.units.filter((u) => u.hp < ENEMIES.SWARM.hp);
+    expect(hit[0].id).toBe(Math.min(...s.units.map((u) => u.id)));
+  });
+
+  it('wieża nie sięga poza swój zasięg', () => {
+    // Granica przypięta DOKŁADNIE: jednostka na `range` kroków (musi zostać trafiona)
+    // i, w OSOBNYM stanie, jednostka na `range + 1` kroków (nie może). Osobne stany są
+    // konieczne: KINETIC_TURRET celuje SINGLE, więc w jednym stanie z obiema jednostkami
+    // wieża zawsze strzela do bliższej (niższe id) i „za granicą" nigdy nie zostałaby
+    // nawet sprawdzona, niezależnie od tego, czy realnie jest w zasięgu.
+    //
+    // Zmierzone na tym seedzie: pierwsza wersja tego testu („dowolna komórka spoza
+    // zasięgu", `planet.cells.findIndex` po ID zamiast po odległości) brała komórkę
+    // odległą o 24 kroki przy zasięgu 2 — luz 22 kroków, w którym off-by-one
+    // w `def.range` (np. `range + 1`) przechodził CAŁYM zielonym zestawem testów bez
+    // wyjątku. `multiSourceDistances` (niezależny BFS z Fazy 1A, ten sam wzorzec co
+    // `atSteps` w movement.test.ts) liczy odległość NIEZALEŻNIE od `cellsWithinSteps`,
+    // więc test nie sprawdza samego siebie.
+    const range = BUILDINGS.KINETIC_TURRET.range;
+
+    function turretState() {
+      const s = withCore();
+      const turret = plainHexAt(1);
+      applyCommand(s, { kind: 'BUILD', cellId: turret, type: 'KINETIC_TURRET' });
+      s.buildings[turret]!.powered = true;
+      const dist = multiSourceDistances(planet.cells.map((c) => c.neighbors), [turret]);
+      return { s, dist };
+    }
+
+    const near = turretState();
+    const atRange = planet.cells.findIndex((c) => near.dist[c.id] === range && near.s.buildings[c.id] === null);
+    if (atRange < 0) throw new Error(`brak pustej komórki dokładnie na granicy zasięgu (${range} kroków)`);
+    spawnUnit(near.s, 'SWARM', atRange);
+    updateCombat(near.s, buildAllFlowFields(near.s));
+    expect(near.s.units[0].hp).toBeLessThan(ENEMIES.SWARM.hp);
+
+    const far = turretState();
+    const beyondRange = planet.cells.findIndex((c) => far.dist[c.id] === range + 1 && far.s.buildings[c.id] === null);
+    if (beyondRange < 0) throw new Error(`brak pustej komórki krok za granicą zasięgu (${range + 1} kroków)`);
+    spawnUnit(far.s, 'SWARM', beyondRange);
+    updateCombat(far.s, buildAllFlowFields(far.s));
+    expect(far.s.units[0].hp).toBe(ENEMIES.SWARM.hp);
+  });
+
+  it('zabita jednostka znika i zostawia rudę', () => {
+    const { s } = turretAndUnit('LASER_TURRET', 1);
+    for (const u of s.units) u.hp = 0.01;
+    const oreBefore = s.ore;
+    const killed = s.units.length;
+
+    updateCombat(s, buildAllFlowFields(s));
+    expect(s.units).toHaveLength(0);
+    expect(s.ore).toBeCloseTo(oreBefore + killed * ENEMIES.SWARM.oreReward, 6);
+  });
+});
