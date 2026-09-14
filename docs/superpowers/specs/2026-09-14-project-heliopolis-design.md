@@ -341,6 +341,8 @@ Wymagania obowiązujące od pierwszej linijki `packages/sim`:
 | Zagrożenie | eskalacja fal + erupcje capów |
 | Roguelite | draft 1 z 3 co świt, seed planety |
 | Zakończenie | warunki wygranej i przegranej |
+| **Render (z bramki Fazy 0)** | **pasmowe cieniowanie oświetlenia zamiast gładkiego `dot`** — pomiar przy identycznej fazie słońca pokazał, że w trybie ciągłym terminatora **nie widać**, a w progowanym jest ostry i natychmiast czytelny. D1 stoi na tym, że gracz czyta granicę światła wzrokiem, więc render gładki unieważniałby filar. **Uwaga: to nie jest sprzeczne z §5.1 — symulacja liczy produkcję ciągle, render prezentuje progowo.** Zrównanie warstw w którąkolwiek stronę zepsuje albo ekonomię, albo czytelność |
+| **Sterowanie (z bramki Fazy 0)** | **skrót „wróć do Core" jako element wymagany, nie opcjonalny** — wszystkie zmierzone powroty do bazy korzystały z klawisza, więc czytelność bez niego jest niepotwierdzona. To źródło warunkowości werdyktu |
 | **Narzędzia** | **headless runner balansowy + testy jednostkowe reguł** |
 
 Dwie ostatnie pozycje są w MVP celowo, nie jako „nice to have" — patrz §8.3.
@@ -403,7 +405,7 @@ Szacunki dla **jednej osoby na pełny etat**; do przeliczenia po ustaleniu skła
 
 | # | Pytanie | Faza |
 |---|---|---|
-| Q1 | Model kamery | 0 |
+| ~~Q1~~ | ~~Model kamery~~ → **ROZSTRZYGNIĘTE: K1, swobodna orbita.** Bramka Fazy 0, werdykt WARUNKOWY. Mediany powrotu do bazy: K1 2868 ms · K2 4276 ms · K3 6256 ms. K1 wygrał wbrew przewidywaniu planu, który przypisywał mu ryzyko gubienia bazy | 0 ✅ |
 | Q2 | Kadencja ataku wroga i zachowanie przy kontakcie z budynkiem | 1 |
 | Q3 | Czy wieże pobierają energię stale, czy tylko przy strzale (różnica rzędu wielkości w bilansie) | 1 |
 | Q4 | Efekt EMP: wyłączenie budynku czy drenaż magazynu | 1 |
