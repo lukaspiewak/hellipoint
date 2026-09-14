@@ -7,6 +7,9 @@ import type { Planet } from '../world/planet.js';
  * a pozycje komórek są stałe w przestrzeni świata — co upraszcza serializację.
  */
 export function sunDirection(elapsedSeconds: number, rotationPeriod: number): Vec3 {
+  if (!(rotationPeriod > 0)) {
+    throw new RangeError(`rotationPeriod must be positive and finite, got ${rotationPeriod}`);
+  }
   const angle = (2 * Math.PI * elapsedSeconds) / rotationPeriod;
   return { x: Math.cos(angle), y: 0, z: Math.sin(angle) };
 }

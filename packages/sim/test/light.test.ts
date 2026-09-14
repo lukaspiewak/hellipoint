@@ -24,7 +24,14 @@ describe('sunDirection', () => {
     const a = sunDirection(0, T);
     const b = sunDirection(T / 2, T);
     expect(b.x).toBeCloseTo(-a.x, 9);
+    expect(b.y).toBeCloseTo(-a.y, 9);
     expect(b.z).toBeCloseTo(-a.z, 9);
+  });
+
+  it('wyrzuca błąd dla rotationPeriod <= 0', () => {
+    expect(() => sunDirection(0, 0)).toThrow(RangeError);
+    expect(() => sunDirection(0, -180)).toThrow(RangeError);
+    expect(() => sunDirection(0, NaN)).toThrow(RangeError);
   });
 });
 
@@ -37,6 +44,11 @@ describe('lightAt', () => {
 
   it('daje 0 na terminatorze', () => {
     expect(lightAt(vec3(0, 0, 1), sun)).toBeCloseTo(0, 12);
+  });
+
+  it('daje wartość pośrednią dla kąta pośredniego', () => {
+    // Normal at 60° to sun: cos(60°) = 0.5
+    expect(lightAt(vec3(0.5, 0, 0.866), sun)).toBeCloseTo(0.5, 12);
   });
 
   it('obcina stronę nocną do 0, nigdy do wartości ujemnej', () => {
@@ -57,7 +69,9 @@ describe('lightField', () => {
     }
   });
 
-  it('oświetla mniej więcej połowę planety — na kuli nie ma globalnej nocy (D1)', () => {
+  it('dzieli planetę na mniej więcej równe połowy — brak możliwości globalnej nocy (D1)', () => {
+    // Test validates that the lit/dark split is roughly even (~50/50),
+    // disproving a "global night phase". Orientation is pinned by lightAt tests.
     const f = lightField(planet, sunDirection(0, T));
     const lit = [...f].filter((v) => v > 0).length;
     expect(lit / f.length).toBeGreaterThan(0.45);
