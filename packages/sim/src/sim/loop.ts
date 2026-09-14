@@ -1,5 +1,6 @@
 import type { Planet } from '../world/planet.js';
 import { applyCommand, type Command } from './commands.js';
+import { updateEconomy } from './economy.js';
 import { lightField, sunDirection } from './light.js';
 import { updatePower } from './power.js';
 import { createState, TICK_SECONDS, type SimState } from './state.js';
@@ -54,6 +55,9 @@ export class Sim {
 
     // 3. Energia — musi być przed ekonomią i walką, bo ustawia flagi `powered`.
     updatePower(this.s, light);
+
+    // 4. Ekonomia — po energii, bo wydobycie zależy od flagi `powered`.
+    updateEconomy(this.s);
 
     // TUTAJ dopinane są kolejne systemy, w tej kolejności:
     //   energia → ekonomia → pola przepływu → jednostki → walka → spalanie → fale → warunki końca
