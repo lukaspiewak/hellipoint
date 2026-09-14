@@ -1498,7 +1498,18 @@ export class Sim {
 }
 ```
 
-> **Uwaga:** `Sim` stawia teraz CORE sam, więc testy z Fazy 1B, które stawiały go ręcznie przez `applyCommand`, mogą wymagać drobnej korekty. `canBuild` odrzuci drugi CORE przez `CELL_OCCUPIED`, więc zachowanie pozostaje poprawne — sprawdź, czy asercje nadal opisują to, co chcesz przetestować.
+> **Uwaga — poprawione po przeglądzie końcowym Fazy 1B.** Wcześniejsza wersja tej notatki
+> twierdziła, że „`canBuild` odrzuci drugi CORE przez `CELL_OCCUPIED`, więc zachowanie pozostaje
+> poprawne". **To było fałszywe.** `CELL_OCCUPIED` odrzuca drugi CORE wyłącznie NA TEJ SAMEJ
+> KOMÓRCE; każdy inny pusty heks przyjmował kolejny za darmo, bo `CORE.costOre = 0`. Zmierzone
+> na skompilowanym module: **50 rdzeni przy zerowej rudzie, 500 energii na sekundę.** Przy
+> warunku przegranej `!s.buildings.some(b => b?.type === 'CORE')` z §5.6 dawałoby to graczowi
+> darmową nieśmiertelność, a w Fazie 5 — niezautentykowanemu graczowi nieskończoną energię
+> i nieskończony zasięg sieci.
+>
+> Faza 1B zamyka to polem `playerBuildable` w `BuildingDef`: `canBuild` odrzuca CORE niezależnie
+> od komórki i zasobów. **Konsekwencja dla tego zadania: `Sim` NIE MOŻE stawiać CORE przez
+> `applyCommand`** — musi zapisać go wprost do stanu przy konstrukcji.
 
 - [ ] **Step 6: Wystaw publiczne API**
 
