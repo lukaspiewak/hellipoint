@@ -25,3 +25,7 @@ tools/headless/out/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# worktrees SDD
+.worktrees/
+.superpowers/
