@@ -373,7 +373,7 @@ import { createState, TICK_SECONDS } from '../src/sim/state.js';
 import { applyCommand } from '../src/sim/commands.js';
 import { buildAllFlowFields } from '../src/sim/flowfield.js';
 import { spawnUnit } from '../src/sim/movement.js';
-import { cellsWithinSteps, updateCombat } from '../src/sim/combat.js';
+import { cellsWithinSteps, EMP_RADIUS_STEPS, updateCombat } from '../src/sim/combat.js';
 import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
 import { multiSourceDistances } from '../src/world/graph.js';
 
@@ -443,14 +443,48 @@ describe('walka: jednostki kontra budynki', () => {
   });
 
   it('DISRUPTOR wyłącza budynki w promieniu EMP zamiast drenować magazyn (Q4)', () => {
+    // Granica przypięta DOKŁADNIE, tym samym lekarstwem co test zasięgu wieży.
+    // Pierwsza wersja stawiała DISRUPTOR-a NA komórce ofiary — odległość 0, czyli
+    // w zasięgu dla DOWOLNEGO promienia ≥ 0 — więc EMP_RADIUS_STEPS nie miał żadnego
+    // pokrycia. Zmierzone: EMP_RADIUS_STEPS podmienione na 0 zostawiało całą suitę
+    // zieloną. Odległość liczy `multiSourceDistances` (niezależny BFS), NIE
+    // `cellsWithinSteps` — ta druga jest funkcją badaną i test sprawdzałby ją samą sobą.
+    //
+    // Test WIĄŻE SIĘ ZE STAŁĄ, nie z jej dzisiejszym literałem, i tak ma być:
+    // EMP_RADIUS_STEPS jest oznaczone [STROJENIE], więc Faza 3 będzie je przestrajać
+    // headlessem. Test pinujący literał 2 oblewałby przy każdym legalnym przestrojeniu
+    // i szybko stałby się szumem. Właściwą regresją jest off-by-one w KODZIE — i ta
+    // jest łapana w obie strony: zmierzone, `EMP_RADIUS_STEPS ± 1` w wywołaniu
+    // `cellsWithinSteps` oblewa ten test w izolacji, każdy kierunek osobno.
     const s = withCore();
-    const victim = plainHexAt(1);
-    applyCommand(s, { kind: 'BUILD', cellId: victim, type: 'SOLAR_PANEL' });
-    s.buildings[victim]!.powered = true;
+    const origin = plainHexAt(1);
+    const dist = multiSourceDistances(planet.cells.map((c) => c.neighbors), [origin]);
 
-    spawnUnit(s, 'DISRUPTOR', victim);
+    const atRadius = planet.cells.findIndex(
+      (c) => dist[c.id] === EMP_RADIUS_STEPS && c.cellType === 'HEXAGON' && s.buildings[c.id] === null,
+    );
+    const beyondRadius = planet.cells.findIndex(
+      (c) => dist[c.id] === EMP_RADIUS_STEPS + 1 && c.cellType === 'HEXAGON' && s.buildings[c.id] === null,
+    );
+    if (atRadius < 0) throw new Error(`brak pustego heksa dokładnie na granicy EMP (${EMP_RADIUS_STEPS} kroków)`);
+    if (beyondRadius < 0) {
+      throw new Error(`brak pustego heksa krok za granicą EMP (${EMP_RADIUS_STEPS + 1} kroków)`);
+    }
+
+    applyCommand(s, { kind: 'BUILD', cellId: atRadius, type: 'SOLAR_PANEL' });
+    applyCommand(s, { kind: 'BUILD', cellId: beyondRadius, type: 'SOLAR_PANEL' });
+    s.buildings[atRadius]!.powered = true;
+    s.buildings[beyondRadius]!.powered = true;
+    // Jawna asercja PRZED walką: obie naprawdę zasilone, nie tylko "ustawione" —
+    // inaczej "wyłączony po ataku" niczego by nie dowodził.
+    expect(s.buildings[atRadius]!.powered).toBe(true);
+    expect(s.buildings[beyondRadius]!.powered).toBe(true);
+
+    spawnUnit(s, 'DISRUPTOR', origin);
     updateCombat(s, buildAllFlowFields(s));
-    expect(s.buildings[victim]!.powered).toBe(false);
+
+    expect(s.buildings[atRadius]!.powered).toBe(false);
+    expect(s.buildings[beyondRadius]!.powered).toBe(true);
   });
 });
 
@@ -473,6 +507,14 @@ describe('walka: wieże kontra jednostki', () => {
     const before = s.units[0].hp;
     updateCombat(s, buildAllFlowFields(s));
     expect(s.units[0].hp).toBeLessThan(before);
+    // Wielkość przypięta liczbowo, nie tylko kierunek. Bez tego żaden test w tym
+    // pliku nie sprawdzał WIELKOŚCI obrażeń wieża→jednostka (tylko kierunek i
+    // skutek terminalny „zginęła") — zmierzone: podmiana `def.dps * TICK_SECONDS`
+    // na samo `def.dps` (20-60× za mocno) zostawiała całą suitę zieloną, mimo że
+    // bliźniacza mutacja po stronie jednostka→budynek jest łapana.
+    // KINETIC_TURRET, nie AOE: jednostka musi PRZEŻYĆ tego ticka, inaczej
+    // usunięcie zjada różnicę i znowu nic nie mierzymy.
+    expect(s.units[0].hp).toBeCloseTo(before - BUILDINGS.KINETIC_TURRET.dps * TICK_SECONDS, 6);
   });
 
   it('NIEZASILONA wieża nie strzela — brownout ma realne skutki', () => {
