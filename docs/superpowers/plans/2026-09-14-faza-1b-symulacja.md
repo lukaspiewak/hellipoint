@@ -1210,7 +1210,7 @@ export class Sim {
 - [ ] **Step 5: Uruchom testy i commituj**
 
 Run: `pnpm vitest run packages/sim/test/commands.test.ts packages/sim/test/determinism.test.ts`
-Oczekiwane: **12 testów przechodzi.**
+Oczekiwane: **13 testów przechodzi.**
 
 ```bash
 git add packages/sim/src/sim/commands.ts packages/sim/src/sim/loop.ts packages/sim/test/commands.test.ts packages/sim/test/determinism.test.ts
