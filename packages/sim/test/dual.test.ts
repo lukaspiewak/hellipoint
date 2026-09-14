@@ -131,7 +131,9 @@ describe('buildDual', () => {
       }
     }
 
-    // Log edge checks performed for regression tracking
-    expect(totalEdgeChecks).toBeGreaterThan(0);
+    // Exact count, not just non-zero: a loop-bound regression that silently skipped
+    // most cells would still pass a `toBeGreaterThan(0)` check. 60 (freq 1) + 960 (freq 4)
+    // + 8640 (freq 12) = 9660.
+    expect(totalEdgeChecks).toBe(9660);
   });
 });
