@@ -1,7 +1,8 @@
 node v22.22.0
+pnpm 11.17.0
 Legend: production dependency, optional only, dev only
 
-heliopolis /Users/lukaspiewak/Documents/GitHub/hellipoint/.worktrees/faza-1a (PRIVATE)
+heliopolis (PRIVATE)
 │
 │   devDependencies:
 ├── @types/node@26.5.1
@@ -9,4 +10,3 @@ heliopolis /Users/lukaspiewak/Documents/GitHub/hellipoint/.worktrees/faza-1a (PR
 └── vitest@5.0.0
 
 3 packages in 2 projects
-pnpm 11.17.0
