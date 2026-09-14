@@ -1161,7 +1161,41 @@ git commit -m "feat(sim): spawn z zaciemnionych pentagonów i erupcje zatkanych 
 **Files:**
 - Create: `packages/sim/src/sim/rules.ts`
 - Modify: `packages/sim/src/sim/state.ts`, `packages/sim/src/sim/hash.ts`, `packages/sim/src/sim/loop.ts`, `packages/sim/src/index.ts`
+- Modify (migracja wywołań, patrz Krok 0): `packages/sim/test/determinism.test.ts`, `packages/sim/test/state.test.ts`
 - Test: `packages/sim/test/rules.test.ts`, `packages/sim/test/fullrun.test.ts`
+
+> **Krok 0 — migracja istniejących wywołań `new Sim(...)`. Zrób to PRZED pisaniem testów,
+> inaczej `tsc` nie przejdzie i nie odróżnisz swojego czerwonego od cudzego.**
+>
+> Faza 1B ma **21 wywołań `new Sim(planet, config)`** — 20 w `determinism.test.ts`, 1 w
+> `state.test.ts` — i wszystkie podają `SimConfig`, czyli `{ rotationPeriod, startingOre }`.
+> To zadanie zmienia drugi parametr na `RunConfig` z ośmioma **wymaganymi** polami, więc
+> każde z tych 21 wywołań przestaje się kompilować.
+>
+> **Rozstrzygnięcie: `RunConfig` ZASTĘPUJE `SimConfig`, a wywołania migrują jawnie.**
+> Sprawdzone: `SimConfig` nie ma żadnego konsumenta poza `loop.ts`, który to zadanie i tak
+> podmienia w całości — więc nie zostawiamy dwóch typów konfiguracji ani dziedziczenia między
+> nimi. Usuń `export interface SimConfig`, zostaw sam `RunConfig`, i **popraw treść komunikatów
+> `RangeError` w konstruktorze z `SimConfig.…` na `RunConfig.…`** (są asercjowane po fragmencie
+> tekstu — sprawdź, czy testy walidacji dopasowują się do nowego brzmienia).
+>
+> Nie robimy za to pól opcjonalnych scalanych po cichu z `DEFAULT_RUN` w konstruktorze. Powód:
+> reszta planu przekazuje `cfg: RunConfig` do `updateRules` i `evacUnlocked` jako komplet, więc
+> konfiguracja częściowa i tak musiałaby być materializowana w `Sim` — zostałby nam typ o dwóch
+> kształtach, inny przy konstrukcji niż wszędzie indziej, i każda kolejna faza musiałaby o tym
+> pamiętać. Jednorazowy koszt 21 mechanicznych edycji jest tańszy niż stała dwuznaczność.
+>
+> Wzorzec migracji — dopisz rozwinięcie, zostaw nadpisane pole:
+> ```ts
+> // było:  new Sim(planet, { rotationPeriod: 0, startingOre: 100 })
+> // jest:  new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 0, startingOre: 100 })
+> ```
+> **Dziesięć z tych wywołań (`determinism.test.ts`) to testy walidacji konstruktora** —
+> sprawdzają, że `rotationPeriod` i `startingOre` są odrzucane dla zera, wartości ujemnych,
+> `NaN` i nieskończoności, plus podłoga `rotationPeriod < TICK_SECONDS`. **Mają przetrwać
+> migrację co do jednego i dalej oblewać, gdy straż zniknie.** Po migracji usuń jedną strażnicę
+> z `loop.ts`, potwierdź, że odpowiedni test oblewa, i przywróć ją — dopiero wtedy wiesz,
+> że migracja niczego nie wykastrowała. Zaraportuj, którą strażnicę usunąłeś i który test oblał.
 
 **Interfaces:**
 - Consumes: wszystko powyższe
