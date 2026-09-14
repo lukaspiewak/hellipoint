@@ -375,6 +375,7 @@ import { buildAllFlowFields } from '../src/sim/flowfield.js';
 import { spawnUnit } from '../src/sim/movement.js';
 import { cellsWithinSteps, updateCombat } from '../src/sim/combat.js';
 import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
+import { multiSourceDistances } from '../src/world/graph.js';
 
 const planet = createPlanet({ seed: 61 });
 
@@ -500,17 +501,41 @@ describe('walka: wieże kontra jednostki', () => {
   });
 
   it('wieża nie sięga poza swój zasięg', () => {
-    const s = withCore();
-    const turret = plainHexAt(1);
-    applyCommand(s, { kind: 'BUILD', cellId: turret, type: 'KINETIC_TURRET' });
-    s.buildings[turret]!.powered = true;
+    // Granica przypięta DOKŁADNIE: jednostka na `range` kroków (musi zostać trafiona)
+    // i, w OSOBNYM stanie, jednostka na `range + 1` kroków (nie może). Osobne stany są
+    // konieczne: KINETIC_TURRET celuje SINGLE, więc w jednym stanie z obiema jednostkami
+    // wieża zawsze strzela do bliższej (niższe id) i „za granicą" nigdy nie zostałaby
+    // nawet sprawdzona, niezależnie od tego, czy realnie jest w zasięgu.
+    //
+    // ODLEGŁOŚĆ LICZY `multiSourceDistances`, NIE `cellsWithinSteps`. Pierwsza wersja tego
+    // testu wyznaczała „poza zasięgiem" przez `cellsWithinSteps`, czyli sprawdzała funkcję
+    // SAMĄ SOBĄ: off-by-one przesuwałby zbiór razem z testem i nic by nie oblało. Zmierzone
+    // na seedzie 61: brała komórkę odległą o 24 kroki przy zasięgu 2 — luz 22 kroków, w którym
+    // wstrzyknięty `def.range + 1` przechodził CAŁĄ suitą bez śladu.
+    const range = BUILDINGS.KINETIC_TURRET.range;
 
-    const inRange = new Set(cellsWithinSteps(s, turret, BUILDINGS.KINETIC_TURRET.range));
-    const farCell = planet.cells.findIndex((c) => !inRange.has(c.id));
-    spawnUnit(s, 'SWARM', farCell);
+    function turretState() {
+      const s = withCore();
+      const turret = plainHexAt(1);
+      applyCommand(s, { kind: 'BUILD', cellId: turret, type: 'KINETIC_TURRET' });
+      s.buildings[turret]!.powered = true;
+      const dist = multiSourceDistances(planet.cells.map((c) => c.neighbors), [turret]);
+      return { s, dist };
+    }
 
-    updateCombat(s, buildAllFlowFields(s));
-    expect(s.units[0].hp).toBe(ENEMIES.SWARM.hp);
+    const near = turretState();
+    const atRange = planet.cells.findIndex((c) => near.dist[c.id] === range && near.s.buildings[c.id] === null);
+    if (atRange < 0) throw new Error(`brak pustej komórki dokładnie na granicy zasięgu (${range} kroków)`);
+    spawnUnit(near.s, 'SWARM', atRange);
+    updateCombat(near.s, buildAllFlowFields(near.s));
+    expect(near.s.units[0].hp).toBeLessThan(ENEMIES.SWARM.hp);
+
+    const far = turretState();
+    const beyondRange = planet.cells.findIndex((c) => far.dist[c.id] === range + 1 && far.s.buildings[c.id] === null);
+    if (beyondRange < 0) throw new Error(`brak pustej komórki krok za granicą zasięgu (${range + 1} kroków)`);
+    spawnUnit(far.s, 'SWARM', beyondRange);
+    updateCombat(far.s, buildAllFlowFields(far.s));
+    expect(far.s.units[0].hp).toBe(ENEMIES.SWARM.hp);
   });
 
   it('zabita jednostka znika i zostawia rudę', () => {
