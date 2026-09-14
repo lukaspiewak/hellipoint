@@ -46,6 +46,32 @@ describe('BUILDINGS', () => {
       expect(def.connectionRadius).toBeLessThanOrEqual(6);
     }
   });
+
+  it('energyInfrastructure przypisania są poprawne', () => {
+    const infrastructure = (Object.entries(BUILDINGS)
+      .filter(([_, def]) => def.energyInfrastructure)
+      .map(([type]) => type)
+      .sort());
+    expect(infrastructure).toEqual([
+      'BATTERY', 'CORE', 'EVACUATION_MODULE', 'GEOTHERMAL_CAP', 'PYLON', 'SOLAR_PANEL',
+    ]);
+  });
+
+  it('spójność zakresu i celowania: range > 0 => targeting !== NONE', () => {
+    for (const def of Object.values(BUILDINGS)) {
+      if (def.range > 0) {
+        expect(def.targeting).not.toBe('NONE');
+      }
+    }
+  });
+
+  it('spójność uszkodzenia i zakresu: dps > 0 => range > 0', () => {
+    for (const def of Object.values(BUILDINGS)) {
+      if (def.dps > 0) {
+        expect(def.range).toBeGreaterThan(0);
+      }
+    }
+  });
 });
 
 describe('BROWNOUT_ORDER', () => {
@@ -83,5 +109,11 @@ describe('ENEMIES', () => {
   it('każdy typ ma inny priorytet celu', () => {
     const priorities = Object.values(ENEMIES).map((e) => e.targetPriority);
     expect(new Set(priorities).size).toBe(3);
+  });
+
+  it('targetPriority przypisania są poprawne', () => {
+    expect(ENEMIES.SWARM.targetPriority).toBe('NEAREST_BUILDING');
+    expect(ENEMIES.ARMOR.targetPriority).toBe('CORE');
+    expect(ENEMIES.DISRUPTOR.targetPriority).toBe('ENERGY_INFRASTRUCTURE');
   });
 });
