@@ -1573,6 +1573,23 @@ function nearbyOreHexes(count: number): number[] {
   return out;
 }
 
+/**
+ * Heksy (dowolny status rudy) w promieniu do 3 kroków od startu — zasięg connectionRadius
+ * samego CORE, więc każdy zwrócony heks jest połączony wprost, bez łańcucha PYLON-ów
+ * pośredniczących. Szerszy zasięg niż `nearbyHexes`/`nearbyOreHexes` (1-2 kroki), bo do
+ * przebicia podaży samego CORE trzeba więcej komórek, niż mieści pierścień o promieniu 2.
+ */
+function nearbyHexesForPylons(count: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < dist.length && out.length < count; i++) {
+    if (dist[i] >= 1 && dist[i] <= 3 && planet.cells[i].cellType === 'HEXAGON') {
+      out.push(i);
+    }
+  }
+  if (out.length < count) throw new Error('za mało heksów w zasięgu CORE na tyle PYLON-ów');
+  return out;
+}
+
 function base() {
   const s = createState(planet, 100000);
   applyCommand(s, { kind: 'BUILD', cellId: planet.startCell, type: 'CORE' });
@@ -1604,21 +1621,38 @@ describe('updatePower', () => {
 
   it('niepodłączony budynek nie produkuje i nie pobiera', () => {
     const s = base();
-    const orphan = planet.cells.find(
-      (c) => c.cellType === 'HEXAGON' && c.oreCapacity === 0 && dist[c.id] > 8,
-    )!.id;
-    applyCommand(s, { kind: 'BUILD', cellId: orphan, type: 'SOLAR_PANEL' });
-    expect(updatePower(s, fullLight).supply).toBeCloseTo(10, 6);
-    expect(s.buildings[orphan]!.powered).toBe(false);
+    // Dwa różne odcięte heksy: jeden pod producenta, drugi pod odbiorcę — sama
+    // SOLAR_PANEL (drain 0) dowodzi tylko połowy kontraktu (odcięty producent nie
+    // dolicza się do podaży); KINETIC_TURRET (drain 3) dowodzi drugiej połowy
+    // (odcięty odbiorca nie dolicza się do popytu ani nie zostaje zasilony).
+    const [orphanProducer, orphanConsumer] = planet.cells
+      .filter((c) => c.cellType === 'HEXAGON' && c.oreCapacity === 0 && dist[c.id] > 8)
+      .map((c) => c.id);
+    applyCommand(s, { kind: 'BUILD', cellId: orphanProducer, type: 'SOLAR_PANEL' });
+    applyCommand(s, { kind: 'BUILD', cellId: orphanConsumer, type: 'KINETIC_TURRET' });
+
+    const r = updatePower(s, fullLight);
+    expect(r.supply).toBeCloseTo(10, 6);
+    expect(r.demand).toBeCloseTo(0, 6);
+    expect(s.buildings[orphanProducer]!.powered).toBe(false);
+    expect(s.buildings[orphanConsumer]!.powered).toBe(false);
   });
 
   it('nadwyżka ładuje magazyn, ale nie ponad pojemność', () => {
     const s = base();
-    s.storedEnergy = 0;
-    for (let i = 0; i < 100; i++) updatePower(s, noLight);
     const coreStorage = 200;
-    expect(s.storedEnergy).toBeLessThanOrEqual(coreStorage);
-    expect(s.storedEnergy).toBeGreaterThan(0);
+    // Tuż pod pojemnością: CORE bez odbiorców daje +0,5/s nadwyżki (10 · 0,05), więc
+    // jeden tick bez obcięcia wylądowałby na 200,15 — WYRAŹNIE ponad pojemność, nie
+    // tylko "gdzieś niżej niż nigdy nieosiągnięty sufit" (100 ticków od zera dawało
+    // 50 — dziesięciokrotnie za mało, by w ogóle dotknąć sufitu).
+    s.storedEnergy = coreStorage - 0.15;
+    updatePower(s, noLight);
+    expect(s.storedEnergy).toBe(coreStorage);
+
+    // Dalsza nadwyżka nie podnosi go wyżej — pozostaje przypięty do sufitu, nie tylko
+    // go dotknął przypadkiem w jednym ticku.
+    updatePower(s, noLight);
+    expect(s.storedEnergy).toBe(coreStorage);
   });
 
   it('przy niedoborze gasi EKSTRAKTORY przed obroną (§5.1)', () => {
@@ -1674,6 +1708,31 @@ describe('updatePower', () => {
     expect(s.storedEnergy).toBeLessThan(before);
     expect(s.storedEnergy).toBeCloseTo(before + (10 - 15) * TICK_SECONDS, 6);
   });
+
+  it('PYLON liczy się do popytu, ale nigdy nie jest gaszony — magazyn ląduje na zerze, nie poniżej (§5.1)', () => {
+    const s = base();
+    // 30 PYLON-ów × 0,5/s = 15/s popytu wyłącznie z infrastruktury sieci, wobec 10/s
+    // z samego CORE — trwały niedobór 5/s. PYLON jest poza BROWNOUT_ORDER (rozspójniłby
+    // sieć), więc nic tu nigdy nie gaśnie: deficyt może tylko drenować magazyn.
+    const pylonCells = nearbyHexesForPylons(30);
+    for (const cellId of pylonCells) {
+      applyCommand(s, { kind: 'BUILD', cellId, type: 'PYLON' });
+    }
+    s.storedEnergy = 0;
+
+    const r = updatePower(s, noLight);
+    expect(r.demand).toBeCloseTo(15, 9); // popyt PYLON-ów NAPRAWDĘ policzony, nie pominięty
+    expect(r.shedTypes).toEqual([]);
+    expect(r.shedTypes).not.toContain('PYLON'); // ani teraz, ani przy dalszym drenażu niżej
+    expect(s.storedEnergy).toBe(0); // od razu na zerze, nie poniżej
+
+    // Bez obcięcia 50 kolejnych ticków (× -0,25/s netto) zjechałoby wyraźnie na minus.
+    for (let i = 0; i < 50; i++) {
+      const r2 = updatePower(s, noLight);
+      expect(r2.shedTypes).toEqual([]);
+    }
+    expect(s.storedEnergy).toBe(0);
+  });
 });
 ```
 
@@ -1692,6 +1751,12 @@ import { TICK_SECONDS, type BuildingType, type SimState } from './state.js';
 
 export interface PowerReport {
   supply: number;
+  /**
+   * Popyt PO kaskadzie gaszenia, nie surowe zapotrzebowanie sprzed niej: akumulowany
+   * dla wszystkich podłączonych odbiorców, a potem pomniejszany w miejscu przy każdym
+   * zgaszeniu. UI pokazujący „potrzebowano X/s, było Y/s" chce wartości SPRZED kaskady —
+   * to pole jej nie niesie.
+   */
   demand: number;
   /** Typy, które faktycznie zgaszono w tym ticku, w kolejności gaszenia. */
   shedTypes: BuildingType[];
