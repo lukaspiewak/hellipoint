@@ -923,10 +923,15 @@ describe('spacingCv', () => {
     expect(spacingCv(buildDual(buildGeodesic(4)))).toBe(spacingCv(buildDual(buildGeodesic(4))));
   });
 
-  it('siatka idealnie regularna miałaby zerowy rozrzut — dwudziestościan bazowy jest taki', () => {
-    // Przy frequency 1 wszystkie krawędzie dwudziestościanu są równe z konstrukcji,
-    // więc rozrzut musi być numerycznie zerowy. To kalibruje samą metrykę:
-    // gdyby liczyła coś innego niż odległości środek-sąsiad, tu by nie wyszło zero.
+  it('na dwudziestościanie bazowym zwraca numeryczne zero — kontrola poczytalności metryki', () => {
+    // Frequency 1 to goły dwudziestościan: wierzchołkowo- i krawędziowo-przechodni,
+    // więc KAŻDA rozsądna wielkość "odstępu" jest na nim stała i daje zero.
+    // Ten test NIE dowodzi więc, że mierzymy akurat odległość środek-sąsiad —
+    // zmierzono, że CV odległości narożnik-narożnik i środek-narożnik też wychodzi
+    // tu rzędu 1e-16. Test wyłapuje metrykę zwracającą wartość asymetryczną,
+    // przeskalowaną albo w inny sposób zepsutą tam, gdzie odpowiedź musi być zerem.
+    // Właściwym strażnikiem TOŻSAMOŚCI metryki jest przypięta wartość przy frequency 12:
+    // każda zmiana wzoru wyprowadzi ją daleko poza tolerancję toBeCloseTo(…, 3).
     expect(spacingCv(buildDual(buildGeodesic(1)))).toBeCloseTo(0, 9);
   });
 });
@@ -989,7 +994,14 @@ export function spacingCv(dual: DualMesh): number {
   return coefficientOfVariation(samples);
 }
 
-/** Współczynnik zmienności pól komórek. Frequency 12: 0,1330. */
+/**
+ * Współczynnik zmienności pól komórek. Frequency 12: 0,1330.
+ *
+ * „Pole" to suma płaskich trójkątów cięciwowych rozpiętych wachlarzowo od środka komórki,
+ * NIE pole sferyczne. Przybliżenie jest wierne dla tego zastosowania — suma pól wszystkich
+ * komórek wypada w granicach 0,07 % od 4π — ale nie używaj tej funkcji tam, gdzie liczy się
+ * bezwzględna wartość pola, a nie jego rozrzut.
+ */
 export function areaCv(dual: DualMesh): number {
   const areas: number[] = [];
   for (let v = 0; v < dual.centers.length; v++) {
@@ -1018,9 +1030,12 @@ function coefficientOfVariation(samples: number[]): number {
 Run: `pnpm vitest run packages/sim/test/uniformity.test.ts`
 Oczekiwane: **7 testów przechodzi.**
 
-Test przy frequency 1 jest kalibracją samej metryki: krawędzie dwudziestościanu bazowego są równe
-z konstrukcji, więc rozrzut musi tam wyjść numerycznie zerowy. Gdyby `spacingCv` liczyło cokolwiek
-innego niż odległości środek–sąsiad, ten test by to wykrył.
+Test przy frequency 1 jest **kontrolą poczytalności, nie dowodem tożsamości metryki**. Dwudziestościan
+bazowy jest wierzchołkowo- i krawędziowo-przechodni, więc każda rozsądna wielkość „odstępu" jest na
+nim stała — zmierzono, że CV odległości narożnik–narożnik (7,5e-16) i środek–narożnik (9,7e-16)
+wychodzi tam tego samego rzędu co metryka właściwa (4,2e-16). Test wyłapuje więc metrykę zwracającą
+wartość zepsutą tam, gdzie odpowiedź musi być zerem, ale nie rozróżnia, którą odległość liczymy.
+Strażnikiem tożsamości jest przypięta wartość przy frequency 12.
 
 ```bash
 git add packages/sim/src/world/uniformity.ts packages/sim/test/uniformity.test.ts
