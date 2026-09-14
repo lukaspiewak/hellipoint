@@ -168,14 +168,34 @@ describe('strażnik importów (lekser TypeScript, nie regex): findOffendingSpeci
     expect(findOffendingSpecifiers(src)).toEqual(['three']);
   });
 
-  it('nie myli się na szablonach zagnieżdżonych DWUPOZIOMOWO', () => {
-    // Dwa poziomy, nie jeden — i to jest cały sens. Zmierzone: zagnieżdżenie
-    // JEDNOPOZIOMOWE przechodzi także BEZ obsługi reScanTemplateToken, bo parzystość
-    // backticków bilansuje się przypadkiem; taki test byłby zielony niezależnie od
-    // kodu, który nazywa. Dwupoziomowe rozróżnia (bez naprawy: []), i jest jedynym
-    // przypadkiem, który wymaga LICZNIKA głębokości zamiast zwykłej flagi logicznej.
+  // Dwa poniższe testy są PARĄ i żaden nie zastępuje drugiego. Zmierzona tabela
+  // (kolumny: bez obsługi reScanTemplateToken / z FLAGĄ logiczną / z LICZNIKIEM):
+  //
+  //   zagnieżdżenie:   1        2        3        4        5
+  //   bez naprawy:     []    three      []     three      []
+  //   flaga:         three      []    three      []     three
+  //   licznik:       three   three    three    three    three
+  //
+  // Rozróżnialność ALTERNUJE z parzystością zagnieżdżenia, bo o wszystkim decyduje
+  // parzystość backticków po rozjeździe leksera. Wniosek, którego nie da się obejść:
+  // ŻADNA pojedyncza głębokość nie wykrywa obu regresji naraz. Zagnieżdżenie
+  // NIEPARZYSTE łapie brak naprawy, ale przepuszcza flagę; PARZYSTE łapie flagę,
+  // ale przepuszcza brak naprawy. Stąd dwa testy, po jednym na każdą parzystość.
+  it('trzy poziomy zagnieżdżenia: łapie BRAK obsługi reScanTemplateToken', () => {
     const src = [
       'const a = `A ${ `B ${ `C ${1} c` } b` } a`;',
+      'export async function load() { return await import("three"); }',
+    ].join('\n');
+    expect(findOffendingSpecifiers(src)).toEqual(['three']);
+  });
+
+  it('dwa poziomy zagnieżdżenia: łapie FLAGĘ tam, gdzie potrzebny jest LICZNIK', () => {
+    // Ten przypadek przechodzi BEZ jakiejkolwiek naprawy, więc jako strażnik regresji
+    // „usunięto reScanTemplateToken" jest bezwartościowy — i dokładnie dlatego stoi obok
+    // tamtego, a nie zamiast niego. Jego jedyne zadanie to nie dać zdegradować licznika
+    // głębokości do flagi logicznej, bo flaga gubi tu domknięcie zewnętrznego szablonu.
+    const src = [
+      'const a = `A ${ `B ${1} b` } a`;',
       'export async function load() { return await import("three"); }',
     ].join('\n');
     expect(findOffendingSpecifiers(src)).toEqual(['three']);
