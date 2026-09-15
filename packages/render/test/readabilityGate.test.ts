@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Vector3 } from 'three';
+import { Mesh, Vector3, type BufferAttribute, type Color, type Scene } from 'three';
 import { createPlanet, lightField, sunDirection, type Planet } from '@heliopolis/sim';
 import {
   createReadabilityGate,
@@ -9,7 +9,8 @@ import {
   type ReadabilityGate,
 } from '../src/readabilityGate.js';
 import { buildGateTrials, findTerminatorPairs, type GateTrial } from '../src/terminatorPairs.js';
-import { lightBand } from '../src/shading.js';
+import { buildPlanetGeometry } from '../src/geometry.js';
+import { DEFAULT_PALETTE, lightBand, writeCellColors } from '../src/shading.js';
 import type { SceneRenderer } from '../src/scene.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
 
@@ -17,12 +18,18 @@ const planet = createPlanet({ seed: 20260915 });
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 600;
 
-function createFakeRenderer(): SceneRenderer & { renderCalls: number; disposeCalls: number } {
+function createFakeRenderer(): SceneRenderer & {
+  renderCalls: number;
+  disposeCalls: number;
+  lastScene: Scene | null;
+} {
   const renderer = {
     renderCalls: 0,
     disposeCalls: 0,
-    render(): void {
+    lastScene: null as Scene | null,
+    render(scene: Scene): void {
       renderer.renderCalls++;
+      renderer.lastScene = scene;
     },
     setSize(): void {},
     setPixelRatio(): void {},
@@ -33,6 +40,39 @@ function createFakeRenderer(): SceneRenderer & { renderCalls: number; disposeCal
   };
   return renderer;
 }
+
+/**
+ * Bufor kolorów PLANETY, wyjęty ze sceny, którą harness faktycznie przekazuje rendererowi.
+ * Świadomie NIE przez nowe pole w `ReadabilityGate`: scena jest tym, co renderer dostaje do
+ * narysowania, więc odczyt z niej sprawdza dokładnie to, co zobaczy człowiek — a nie to, co
+ * harness deklaruje o sobie przez dodatkowe API zbudowane pod test.
+ */
+function planetColorBuffer(gate: ReadabilityGate, renderer: { lastScene: Scene | null }): Float32Array {
+  gate.renderFrame();
+  const scene = renderer.lastScene;
+  if (!scene) throw new Error('test: renderer nie dostał sceny');
+  // `Sprite` NIE jest `Mesh` w Three.js (oba dziedziczą po Object3D), więc to trafia w
+  // siatkę planety, nigdy w znacznik — sprawdzone asercją na długość bufora u wywołujących.
+  const mesh = scene.children.find((o): o is Mesh => o instanceof Mesh);
+  if (!mesh) throw new Error('test: brak siatki planety w scenie');
+  return (mesh.geometry.getAttribute('color') as BufferAttribute).array as Float32Array;
+}
+
+/** Kolor (rgb 0..1) pierwszego wierzchołka komórki `cellId` w buforze kolorów planety. */
+function cellColor(colors: Float32Array, cellId: number): [number, number, number] {
+  const geo = sharedGeo;
+  const o = geo.cellVertexStart[cellId] * 3;
+  return [colors[o], colors[o + 1], colors[o + 2]];
+}
+
+function colorDistance(a: readonly number[], b: readonly number[]): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+const sharedGeo = buildPlanetGeometry(planet);
+
+const isGreenDominant = (c: Color): boolean => c.g > c.r && c.g > c.b;
+const isRedDominant = (c: Color): boolean => c.r > c.g && c.r > c.b;
 
 /** Trzy fazy słońca ewidentnie różne, i para pełnego planu (3×5=15), tak jak wywoła je apps/client. */
 function realTrials(pairsPerPhase = 5): GateTrial[] {
@@ -313,6 +353,113 @@ describe('createReadabilityGate — advance()', () => {
   });
 });
 
+describe('createReadabilityGate — przemalowanie planety na KAŻDĄ próbę (bramka nie może kłamać)', () => {
+  it('26. każda próba maluje planetę światłem SWOJEJ fazy — bufor kolorów zgadza się co do bitu z policzonym niezależnie', () => {
+    // Zmierzone przez przegląd całogałęziowy: usunięcie `applyPhaseColoring()` z `setupTrial`
+    // zostawiało CAŁĄ gałąź zieloną (485/485). Człowiek oglądałby wtedy próby 6-15 w świetle
+    // FAZY 1, harness dalej skorowałby każdy rzut monetą i wydrukował werdykt. To jest
+    // najdroższy z możliwych trybów awarii tego pliku: on wyprodukował werdykt na D1.
+    const trials = realTrials();
+    const renderer = createFakeRenderer();
+    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () => renderer);
+
+    const colors = planetColorBuffer(gate, renderer);
+    expect(colors.length).toBe(sharedGeo.positions.length); // trafiliśmy w siatkę planety, nie w znacznik
+
+    const expected = new Float32Array(sharedGeo.positions.length);
+    // KONTROLA POZYTYWNA na sam test: fazy muszą dawać RÓŻNE bufory, inaczej porównanie
+    // niżej przechodziłoby także dla harnessu, który maluje raz i nigdy nie odświeża.
+    const bufferForPhase = (i: number): Float32Array => {
+      const buf = new Float32Array(sharedGeo.positions.length);
+      writeCellColors(sharedGeo, lightField(planet, trials[i].sunDir), buf, DEFAULT_PALETTE);
+      return buf;
+    };
+    expect(Array.from(bufferForPhase(0))).not.toEqual(Array.from(bufferForPhase(5)));
+    expect(Array.from(bufferForPhase(5))).not.toEqual(Array.from(bufferForPhase(10)));
+
+    let checked = 0;
+    for (let i = 0; i < trials.length; i++) {
+      expect(gate.currentTrialIndex()).toBe(i);
+      writeCellColors(sharedGeo, lightField(planet, trials[i].sunDir), expected, DEFAULT_PALETTE);
+
+      // Licznik rozbieżności zamiast toEqual na 30246 elementach: szybciej i daje LICZBĘ
+      // do raportu zamiast samego "różne".
+      let mismatches = 0;
+      for (let k = 0; k < expected.length; k++) {
+        if (colors[k] !== expected[k]) mismatches++;
+      }
+      expect(mismatches, `próba ${i + 1} (faza ${trials[i].phaseIndex + 1})`).toBe(0);
+      checked++;
+
+      const p = screenPointFor(gate, gate.markerLit.position);
+      gate.handleClick(p.x, p.y);
+      gate.advance();
+      // `colors` to TEN SAM obiekt Float32Array przez cały czas życia siatki (atrybut
+      // `color` nie jest podmieniany) — `planetColorBuffer` odczytany raz wystarcza.
+    }
+    expect(checked).toBe(trials.length);
+    gate.dispose();
+  });
+
+  it('27. w KAŻDEJ z 15 prób obie oznaczone komórki są pomalowane RÓŻNYMI kolorami — człowiek ma co rozróżniać', () => {
+    // Własność, którą bramka MIERZY, sprowadzona do liczby: gdyby przemalowanie wypadło,
+    // dla prób 6-15 obie komórki pary wpadłyby w to samo pasmo i odległość barwna wyniosłaby
+    // DOKŁADNIE 0,0000 — dwa nierozróżnialne znaczniki, a harness i tak liczyłby punkty.
+    const trials = realTrials();
+    const renderer = createFakeRenderer();
+    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () => renderer);
+    const colors = planetColorBuffer(gate, renderer);
+
+    let checked = 0;
+    let minDistance = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < trials.length; i++) {
+      const d = colorDistance(
+        cellColor(colors, trials[i].pair.litCellId),
+        cellColor(colors, trials[i].pair.darkCellId),
+      );
+      expect(d, `próba ${i + 1} (faza ${trials[i].phaseIndex + 1})`).toBeGreaterThan(0);
+      minDistance = Math.min(minDistance, d);
+      checked++;
+
+      const p = screenPointFor(gate, gate.markerLit.position);
+      gate.handleClick(p.x, p.y);
+      gate.advance();
+    }
+    expect(checked).toBe(trials.length); // kontrola: pętla przeszła wszystkie próby, nie zero
+    // Przy DEFAULT_PALETTE granica noc↔(półmrok|dzień) to pełny skok palety — nie "trochę
+    // większe od zera". Przypięte, żeby drobne strojenie progów nie przeszło niezauważone.
+    expect(minDistance).toBeGreaterThan(0.5);
+    gate.dispose();
+  });
+
+  it('28. odsłonięcie pokazuje PRAWDĘ, nie informację zwrotną: zielony ZAWSZE nad oświetloną, czerwony ZAWSZE nad ciemną', () => {
+    // Test 10 sprawdzał wyłącznie, że barwy PRZESTAJĄ być identyczne — zmierzone: zamiana
+    // obu kolorów odsłonięcia miejscami zostawiała 485/485 zielone. Odwrócone odsłonięcie
+    // nie rusza `correct`, więc tabela wyniku nadal drukowałaby PASS, a człowiek uczyłby
+    // się MIĘDZY próbami odwrotnej zasady — dokładnie odwrotnie do §5.2 punktu 6.
+    for (const clickTarget of ['lit', 'dark'] as const) {
+      const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
+        createFakeRenderer(),
+      );
+      // Przed odsłonięciem żaden znacznik nie jest ani zielony, ani czerwony (neutralna biel)
+      // — inaczej asercje niżej mogłyby być spełnione "od zawsze", bez związku z klikiem.
+      expect(isGreenDominant(gate.markerLit.material.color)).toBe(false);
+      expect(isRedDominant(gate.markerDark.material.color)).toBe(false);
+
+      const target = clickTarget === 'lit' ? gate.markerLit : gate.markerDark;
+      const p = screenPointFor(gate, target.position);
+      const record = gate.handleClick(p.x, p.y);
+      expect(record).not.toBeNull();
+      expect((record as GateAnswerRecord).correct).toBe(clickTarget === 'lit');
+
+      // Kluczowe: to NIE zależy od tego, co kliknięto — w obu przebiegach ten sam wynik.
+      expect(isGreenDominant(gate.markerLit.material.color), `klik w ${clickTarget}`).toBe(true);
+      expect(isRedDominant(gate.markerDark.material.color), `klik w ${clickTarget}`).toBe(true);
+      gate.dispose();
+    }
+  });
+});
+
 describe('createReadabilityGate — renderFrame/resize/dispose', () => {
   it('19. renderFrame() faktycznie woła renderer.render()', () => {
     const fakeRenderer = createFakeRenderer();
@@ -367,21 +514,45 @@ describe('formatGateResultsMarkdown', () => {
       correct: !wrongAt.includes(i),
     }));
 
-  it('23. wszystkie poprawne -> zawiera "PASS" i poprawny licznik n/n', () => {
-    const md = formatGateResultsMarkdown(make(15));
+  it('23. wszystkie poprawne z KOMPLETU prób -> zawiera "PASS" i poprawny licznik n/n', () => {
+    const md = formatGateResultsMarkdown(make(15), 15);
     expect(md).toContain('PASS');
     expect(md).toContain('Wynik: 15/15');
   });
 
   it('24. choć jedna błędna -> "FAIL (n/m)", NIE "PASS"', () => {
-    const md = formatGateResultsMarkdown(make(15, [7]));
+    const md = formatGateResultsMarkdown(make(15, [7]), 15);
     expect(md).toContain('FAIL (14/15)');
     expect(md).not.toContain('PASS');
   });
 
   it('25. tabela ma jeden wiersz danych na odpowiedź (plus nagłówek i separator)', () => {
-    const md = formatGateResultsMarkdown(make(3));
+    const md = formatGateResultsMarkdown(make(3), 15);
     const lines = md.split('\n').filter((l) => l.startsWith('|'));
     expect(lines.length).toBe(2 + 3); // nagłówek + separator + 3 wiersze
+  });
+
+  it('29. log NIEPEŁNEGO przebiegu NIE może orzec PASS — trzy poprawne z piętnastu to nie 3/3', () => {
+    // Zmierzone: poprzednia wersja liczyła werdykt wyłącznie z długości `answers`, więc log
+    // trzech odpowiedzi drukował "Wynik: 3/3 — PASS". Ścieżka UI do tego nie dopuszczała, ale
+    // to jest publiczne API pakietu, a jego wyjście jest ARTEFAKTEM, który człowiek wkleja do
+    // dokumentu wyników (§7.2) — dokument dostawałby wtedy PASS za jedną piątą bramki.
+    const md = formatGateResultsMarkdown(make(3), 15);
+    expect(md).not.toContain('PASS');
+    expect(md).toContain('NIEKOMPLETNE');
+    expect(md).toContain('3 z 15');
+    expect(md).toContain('Wynik: 3/15'); // mianownik to LICZBA PRÓB, nie liczba odpowiedzi
+
+    // Nawet komplet trafień, ale niepełny — najbardziej zwodniczy przypadek: same "OK"
+    // w tabeli, a mimo to żadnego werdyktu.
+    expect(formatGateResultsMarkdown(make(14), 15)).not.toContain('PASS');
+  });
+
+  it('30. rzuca RangeError dla bezsensownej liczby prób i dla większej liczby odpowiedzi niż prób', () => {
+    expect(() => formatGateResultsMarkdown(make(3), 0)).toThrow(RangeError);
+    expect(() => formatGateResultsMarkdown(make(3), -1)).toThrow(RangeError);
+    expect(() => formatGateResultsMarkdown(make(3), 2.5)).toThrow(RangeError);
+    expect(() => formatGateResultsMarkdown(make(16), 15)).toThrow(RangeError);
+    expect(() => formatGateResultsMarkdown(make(15), 15)).not.toThrow();
   });
 });

@@ -83,7 +83,7 @@ function refreshUI(): void {
     verdictEl.textContent = pass
       ? `WERDYKT: PASS (${correctCount}/${answers.length})`
       : `WERDYKT: FAIL (${correctCount}/${answers.length}) — patrz dokument wyników, co to zmienia`;
-    exportEl.value = formatGateResultsMarkdown(answers);
+    exportEl.value = formatGateResultsMarkdown(answers, trials.length);
     return;
   }
 

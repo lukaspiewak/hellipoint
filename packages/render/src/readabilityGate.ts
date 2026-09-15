@@ -412,12 +412,32 @@ export function createReadabilityGate(
  * 2026-09-14-faza-0-wyniki.md`, §3). Funkcja czysta: string in (dane), string out
  * (Markdown) — testowalna bez Three.js/DOM.
  *
- * Werdykt jest MECHANICZNY, nie moją oceną: PASS wtedy i tylko wtedy, gdy WSZYSTKIE
- * dostarczone odpowiedzi są poprawne (§8.1: "PASS wymaga kompletu piętnastu"). To, CO
- * człowiek kliknął, jest jedynym wejściem tej funkcji — ja nie oceniam czytelności, tylko
- * zliczam fakty, które człowiek już ustalił własnym kliknięciem.
+ * Werdykt jest MECHANICZNY, nie moją oceną: PASS wtedy i tylko wtedy, gdy udzielono
+ * KOMPLETU `totalTrials` odpowiedzi i WSZYSTKIE są poprawne (§8.1: "PASS wymaga kompletu
+ * piętnastu"). To, CO człowiek kliknął, jest jedynym wejściem tej funkcji — ja nie oceniam
+ * czytelności, tylko zliczam fakty, które człowiek już ustalił własnym kliknięciem.
+ *
+ * `totalTrials` jest WYMAGANY, nie domyślny. Poprzednia wersja liczyła werdykt wyłącznie z
+ * długości `answers`, więc log TRZECH odpowiedzi drukował "Wynik: 3/3 — PASS". Ścieżka UI
+ * (`apps/client/src/gate.ts`) do tego nie dopuszczała — panel woła to dopiero po
+ * `isFinished()` — ale to jest publiczne API pakietu, a jego wyjście jest ARTEFAKTEM, który
+ * człowiek wkleja do dokumentu wyników (§7.2). Domyślna wartość `totalTrials = answers.length`
+ * przywróciłaby dokładnie tę dziurę, tylko ciszej.
+ *
+ * @throws {RangeError} gdy `totalTrials` nie jest dodatnią liczbą całkowitą, albo gdy
+ *   odpowiedzi jest WIĘCEJ niż prób — oba przypadki oznaczają, że wywołujący pomylił
+ *   wielkości, a cichy werdykt z pomylonych liczb jest dokładnie tym, czego ta funkcja
+ *   ma nie robić.
  */
-export function formatGateResultsMarkdown(answers: readonly GateAnswerRecord[]): string {
+export function formatGateResultsMarkdown(answers: readonly GateAnswerRecord[], totalTrials: number): string {
+  if (!(Number.isInteger(totalTrials) && totalTrials > 0)) {
+    throw new RangeError(`formatGateResultsMarkdown: totalTrials must be a positive integer, got ${totalTrials}`);
+  }
+  if (answers.length > totalTrials) {
+    throw new RangeError(
+      `formatGateResultsMarkdown: got ${answers.length} answers for ${totalTrials} trials — more answers than trials`,
+    );
+  }
   const header = '| # | Faza | Komórka jasna | Komórka ciemna | Kliknięto | Wynik |\n|---|---|---|---|---|---|';
   const rows = answers.map(
     (a) =>
@@ -426,7 +446,11 @@ export function formatGateResultsMarkdown(answers: readonly GateAnswerRecord[]):
       } |`,
   );
   const correctCount = answers.filter((a) => a.correct).length;
-  const verdict =
-    answers.length > 0 && correctCount === answers.length ? 'PASS' : `FAIL (${correctCount}/${answers.length})`;
-  return [header, ...rows, '', `Wynik: ${correctCount}/${answers.length} — ${verdict}`].join('\n');
+  const complete = answers.length === totalTrials;
+  const verdict = complete
+    ? correctCount === totalTrials
+      ? 'PASS'
+      : `FAIL (${correctCount}/${totalTrials})`
+    : `NIEKOMPLETNE — rozstrzygnięto ${answers.length} z ${totalTrials} prób, werdykt NIE zapada`;
+  return [header, ...rows, '', `Wynik: ${correctCount}/${totalTrials} — ${verdict}`].join('\n');
 }
