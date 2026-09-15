@@ -1084,7 +1084,16 @@ git commit -m "feat(sim): spalanie w świetle z weryfikacją niezmiennika N3 na 
 **Interfaces:**
 - Consumes: `SimState`, `Rng`, `STREAM`, `spawnUnit`, `TICK_SECONDS`
 - Produces:
-  - `interface PentagonState { spawnAccumulator: number; eruptionCooldown: number }` (w `state.ts`)
+  - `interface PentagonState { spawnAccumulator: number; eruptionCooldown: number; eruptionArmed: boolean }` (w `state.ts`)
+
+> **Trzecie pole `eruptionArmed` to poprawka defektu tego planu, nie ozdoba.** Pierwotna,
+> dwupolowa wersja **oblewała własny test**: `createState` sadzi `eruptionCooldown: 0`,
+> a `updateSpawning` najpierw odejmuje, potem sprawdza `<= 0` — więc w PIERWSZYM ticku po
+> zatkaniu `0 − 0,05 <= 0` odpalało erupcję natychmiast, zamiast po `eruptionInterval`.
+> Zmierzone na dosłownie przepisanym kodzie z tego planu: test „zatkany pentagon nie wypuszcza
+> ciągłego strumienia" dostawał 4 jednostki zamiast 0 w oknie 10 s. Startowe zero jest
+> nieodróżnialne od „właśnie odliczyło do zera", a rozróżnić je musi osobny bit — **nie**
+> sentinel `Infinity`, bo ten łamie niezmiennik serializowalności `SimState`.
   - `interface SpawnConfig { … }`, `const DEFAULT_SPAWN: SpawnConfig`
   - `function updateSpawning(s, light, rng, cycle, cfg): void`
 
@@ -1099,6 +1108,15 @@ export interface PentagonState {
   spawnAccumulator: number;
   /** Sekundy do najbliższej erupcji. Używane wyłącznie przez zatkane pentagony. */
   eruptionCooldown: number;
+  /**
+   * Czy `eruptionCooldown` zostało uzbrojone pełnym `eruptionInterval` od (po)nownego
+   * zatkania. Bez tej flagi startowe `eruptionCooldown = 0` jest nieodróżnialne od
+   * "właśnie odliczyło do zera" — pierwsza erupcja wystrzeliwałaby w TYM SAMYM ticku,
+   * w którym stanął cap, zamiast po pełnym interwale (patrz spawning.ts).
+   * Resetowana na `false`, gdy pentagon przestaje być zatkany, żeby ponowne zacapowanie
+   * liczyło interwał od nowa, a nie kontynuowało stare odliczenie.
+   */
+  eruptionArmed: boolean;
 }
 ```
 W `interface SimState` dodaj pole:
@@ -1116,6 +1134,7 @@ W `packages/sim/src/sim/hash.ts`, przed pętlą po jednostkach, dodaj:
   for (const p of s.pentagons) {
     h.float(p.spawnAccumulator);
     h.float(p.eruptionCooldown);
+    h.int(p.eruptionArmed ? 1 : 0);
   }
 ```
 
@@ -1145,8 +1164,13 @@ function fresh() {
   return s;
 }
 
-function run(s: ReturnType<typeof fresh>, light: Float32Array, seconds: number, cycle = 1) {
-  const rng = new Rng(999).fork(STREAM.WAVES);
+/**
+ * `seed` parametryzowany (domyślnie 999, jak w brief-ie zadania) — potrzebne do testu
+ * "RNG zależy od seeda" niżej. Domyślna wartość zachowuje dokładnie zachowanie
+ * wszystkich testów, które nie podają go jawnie.
+ */
+function run(s: ReturnType<typeof fresh>, light: Float32Array, seconds: number, cycle = 1, seed = 999) {
+  const rng = new Rng(seed).fork(STREAM.WAVES);
   const ticks = Math.round(seconds / 0.05);
   for (let i = 0; i < ticks; i++) updateSpawning(s, light, rng, cycle, DEFAULT_SPAWN);
 }
@@ -1190,6 +1214,30 @@ describe('updateSpawning', () => {
     expect(s.units.filter((u) => u.cellId === capped).length).toBeGreaterThan(0);
   });
 
+  /**
+   * Hunt z raportu Taska 4: "Cooldown boundary" — test4/5 powyżej sprawdzają okna
+   * WYGODNIE wewnątrz/na zewnątrz interwału (0,5× i 1,5×), nigdy dokładnie na granicy.
+   * Ten test przypina moment PIERWSZEJ erupcji dokładnie: tick przed interwałem (0
+   * jednostek), dokładnie na interwale (4 — `eruptionBurstBase` przy capCount=1) i
+   * tick po (wciąż 4 — druga erupcja jest kolejny pełny interwał później, nie tick
+   * później). Wartości zmierzone bezpośrednio na żywej implementacji (patrz
+   * task-4-report.md) — 20 s / 0,05 s = 400 ticków, bez dryfu zmiennoprzecinkowego
+   * między testowanymi ticka.
+   */
+  it('erupcja jest przypięta DOKŁADNIE do interwału — tick przed i tick po granicy', () => {
+    const measure = (seconds: number) => {
+      const s = fresh();
+      const capped = planet.pentagons[0];
+      applyCommand(s, { kind: 'BUILD', cellId: capped, type: 'GEOTHERMAL_CAP' });
+      run(s, allDark, seconds);
+      return s.units.filter((u) => u.cellId === capped).length;
+    };
+
+    expect(measure(DEFAULT_SPAWN.eruptionInterval - 0.05)).toBe(0);
+    expect(measure(DEFAULT_SPAWN.eruptionInterval)).toBe(DEFAULT_SPAWN.eruptionBurstBase);
+    expect(measure(DEFAULT_SPAWN.eruptionInterval + 0.05)).toBe(DEFAULT_SPAWN.eruptionBurstBase);
+  });
+
   it('więcej capów ⇒ silniejsze erupcje', () => {
     const measure = (caps: number) => {
       const s = fresh();
@@ -1203,6 +1251,28 @@ describe('updateSpawning', () => {
     expect(measure(6)).toBeGreaterThan(measure(1));
   });
 
+  /**
+   * Hunt: "więcej capów ⇒ nie mniej jednostek" przeszedłby nawet przy STAŁEJ sile
+   * erupcji. Ten test przypina DOKŁADNE liczby wynikające ze wzoru w spawning.ts
+   * (`eruptionBurstBase * (1 + eruptionScalePerCap * (capCount - 1))`), zmierzone na
+   * żywej implementacji: capCount=1 → 4, capCount=6 → round(4×(1+0,6×5)) = 16.
+   * W oknie 1,2× interwału mieści się DOKŁADNIE jedna erupcja (druga byłaby dopiero
+   * przy 2× interwału), więc te liczby to CAŁY wynik testu, nie jego dolna granica.
+   */
+  it('siła erupcji rośnie z liczbą capów wg dokładnego wzoru (nie tylko kierunek)', () => {
+    const measure = (caps: number) => {
+      const s = fresh();
+      for (let i = 0; i < caps; i++) {
+        applyCommand(s, { kind: 'BUILD', cellId: planet.pentagons[i], type: 'GEOTHERMAL_CAP' });
+      }
+      const target = planet.pentagons[0];
+      run(s, allDark, DEFAULT_SPAWN.eruptionInterval * 1.2);
+      return s.units.filter((u) => u.cellId === target).length;
+    };
+    expect(measure(1)).toBe(4);
+    expect(measure(6)).toBe(16);
+  });
+
   it('przy WSZYSTKICH 12 zatkanych gra nadal generuje zagrożenie', () => {
     // Dowód, że allCapsOverloadTimeSeconds z draftu jest zbędną łatką:
     // erupcje są ciągłą krzywą, a 12 capów to po prostu jej koniec.
@@ -1212,6 +1282,22 @@ describe('updateSpawning', () => {
     }
     run(s, allDark, DEFAULT_SPAWN.eruptionInterval * 1.5);
     expect(s.units.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * Ten sam scenariusz co wyżej, ale z DOKŁADNĄ liczbą: 12 pentagonów × 30 jednostek
+   * (round(4×(1+0,6×11)) = round(30,4) = 30) = 360. Test wyżej przeszedłby nawet
+   * gdyby pojedyncza jednostka wyciekła z niezwiązanej przyczyny; ten pinuje liczbę,
+   * więc regresja w formule burst/capCount pokazałaby się TU, nie tylko w dedykowanym
+   * teście "siła erupcji" powyżej (który liczy tylko jeden, wybrany pentagon).
+   */
+  it('przy WSZYSTKICH 12 zatkanych — dokładna liczba jednostek, nie tylko ">0"', () => {
+    const s = fresh();
+    for (const p of planet.pentagons) {
+      applyCommand(s, { kind: 'BUILD', cellId: p, type: 'GEOTHERMAL_CAP' });
+    }
+    run(s, allDark, DEFAULT_SPAWN.eruptionInterval * 1.5);
+    expect(s.units.length).toBe(360);
   });
 
   it('wyższy cykl oznacza więcej wrogów', () => {
@@ -1240,6 +1326,45 @@ describe('updateSpawning', () => {
       return s.units.map((u) => [u.type, u.cellId]);
     };
     expect(go()).toEqual(go());
+  });
+
+  /**
+   * Hunt: "Czy jakikolwiek test przeszedłby z RNG podbitym do stałej?" Powyższy test
+   * porównuje TEN SAM seed z samym sobą — przeszedłby nawet gdyby `pickType`
+   * ignorował `rng` i zawsze zwracał ten sam typ (stały RNG jest trywialnie
+   * deterministyczny). Ten test dodaje drugą połowę dowodu: RÓŻNE seedy muszą dać
+   * RÓŻNY ciąg typów (cykl 9 odblokowuje 3 typy, więc jest co różnicować) — inaczej
+   * strumień WAVES w ogóle nie bierze seeda pod uwagę.
+   */
+  it('strumień WAVES faktycznie zależy od seeda — różne seedy dają różny ciąg typów', () => {
+    const typeSequence = (seed: number) => {
+      const s = fresh();
+      run(s, allDark, 20, 9, seed);
+      return s.units.map((u) => u.type);
+    };
+    const a1 = typeSequence(999);
+    const a2 = typeSequence(999);
+    const b = typeSequence(1000);
+
+    expect(a1.length).toBeGreaterThan(20); // próbka wystarczająco duża, by rozbieżność nie była przypadkiem
+    expect(a1).toEqual(a2);
+    expect(a1).not.toEqual(b);
+  });
+
+  /**
+   * Hunt: "Czy jakiś test dowodzi, że ułamek się KUMULUJE, a nie jest zerowany albo
+   * podwójnie liczony?" Powyższy test #1 sprawdza tylko `> 0`. Tu: przy
+   * `baseRatePerPentagon = 0,25`/s (poniżej 1/tick) pojedynczy, NIEZATKANY pentagon
+   * musi wypuścić DOKŁADNIE floor(0,25 × 30) = 7 jednostek w 30 s — zmierzone na
+   * żywej implementacji, 30 s dobrane celowo tak, by 0,25×30=7,5 leżało wygodnie
+   * (0,5 od granicy) daleko od progu całkowitego, więc błąd zmiennoprzecinkowy
+   * akumulacji (rzędu 1e-13 po 600 tickach) nie ma szans przesunąć wyniku.
+   */
+  it('spawnAccumulator kumuluje ułamek — dokładna liczba jednostek w oknie, nie tylko ">0"', () => {
+    const s = fresh();
+    const target = planet.pentagons[0];
+    run(s, allDark, 30);
+    expect(s.units.filter((u) => u.cellId === target)).toHaveLength(7);
   });
 });
 ```
@@ -1283,6 +1408,22 @@ export const DEFAULT_SPAWN: SpawnConfig = {
   armorFromCycle: 5,
 };
 
+/**
+ * Realizacja §5.3: zatkanie pentagonu NIE kasuje spawnu — przekierowuje go. Otwarty,
+ * zaciemniony pentagon wypuszcza ciągły ułamkowy strumień (`spawnAccumulator`).
+ * Zatkany (GEOTHERMAL_CAP) przestaje to robić i zamiast tego erupuje w miejscu co
+ * `eruptionInterval`, z siłą rosnącą wraz z LICZBĄ WSZYSTKICH capów na planecie — więc
+ * capowanie wszystkich 12 nie usuwa zagrożenia, tylko przenosi je pod bazę gracza
+ * (cap musi być podpięty do sieci, więc gracz capuje blisko siebie).
+ *
+ * Residual względem wersji z brief-u: `eruptionCooldown` startuje w `createState` na 0,
+ * co bez `eruptionArmed` czyni je nieodróżnialnym od "właśnie odliczyło do zera" —
+ * pierwsza erupcja wystrzeliwałaby w TYM SAMYM ticku, w którym stanął cap, zamiast po
+ * pełnym interwale (złapane przez test "zatkany pentagon nie wypuszcza ciągłego
+ * strumienia" w krótkim oknie poniżej interwału — patrz task-4-report.md). `eruptionArmed`
+ * zapewnia, że pierwsze uzbrojenie liczników PO (po)nownym zatkaniu ustawia pełny
+ * interwał zamiast fałszywie "przeterminowanego" zera.
+ */
 export function updateSpawning(
   s: SimState,
   light: Float32Array,
@@ -1297,7 +1438,8 @@ export function updateSpawning(
     const cellId = s.planet.pentagons[i];
     const ps = s.pentagons[i];
 
-    // D1: pentagon w świetle jest martwy, niezależnie od wszystkiego innego.
+    // D1: pentagon w świetle jest martwy, niezależnie od wszystkiego innego —
+    // odliczanie erupcji też stoi w miejscu, nie tylko strumień ciągły.
     if (light[cellId] > 0) continue;
 
     const capped = s.buildings[cellId]?.type === 'GEOTHERMAL_CAP';
@@ -1306,6 +1448,12 @@ export function updateSpawning(
       // §5.3: cap PRZEKIEROWUJE spawn zamiast go kasować.
       // Strumień ustaje, ale ciśnienie wraca jako okresowa erupcja w tym samym miejscu,
       // rosnąca z liczbą capów — czyli gracz sam ściąga sobie bombę pod dom.
+      if (!ps.eruptionArmed) {
+        // Świeże zatkanie: uzbrój pełnym interwałem, NIE erupuj w tym ticku.
+        ps.eruptionCooldown = cfg.eruptionInterval;
+        ps.eruptionArmed = true;
+      }
+
       ps.eruptionCooldown -= TICK_SECONDS;
       if (ps.eruptionCooldown <= 0) {
         ps.eruptionCooldown += cfg.eruptionInterval;
@@ -1318,6 +1466,11 @@ export function updateSpawning(
       }
       continue;
     }
+
+    // Odkapowany (albo nigdy nie zakapowany) pentagon zapomina odliczanie erupcji —
+    // ponowne zacapowanie w przyszłości ma liczyć pełny interwał od nowa, nie
+    // kontynuować stare, zamrożone odliczenie.
+    ps.eruptionArmed = false;
 
     ps.spawnAccumulator += rate * TICK_SECONDS;
     while (ps.spawnAccumulator >= 1) {
