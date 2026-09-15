@@ -15,3 +15,27 @@ export {
   terminatorSpeedWorld,
 } from './world/scale.js';
 export { createPlanet, type Cell, type Planet, type PlanetOptions } from './world/planet.js';
+
+export { type RngState } from './math/rng.js';
+export { TICK_SECONDS, createState } from './sim/state.js';
+export type { Building, BuildingType, EnemyType, Phase, SimState, Unit } from './sim/state.js';
+export { stateHash } from './sim/hash.js';
+export { BUILDINGS, BROWNOUT_ORDER, ENEMIES, evaluateEnergyOutput } from './sim/defs.js';
+export type { BuildingDef, EnemyDef, EnergyOutput } from './sim/defs.js';
+export { applyCommand, canBuild } from './sim/commands.js';
+export type { Command } from './sim/commands.js';
+export { lightAt, lightField, sunDirection } from './sim/light.js';
+export { connectedToCore } from './sim/network.js';
+export { updatePower } from './sim/power.js';
+export { ORE_PER_SECOND, updateEconomy } from './sim/economy.js';
+export { buildAllFlowFields, buildFlowField } from './sim/flowfield.js';
+export type { FlowField } from './sim/flowfield.js';
+export { spawnUnit, updateMovement } from './sim/movement.js';
+export type { MotionContext } from './sim/movement.js';
+export { cellsWithinSteps, updateCombat } from './sim/combat.js';
+export { updateBurning } from './sim/burning.js';
+export { DEFAULT_SPAWN, updateSpawning } from './sim/spawning.js';
+export type { SpawnConfig } from './sim/spawning.js';
+export { DEFAULT_RUN, currentCycle, evacUnlocked, updateRules } from './sim/rules.js';
+export type { RunConfig } from './sim/rules.js';
+export { Sim } from './sim/loop.js';
