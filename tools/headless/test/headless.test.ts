@@ -46,11 +46,13 @@ describe('simulateRun', () => {
   // i stawia więcej niż sam CORE — więc test determinizmu obok porównuje realny,
   // ruchliwy przebieg, a nie zerowy punkt odniesienia.
   it('determinizm dla seed=7 nie jest testem martwego runu — realnie coś się dzieje', () => {
-    // Zmierzone wprost (`simulateRun(7, DEFAULT_RUN, 50_000)`, po rundzie poprawek 1 —
-    // wieża przed barykadą): DEFEAT w ticku 862, 9 budynków w szczycie, 61,9 rudy
-    // wydobytej. Asercja celowo NIE na zabiciach: to jedyna z czterech liczb, która
-    // zmienia się z każdą zmianą polityki/balansu (przed poprawką było ich 0, po —
-    // 2), a ruda/ticki/budynki są stabilniejszym dowodem "to nie jest martwy run".
+    // Zmierzone wprost (`simulateRun(7, DEFAULT_RUN, 50_000)`, po rundzie poprawek 2 —
+    // ogólna rezerwa rudy, bez wyjątku dla ekstraktora): DEFEAT w ticku 1101,
+    // 13 budynków w szczycie, 52,6 rudy wydobytej. Asercja celowo NIE na zabiciach:
+    // to jedyna z czterech liczb, która zmienia się z każdą zmianą polityki/balansu
+    // (0 w rundzie 1, 2 w rundzie 2 wariant A, 25 w finalnym wariancie — patrz
+    // task-6-report.md), a ruda/ticki/budynki są stabilniejszym dowodem "to nie
+    // jest martwy run".
     const r = simulateRun(7, DEFAULT_RUN, 50_000);
     expect(r.phase).toBe('DEFEAT');
     expect(r.ticks).toBeGreaterThan(100);
@@ -74,20 +76,23 @@ describe('simulateRun', () => {
     // dokładne zero), żeby dać polityce czas na wydobycie, i pokazuje, że ścieżka
     // "wyczerpano" jest OSIĄGALNA, nie tylko teoretyczna.
     //
-    // 3 seedy, nie 5: run bez presji wroga trwa ~40 tys. ticków z rosnącą do
-    // kilkudziesięciu budynków bazą — zmierzone ~5-9 s na seed. Runda poprawek 1
-    // (wieża przed barykadą) podniosła koszt jeszcze trochę i 5 seedów zaczęło
-    // przekraczać nawet podniesiony timeout (30 s); 3 mieszczą się z zapasem,
-    // a każdy z osobna i tak wystarcza do `depleted.length > 0`.
+    // Seedy 2/3/4, nie zakres od zera, i maxTicks obcięty do 20 000: run bez presji
+    // wroga z rezerwą rudy (runda poprawek 2) potrafi wyhodować bazę rzędu SETEK
+    // budynków, zanim padnie — zmierzone: seed=1 dochodzi do 629-702 budynków i
+    // ~17-62 s liczenia SAMEGO SIEBIE, bo koszt na tick rośnie z rozmiarem sieci
+    // (BFS zasięgu, pola przepływu). Seedy 2/3/4 zostają małe (30-46 budynków w
+    // 20 000 ticków) i każdy z osobna i tak wystarcza do `depleted.length > 0`
+    // (wyczerpanie na tickach 2661-6861, głęboko przed cięciem) — test ma
+    // dowodzić, że ścieżka "wyczerpano" jest osiągalna, nie hodować farmę.
     const easy: RunConfig = {
       ...DEFAULT_RUN,
       spawn: { ...DEFAULT_RUN.spawn, baseRatePerPentagon: 0.001, growthPerCycle: 1 },
     };
-    const results = Array.from({ length: 3 }, (_, i) => simulateRun(i, easy, 100_000));
+    const results = [2, 3, 4].map((seed) => simulateRun(seed, easy, 20_000));
     const depleted = results.filter((r) => r.firstDepletionTick > 0);
     expect(depleted.length).toBeGreaterThan(0);
     for (const r of depleted) expect(Number.isInteger(r.firstDepletionTick)).toBe(true);
-  }, 45_000);
+  }, 30_000);
 });
 
 describe('ScriptedPolicy', () => {

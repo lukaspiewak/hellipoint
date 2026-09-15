@@ -3,9 +3,36 @@ import {
   canBuild,
   cellsWithinSteps,
   connectedToCore,
+  type BuildingType,
   type Command,
   type Sim,
 } from '@heliopolis/sim';
+
+/**
+ * [STROJENIE eksperymentu, task-6-report.md runda poprawek 2] Cena najtańszej
+ * wieży — próg rezerwy w `decide()` poniżej. Liczona z `BUILDINGS`, nie zaszyta
+ * na sztywno, żeby nie rozjechać się z kosztami w defs.ts, gdyby Faza 3 je zmieniła.
+ */
+const RESERVE_ORE = Math.min(BUILDINGS.LASER_TURRET.costOre, BUILDINGS.KINETIC_TURRET.costOre);
+
+/**
+ * Zmierzony wybór (task-6-report.md, runda poprawek 2, eksperyment z wyjątkiem
+ * dla ekstraktora): czy ekstraktor wolno postawić mimo rezerwy. Hipoteza przed
+ * pomiarem: ekstraktor jako jedyny zakup zwiększa dochód, więc trzymanie się
+ * rezerwy przy słabym wydobyciu mogłoby zablokować wzrost ekonomii, zanim
+ * w ogóle będzie co chronić. Zmierzone OBA warianty na 1000 seedach (0-999,
+ * DEFAULT_RUN) — hipoteza się NIE potwierdziła:
+ *
+ *   Z wyjątkiem (ekstraktor poza rezerwą):    mediana porażki 42,5 s,
+ *     mediana wież/run = 0, 60,4% runów nigdy nie stawia wieży.
+ *   BEZ wyjątku (ekstraktor też pod rezerwą): mediana porażki 51,6 s,
+ *     mediana wież/run = 1, tylko 0,8% runów nigdy nie stawia wieży.
+ *
+ * BEZ wyjątku wygrywa na wszystkich trzech osiach naraz (dłużej, więcej wież,
+ * rzadziej zero wież) — wolniejsza druga/trzecia kopalnia kosztuje mniej, niż
+ * daje wcześniejsza i pewniejsza wieża. Ekstraktor NIE dostaje taryfy ulgowej.
+ */
+const EXTRACTOR_EXEMPT_FROM_RESERVE = false;
 
 /**
  * Deterministyczny, zachłanny bot. NIE ma być dobry — ma być powtarzalny
@@ -16,10 +43,18 @@ import {
  *   1. ekstraktor na najbliższym niewyczerpanym złożu w zasięgu sieci
  *   2. panel słoneczny, gdy podaż energii jest napięta
  *   3. bateria, gdy magazyn stoi pusty
- *   4. wieża od strony najbliższego pentagonu — a póki nie stoi ŻADNA, BARRICADE
- *      w ogóle nie wchodzi w grę: mur bez działa za nim to tylko zwłoka, więc bot
- *      oszczędza na pierwszą wieżę zamiast rozmieniać nadwyżkę na barykady
+ *   4. wieża od strony najbliższego pentagonu
  *   5. pylon rozciągający sieć ku najbliższemu złożu poza zasięgiem
+ *
+ * REZERWA (runda poprawek 2): powyższe pięć gałęzi to WCIĄŻ zachłanne "kup
+ * pierwszą przystępną opcję" — ale żadna z nich, dopóki nie stoi ani jedna
+ * wieża, nie wolno jej zejść z rudy poniżej ceny najtańszej wieży. Reguła
+ * siedzi NAD wszystkimi pięcioma gałęziami naraz (`affordable()` niżej), nie
+ * w jednej z nich — łatanie po gałęzi było wypróbowane dwa razy (barykada
+ * w rundzie 1, i to samo zagłodzenie ujawniło się na pylonie w rundzie 2:
+ * zmierzone, 375 rudy wydane w jednym runie, wieża NIGDY) i za każdym razem
+ * przenosiło ten sam błąd na następną najtańszą opcję. "Nie wydaję ostatnich
+ * pieniędzy, dopóki nie mam czym strzelać."
  */
 export class ScriptedPolicy {
   constructor(private readonly sim: Sim) {}
@@ -28,6 +63,23 @@ export class ScriptedPolicy {
     const s = this.sim.state;
     const connected = connectedToCore(s);
     const core = s.planet.startCell;
+
+    const hasTurret = s.buildings.some(
+      (b) => b !== null && (b.type === 'LASER_TURRET' || b.type === 'KINETIC_TURRET'),
+    );
+
+    /**
+     * Czy zakup TEGO typu wolno wykonać bez naruszenia rezerwy. Wieża sama nigdy
+     * nie jest ograniczana — jest CELEM rezerwy, nie czymś, przed czym ta rezerwa
+     * chroni: gdy stać na wieżę, kupuje ją natychmiast (byle `canBuild` też się
+     * zgadzał, o co dba wywołanie niżej). Gdy wieża już stoi, rezerwa znika
+     * całkowicie i polityka wraca do zwykłego zachłannego wydawania.
+     */
+    const affordable = (type: BuildingType): boolean => {
+      if (hasTurret || type === 'LASER_TURRET' || type === 'KINETIC_TURRET') return true;
+      if (EXTRACTOR_EXEMPT_FROM_RESERVE && type === 'EXTRACTOR') return true;
+      return s.ore - BUILDINGS[type].costOre >= RESERVE_ORE;
+    };
 
     // Zasięg roboczy: komórki, do których sieć już dociera, plus jeden krok zapasu.
     const reachable = new Set<number>();
@@ -41,9 +93,11 @@ export class ScriptedPolicy {
     if (free.length === 0) return [];
 
     // 1. Ekstraktory na dostępnych złożach.
-    for (const c of free) {
-      if (s.oreRemaining[c] > 0 && canBuild(s, c, 'EXTRACTOR').ok) {
-        return [{ kind: 'BUILD', cellId: c, type: 'EXTRACTOR' }];
+    if (affordable('EXTRACTOR')) {
+      for (const c of free) {
+        if (s.oreRemaining[c] > 0 && canBuild(s, c, 'EXTRACTOR').ok) {
+          return [{ kind: 'BUILD', cellId: c, type: 'EXTRACTOR' }];
+        }
       }
     }
 
@@ -51,34 +105,22 @@ export class ScriptedPolicy {
     if (plain.length === 0) return [];
 
     // 2/3. Energia: panel, gdy brak zapasu; bateria, gdy zapas stale zerowy.
-    if (s.storedEnergy < 50 && canBuild(s, plain[0], 'SOLAR_PANEL').ok) {
+    if (s.storedEnergy < 50 && affordable('SOLAR_PANEL') && canBuild(s, plain[0], 'SOLAR_PANEL').ok) {
       return [{ kind: 'BUILD', cellId: plain[0], type: 'SOLAR_PANEL' }];
     }
-    if (s.storedEnergy < 5 && canBuild(s, plain[0], 'BATTERY').ok) {
+    if (s.storedEnergy < 5 && affordable('BATTERY') && canBuild(s, plain[0], 'BATTERY').ok) {
       return [{ kind: 'BUILD', cellId: plain[0], type: 'BATTERY' }];
     }
 
     // 4. Obrona: komórka najbliższa CORE spośród wolnych, żeby budować zwartą bazę.
-    // Wieża PRZED barykadą: BARRICADE (8 rudy) jest zawsze pierwszą przystępną opcją
-    // w pętli poniżej, więc bez tej bramki nadwyżka rudy jest wydawana na nią, zanim
-    // zdąży urosnąć do progu wieży (50/100) — samo-zagłodzenie, nie zachłanność
-    // (patrz task-6-report.md, runda poprawek 1). Póki na planecie nie stoi ŻADNA
-    // wieża, BARRICADE w ogóle nie wchodzi do rozważanych typów — bot oszczędza
-    // (zwraca [] poniżej), zamiast rozmieniać rudę na mur bez działa za nim.
     const nearCore = cellsWithinSteps(s, core, 4).filter((c) => plain.includes(c));
     const spot = nearCore[0] ?? plain[0];
-    const hasTurret = s.buildings.some(
-      (b) => b !== null && (b.type === 'LASER_TURRET' || b.type === 'KINETIC_TURRET'),
-    );
-    const defenseTypes = hasTurret
-      ? (['LASER_TURRET', 'KINETIC_TURRET', 'BARRICADE'] as const)
-      : (['LASER_TURRET', 'KINETIC_TURRET'] as const);
-    for (const type of defenseTypes) {
-      if (canBuild(s, spot, type).ok) return [{ kind: 'BUILD', cellId: spot, type }];
+    for (const type of ['LASER_TURRET', 'KINETIC_TURRET', 'BARRICADE'] as const) {
+      if (affordable(type) && canBuild(s, spot, type).ok) return [{ kind: 'BUILD', cellId: spot, type }];
     }
 
     // 5. Rozciągnięcie sieci.
-    if (canBuild(s, plain[plain.length - 1], 'PYLON').ok) {
+    if (affordable('PYLON') && canBuild(s, plain[plain.length - 1], 'PYLON').ok) {
       return [{ kind: 'BUILD', cellId: plain[plain.length - 1], type: 'PYLON' }];
     }
 
