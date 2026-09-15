@@ -106,8 +106,10 @@ describe('pełny run', () => {
  * przypina, ile się w nim naprawdę dzieje.
  *
  * Zmierzone dla seeda 102 pod `DEFAULT_RUN`: run kończy się PORAŻKĄ na ticku 1978,
- * a nie na limicie 8000 — czyli „8000" w teście wyżej nigdy nie jest osiągane i
- * porównywane hashe dotyczą stanu po ~1978 tickach. W tym czasie: 144 zrodzone
+ * a nie na limicie `PASSIVE_CAP` (6000; poprzednia wersja tego komentarza mówiła
+ * „8000" — liczba z czasów, gdy limit był inny, skorygowana w przeglądzie gałęzi)
+ * — czyli limit w teście wyżej nigdy nie jest osiągany i porównywane hashe dotyczą
+ * stanu po ~1978 tickach. W tym czasie: 144 zrodzone
  * jednostki (64 żywe na końcu), CORE zbity z 1000 hp do zera, ruda 150 → 310
  * (czyli ~80 zaliczonych zabójstw, prawie wyłącznie od słońca).
  */
@@ -134,7 +136,9 @@ describe('przebieg porównywany testem determinizmu jest bogaty w zdarzenia', ()
     // Budynek NAPRAWDĘ znika ze stanu, nie tylko schodzi do zera hp.
     expect(sim.state.buildings[core]).toBeNull();
     expect(sim.state.phase).toBe('DEFEAT');
-    // Pętla kończy się FAZĄ, nie limitem: „8000" nigdy nie jest osiągane (zmierzone: 1978).
+    // Pętla kończy się FAZĄ, nie limitem: `PASSIVE_CAP` (6000) nigdy nie jest osiągane
+    // (zmierzone: 1978). Poprzednia wersja tego komentarza mówiła „8000" — zła liczba,
+    // skorygowana w przeglądzie gałęzi.
     expect(ticks).toBeGreaterThan(1000);
     expect(ticks).toBeLessThan(PASSIVE_CAP);
   });

@@ -1,4 +1,4 @@
-import { add, dot, normalize, scale, type Vec3 } from '../math/vec3.js';
+import { add, dot, normalize, scale, vec3, type Vec3 } from '../math/vec3.js';
 import { cellSpacing, terminatorSpeedCells } from '../world/scale.js';
 import type { Planet } from '../world/planet.js';
 import { ENEMIES } from './defs.js';
@@ -108,11 +108,20 @@ function nextUpDouble(x: number): number {
 }
 
 export function spawnUnit(s: SimState, type: EnemyType, cellId: number): void {
+  // KOPIA, nie referencja. `pos` jest polem MUTOWALNEGO stanu (przepisywanym co tick
+  // w pętli niżej), a `cells[].center` należy do NIEMUTOWALNEJ planety, której nikt
+  // nie zamraża (zmierzone: `Object.isFrozen(planet)` === false, a `u.pos` było
+  // identyczne CO DO REFERENCJI z `cells[cellId].center`). Dziś nic nie pisze po
+  // `u.pos` w miejscu — każdy ruch podstawia nowy obiekt — więc defekt jest UŚPIONY,
+  // ale jeden zapis `u.pos.x = …` gdziekolwiek w przyszłej fazie przestawiłby środek
+  // komórki dla WSZYSTKICH późniejszych odczytów planety (oświetlenie, pola przepływu,
+  // zasięgi, render). Kopia kosztuje jeden obiekt na zrodzoną jednostkę.
+  const center = s.planet.cells[cellId].center;
   s.units.push({
     id: s.nextUnitId++,
     type,
     cellId,
-    pos: s.planet.cells[cellId].center,
+    pos: vec3(center.x, center.y, center.z),
     hp: ENEMIES[type].hp,
     exposure: 0,
   });

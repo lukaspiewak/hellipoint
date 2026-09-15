@@ -105,15 +105,24 @@ export class ScriptedPolicy {
     if (plain.length === 0) return [];
 
     // 2/3. Energia: panel, gdy brak zapasu; bateria, gdy zapas stale zerowy.
-    if (s.storedEnergy < 50 && affordable('SOLAR_PANEL') && canBuild(s, plain[0], 'SOLAR_PANEL').ok) {
+    // [STROJENIE] Oba progi (50 i 5 jednostek magazynu) — pokrętła zachowania bota,
+    // a nie wielkości wynikające z czegokolwiek w symulacji. Dobrane „na oko" w Tasku 6;
+    // Faza 3 je przestroi razem z `energyStorage`/`energyDrain` z defs.ts.
+    const PROG_PANELU = 50; // [STROJENIE]
+    const PROG_BATERII = 5; // [STROJENIE]
+    if (s.storedEnergy < PROG_PANELU && affordable('SOLAR_PANEL') && canBuild(s, plain[0], 'SOLAR_PANEL').ok) {
       return [{ kind: 'BUILD', cellId: plain[0], type: 'SOLAR_PANEL' }];
     }
-    if (s.storedEnergy < 5 && affordable('BATTERY') && canBuild(s, plain[0], 'BATTERY').ok) {
+    if (s.storedEnergy < PROG_BATERII && affordable('BATTERY') && canBuild(s, plain[0], 'BATTERY').ok) {
       return [{ kind: 'BUILD', cellId: plain[0], type: 'BATTERY' }];
     }
 
     // 4. Obrona: komórka najbliższa CORE spośród wolnych, żeby budować zwartą bazę.
-    const nearCore = cellsWithinSteps(s, core, 4).filter((c) => plain.includes(c));
+    // [STROJENIE] Promień zwartej bazy w krokach grafu. Zwycięskie otwarcie z Taska 5
+    // mieści się w 4 krokach od CORE (patrz `WINNING_OPENING` w fullrun.test.ts) — stąd
+    // ta wartość, ale to nadal pokrętło polityki, nie próg wynikający z zasięgów.
+    const PROMIEN_BAZY = 4; // [STROJENIE]
+    const nearCore = cellsWithinSteps(s, core, PROMIEN_BAZY).filter((c) => plain.includes(c));
     const spot = nearCore[0] ?? plain[0];
     for (const type of ['LASER_TURRET', 'KINETIC_TURRET', 'BARRICADE'] as const) {
       if (affordable(type) && canBuild(s, spot, type).ok) return [{ kind: 'BUILD', cellId: spot, type }];

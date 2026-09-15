@@ -12,6 +12,20 @@ export function canBuild(s: SimState, cellId: number, type: BuildingType): Build
   if (cell === undefined) return { ok: false, reason: 'NO_SUCH_CELL' };
   if (s.buildings[cellId] !== null) return { ok: false, reason: 'CELL_OCCUPIED' };
 
+  // `type` jest hartowany TAK SAMO jak `cellId` wyżej, i z tego samego powodu: komendy
+  // przychodzą z zewnątrz (w Fazie 5 — z sieci), więc sygnatura TypeScriptu nie jest
+  // żadną gwarancją w runtime. Bez tej klauzuli `{kind:'BUILD', type:'DEATH_STAR'}`
+  // dawało `BUILDINGS[type] === undefined` i `TypeError: Cannot read properties of
+  // undefined (reading 'playerBuildable')` — wyrzucany ze ŚRODKA `Sim.step()`, czyli
+  // dokładne przeciwieństwo obietnicy z doc-commentu `applyCommand` niżej („po cichu
+  // ignorowana, nigdy nie przerywa symulacji"). Zmierzone przed poprawką.
+  //
+  // `Object.hasOwn`, nie `BUILDINGS[type] === undefined`: to drugie przepuszcza klucze
+  // z PROTOTYPU (`'constructor'`, `'toString'`), dla których odczyt daje funkcję —
+  // wartość prawdziwą, więc straż by nie zadziałała, a `def.costOre` wyszłoby `undefined`
+  // i `s.ore -= undefined` zamieniłoby rudę w NaN (czyli cichy defekt zamiast głośnego).
+  if (!Object.hasOwn(BUILDINGS, type)) return { ok: false, reason: 'NO_SUCH_BUILDING_TYPE' };
+
   const def = BUILDINGS[type];
   // CORE jest jedynym `playerBuildable: false` — symulacja go zasiewa bezpośrednim
   // zapisem do stanu, nigdy przez komendę. Sprawdzane PRZED typem komórki/rudą, bo to
@@ -46,6 +60,12 @@ export function canBuild(s: SimState, cellId: number, type: BuildingType): Build
 /**
  * Komendy przychodzą z zewnątrz (a w Fazie 5 — z sieci), więc niedozwolona komenda
  * jest po cichu ignorowana, nigdy nie przerywa symulacji.
+ *
+ * Obietnica dotyczy KAŻDEGO pola komendy, nie tylko `cellId`: nieznany `kind` wypada
+ * ze `switch`, nieznany `type` odcina `Object.hasOwn` w `canBuild`, a `cellId` poza
+ * zakresem — `cells[cellId] === undefined` / `b == null`. Przed przeglądem gałęzi
+ * `type` był jedynym nieobsłużonym: `{kind:'BUILD', type:'DEATH_STAR'}` przerywał tick
+ * `TypeError`-em.
  */
 export function applyCommand(s: SimState, cmd: Command): void {
   switch (cmd.kind) {

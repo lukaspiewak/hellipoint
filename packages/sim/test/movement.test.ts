@@ -47,6 +47,36 @@ describe('spawnUnit', () => {
     expect(s.units[0].pos).toEqual(planet.cells[42].center);
   });
 
+  /**
+   * PRZEGLĄD GAŁĘZI, Important #5. `u.pos` było IDENTYCZNE CO DO REFERENCJI
+   * z `planet.cells[id].center` (zmierzone), a `Planet` nie jest zamrożona
+   * (`Object.isFrozen(planet) === false`, też zmierzone). Dziś nic nie pisze po `pos`
+   * w miejscu, więc defekt był uśpiony — ale jeden zapis `u.pos.x = …` w dowolnej
+   * przyszłej fazie przestawiłby środek komórki dla wszystkich późniejszych odczytów
+   * planety. Test sprawdza OBIE rzeczy: brak wspólnej referencji i to, że zapis przez
+   * jednostkę faktycznie nie przecieka do planety.
+   */
+  it('daje WŁASNY wektor pozycji, nie referencję do środka komórki planety', () => {
+    const s = withCore();
+    spawnUnit(s, 'SWARM', 42);
+
+    expect(s.units[0].pos).toEqual(planet.cells[42].center);
+    expect(s.units[0].pos).not.toBe(planet.cells[42].center);
+  });
+
+  it('zapis w miejscu przez u.pos nie zmienia środka komórki planety', () => {
+    // WŁASNA planeta, nie współdzielona z resztą pliku: ten test CELOWO pisze po `pos`
+    // w miejscu, więc gdyby kopia zniknęła, uszkodziłby planetę wszystkim testom niżej
+    // i dał kaskadę fałszywych czerwonych zamiast jednej czytelnej porażki.
+    const local = createPlanet({ seed: 77, frequency: 8 });
+    const s = createState(local, 0);
+    spawnUnit(s, 'SWARM', 10);
+
+    const przed = local.cells[10].center.x;
+    (s.units[0].pos as { x: number }).x = przed + 1;
+    expect(local.cells[10].center.x).toBe(przed);
+  });
+
   it('nadaje kolejne, rosnące identyfikatory', () => {
     const s = withCore();
     spawnUnit(s, 'SWARM', 42);

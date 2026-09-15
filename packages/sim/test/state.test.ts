@@ -308,15 +308,19 @@ describe('niezmiennik serializowalności (round-trip JSON)', () => {
   it('stateHash(JSON.parse(JSON.stringify(state))) === stateHash(state) po kilkuset tickach ze zbudowanymi budynkami', () => {
     const sim = new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 5000 });
 
-    // Residual z przeglądu końcowego Fazy 1B: `Sim` sam z siebie NIGDY nie zasiewa
-    // CORE (patrz `playerBuildable: false` w defs.ts — symulacja zasiewa go
-    // bezpośrednim zapisem do stanu, nigdy przez komendę: `canBuild` odrzuca CORE,
-    // więc `applyCommand` nie jest tu opcją, to celowe), a bez CORE `connectedToCore`
-    // (network.ts) nie łączy NIC. Bez poniższej linii `storedEnergy` zostawał
-    // dokładnie na 0 przez wszystkie 400 ticków, a WSZYSTKIE budynki na
-    // `powered: false` — mimo że komentarz niżej twierdził, że skrypt je zapełnia.
-    // Zasiew wprost do stanu, tym samym wzorcem co w
-    // commands.test.ts/flowfield.test.ts/network.test.ts/power.test.ts.
+    // KOREKTA (przegląd gałęzi, Important #5): poprzednia wersja tego komentarza
+    // twierdziła, że „`Sim` sam z siebie NIGDY nie zasiewa CORE". To już NIEPRAWDA —
+    // konstruktor `Sim` zasiewa CORE na `planet.startCell` bezpośrednim zapisem do
+    // stanu (loop.ts, patrz `this.s.buildings[planet.startCell] = …`), dokładnie tak,
+    // jak robi to linia niżej. Komentarz pochodził z Fazy 1B, gdy `Sim` jeszcze tego
+    // nie robił, i nie został zaktualizowany, gdy 1C to dodała.
+    //
+    // Zapis ZOSTAJE mimo to i jest celowy: jest idempotentny (ten sam typ, to samo
+    // pełne hp, ta sama komórka), a czyni ten test niezależnym od tego, czy zasiew
+    // w konstruktorze kiedykolwiek zniknie — bez CORE `connectedToCore` (network.ts)
+    // nie łączy NIC, `storedEnergy` zostaje na 0 przez wszystkie 400 ticków i round-trip
+    // „przechodzi", nie sprawdzając niczego ciekawego. Ten sam wzorzec zasiewu co
+    // w commands.test.ts/flowfield.test.ts/network.test.ts/power.test.ts.
     sim.state.buildings[planet.startCell] = {
       cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
     };

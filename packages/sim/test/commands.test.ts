@@ -3,6 +3,8 @@ import { createPlanet } from '../src/world/planet.js';
 import { createState, type SimState } from '../src/sim/state.js';
 import { applyCommand, canBuild } from '../src/sim/commands.js';
 import { BUILDINGS } from '../src/sim/defs.js';
+import { Sim } from '../src/sim/loop.js';
+import { DEFAULT_RUN } from '../src/sim/rules.js';
 
 const planet = createPlanet({ seed: 3 });
 const anyOreCell = planet.cells.find((c) => c.oreCapacity > 0)!.id;
@@ -178,5 +180,73 @@ describe('bramka ewakuacji w canBuild (§5.6)', () => {
     applyCommand(s, { kind: 'BUILD', cellId: plainHex, type: 'EVACUATION_MODULE' });
     expect(s.buildings[plainHex]).toMatchObject({ type: 'EVACUATION_MODULE' });
     expect(s.ore).toBe(100000 - BUILDINGS.EVACUATION_MODULE.costOre);
+  });
+});
+
+/**
+ * PRZEGLĄD GAŁĘZI, Important #5. Doc-comment `applyCommand` obiecuje, że niedozwolona
+ * komenda „jest po cichu ignorowana, nigdy nie przerywa symulacji". `cellId` był
+ * zahartowany (`cells[cellId] === undefined`, `b == null`), `type` — NIE: zmierzone,
+ * `{kind:'BUILD', type:'DEATH_STAR'}` dawało `TypeError: Cannot read properties of
+ * undefined (reading 'playerBuildable')` wyrzucany ze ŚRODKA `Sim.step()`, czyli
+ * z połowy ticka, po już zastosowanych wcześniejszych komendach.
+ *
+ * Komendy pochodzą z zewnątrz (Faza 5: z sieci), więc sygnatura TypeScriptu nie jest
+ * gwarancją w runtime — stąd `as never` w testach: symulują dokładnie to, co przyjdzie
+ * po drucie, a czego kompilator nigdy nie zobaczy.
+ */
+describe('hartowanie komend spoza TypeScriptu (obietnica „nigdy nie przerywa symulacji")', () => {
+  it('canBuild odrzuca nieznany typ budynku z powodem, zamiast rzucać TypeError', () => {
+    const s = createState(planet, 100000);
+    expect(canBuild(s, plainHex, 'DEATH_STAR' as never)).toEqual({
+      ok: false,
+      reason: 'NO_SUCH_BUILDING_TYPE',
+    });
+  });
+
+  /**
+   * Klucze z PROTOTYPU, nie tylko nieznane nazwy: `BUILDINGS['constructor']` zwraca
+   * funkcję (wartość prawdziwą!), więc straż oparta na `=== undefined` przepuściłaby
+   * je dalej, a `s.ore -= def.costOre` dałoby `NaN` — cichy defekt zamiast głośnego.
+   */
+  it('odrzuca też klucze dziedziczone z prototypu Object', () => {
+    const s = createState(planet, 100000);
+    for (const klucz of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+      expect(canBuild(s, plainHex, klucz as never), klucz).toEqual({
+        ok: false,
+        reason: 'NO_SUCH_BUILDING_TYPE',
+      });
+    }
+  });
+
+  it('applyCommand z nieznanym typem nie rzuca, nic nie stawia i nie rusza rudy', () => {
+    const s = createState(planet, 100000);
+    expect(() => applyCommand(s, { kind: 'BUILD', cellId: plainHex, type: 'DEATH_STAR' as never })).not.toThrow();
+    expect(s.buildings[plainHex]).toBeNull();
+    expect(s.ore).toBe(100000);
+  });
+
+  it('applyCommand z nieznanym kind też nie rzuca i nic nie zmienia', () => {
+    const s = createState(planet, 100000);
+    expect(() => applyCommand(s, { kind: 'SELF_DESTRUCT', cellId: plainHex } as never)).not.toThrow();
+    expect(s.buildings[plainHex]).toBeNull();
+    expect(s.ore).toBe(100000);
+  });
+
+  /**
+   * Asercja NOŚNA: nie „funkcja nie rzuca", tylko „TICK SIĘ NIE ROZPADA". Wcześniejsza
+   * wersja defektu wyrzucała wyjątek ze środka `step()`, po zastosowaniu poprzednich
+   * komend z tej samej kolejki — więc świat zostawał w stanie POŁOWICZNIE przeliczonym.
+   * Tu: zła komenda leży w kolejce PRZED dobrą, a po ticku ma zadziałać dobra.
+   */
+  it('zła komenda w kolejce nie przerywa ticka — kolejna, poprawna, wykonuje się normalnie', () => {
+    const sim = new Sim(planet, { ...DEFAULT_RUN, startingOre: 100000 });
+    sim.enqueue({ kind: 'BUILD', cellId: plainHex, type: 'DEATH_STAR' as never });
+    sim.enqueue({ kind: 'BUILD', cellId: plainHex, type: 'PYLON' });
+
+    expect(() => sim.step()).not.toThrow();
+    expect(sim.state.buildings[plainHex]).toMatchObject({ type: 'PYLON' });
+    expect(sim.state.phase).toBe('RUNNING');
+    expect(sim.state.tick).toBe(1);
   });
 });

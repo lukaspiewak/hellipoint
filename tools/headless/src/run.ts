@@ -15,7 +15,11 @@ export interface RunResult {
   firstDepletionTick: number;
 }
 
-/** Bot podejmuje decyzję co sekundę, nie co tick — inaczej stawiałby budynki szybciej, niż zarabia. */
+/**
+ * [STROJENIE] Bot podejmuje decyzję co sekundę, nie co tick — inaczej stawiałby budynki
+ * szybciej, niż zarabia. 20 ticków = 1 s przy `TICK_SECONDS = 0,05`; sam ODSTĘP jest
+ * pokrętłem zachowania bota (Faza 3 może go zmienić), nie stałą wynikającą z czegokolwiek.
+ */
 const DECISION_INTERVAL_TICKS = 20;
 
 export function simulateRun(seed: number, cfg: RunConfig, maxTicks: number): RunResult {
