@@ -53,7 +53,7 @@ sceny spike'a.
 |---|---|
 | Budżet `writeCellColors` (1442 komórki × 1000 wywołań, mediana < 1 ms) | **PASS, zmierzone** — §2 |
 | Budżet całej klatki renderu (cel: ≤ 8 ms) | **PASS, zmierzone, z ogromnym zapasem** — §3 |
-| Bramka czytelności terminatora (§8.1 specu, piętnaście osądów) | **PASS — 15/15** (§7.3), orzeczone przez właściciela projektu. Harness zbudowany, przetestowany automatycznie (61 nowych testów) i zweryfikowany na żywym renderze przeze mnie (§6) — ale **werdykt PASS/FAIL nie jest mój do wydania** |
+| Bramka czytelności terminatora (§8.1 specu, piętnaście osądów) | **PASS — 15/15** (§7.3) — ale z korektą §7.3.1: kontrola pozytywna okazała się wadliwa, więc werdykt obowiązuje w zawężonym zakresie (§7.3.2). Harness zbudowany, przetestowany automatycznie (61 nowych testów) i zweryfikowany na żywym renderze przeze mnie (§6) — ale **werdykt PASS/FAIL nie jest mój do wydania** |
 
 ---
 
@@ -408,11 +408,56 @@ noc kontra strona oświetlona (§4) — bo to ona niesie D1. Rozróżnienie pó�
 estetyczne i zostaje otwarte dla Fazy 4; policzony kontrast tej pary (Δodcienia 22,4°, WCAG 2,90)
 jest poniżej progu przyjmowanego w interfejsach i **świadomie nie był przedmiotem tej bramki**.
 
-**Czułość przyrządu potwierdzona niezależnie.** Wykonawca Zadania 5 przełączył kontrolę pozytywną
-na żywym renderze i zaobserwował zniknięcie granicy w gradiencie (§6.2), a test 13 dowodzi, że
-kliknięcia w tym trybie nie są zliczane. Przyrząd potrafi więc wydać werdykt „nie", co nadaje
-temu „tak" znaczenie — w projekcie, w którym narzędzia pomiarowe pięciokrotnie zwróciły fałszywe
-odczyty, nie jest to formalność.
+### 7.3.1 KOREKTA — kontrola pozytywna NIE JEST kontrolą
+
+Właściciel projektu, przełączywszy kontrolę pozytywną, ocenił że **15/15 byłoby osiągalne także
+w trybie gładkim**. Zmierzone i potwierdzone — ocena jest trafna, a przyrząd wadliwy.
+
+Odległości barw między sąsiadami przez terminator, seed 33, `sunDirection(0, 180)`:
+
+| para | światło jaśniejszej | progowane | gładkie |
+|---|---|---|---|
+| (12, 468) | 0,074 | 0,90 | **0,11** |
+| (96, 97) | 0,103 | 0,90 | **0,15** |
+| (107, 108) | 0,053 | 0,90 | **0,08** |
+
+W trybie gładkim różnica jest mniejsza, ale **niezerowa i konsekwentna w tym samym kierunku** —
+komórka oświetlona jest zawsze jaśniejsza. Przy wymuszonym wyborze dwóch alternatyw wystarczy
+wskazać jaśniejszą, więc komplet trafień jest osiągalny.
+
+**Przyczyna jest architektoniczna i została przeoczona przy pisaniu planu.**
+`writeCellColorsSmooth` zmienia **mapowanie palety**, a nie **interpolację**: nadal maluje każdą
+komórkę jednym kolorem, bo geometria z Zadania 2 daje każdej własne wierzchołki. Tryb awarii
+zmierzony w Fazie 0 był inny — tam kolor był interpolowany **po powierzchni**, między
+wierzchołkami współdzielonymi, więc granica się **rozmazywała**. Tej awarii nasza architektura
+nie potrafi odtworzyć z konstrukcji.
+
+**Co z tego wynika dla projektu, i jest to ważniejsze niż sama wada bramki:**
+
+**Czytelność dowozi geometria z Zadania 2, nie progowanie z Zadania 3.** Płaskie cieniowanie
+per komórka czyni granicę WIDZIALNĄ; progowanie podbija kontrast z ~0,1 do 0,90, czyli czyni ją
+WYGODNĄ. To są dwie różne zasługi i dotąd przypisywaliśmy obie progowaniu. Decyzja
+o niewspółdzielonych wierzchołkach jest więc jeszcze bardziej nośna, niż sądziliśmy — i nic
+jej nie bada wizualnie.
+
+**Drugie ustalenie, niezamówione:** para (11, 168) daje w trybie **progowanym odległość 0,0000**,
+bo światło 0,0458 nie przekracza pierwszego progu 0,05 i obie komórki lądują w tym samym paśmie.
+Osiem komórek na 1442 wpada w tę szczelinę. Czyli **progowanie potrafi ukryć granicę, której
+gładkie cieniowanie by nie ukryło** — argument za niskim pierwszym progiem, nie przeciw niemu.
+
+### 7.3.2 Zakres, w jakim werdykt PASS nadal obowiązuje
+
+Obowiązuje: **terminator jest w tym renderze czytelny jako granica** — piętnaście wymuszonych
+wyborów bez pomyłki, bez nakładki i bez najeżdżania kursorem. To jest prawdziwa obserwacja
+o działającym produkcie i nie zmienia jej wada kontroli.
+
+**NIE obowiązuje** wcześniejsze zdanie, że „przyrząd potrafi wydać werdykt nie". Nie potrafi
+— jego kontrola zmienia paletę, nie interpolację. Zdanie zostało usunięte jako fałszywe.
+
+**Do domknięcia w Fazie 2B:** kontrola pozytywna odtwarzająca RZECZYWISTY tryb awarii Fazy 0 —
+kolor interpolowany po powierzchni, czyli geometria ze współdzielonymi wierzchołkami albo kolor
+liczony per wierzchołek z pozycji, nie per komórka. Dopiero taka kontrola pozwoli powtórzyć tę
+bramkę jako rozstrzygającą.
 
 ### 7.4 Jeśli werdykt jest inny niż PASS — co zapisać
 
