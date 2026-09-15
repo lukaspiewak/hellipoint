@@ -7,12 +7,27 @@ export type Command =
 
 export type BuildCheck = { ok: true } | { ok: false; reason: string };
 
+/**
+ * Czy `cellId` jest PRAWDZIWYM indeksem komórki, a nie tylko czymś, co tablica przyjmie.
+ *
+ * `cells[cellId] === undefined` NIE wystarczało i to jest zmierzone: JavaScript zamienia
+ * indeks tablicy na string, więc `cells["1"]` to `cells[1]` — istnieje. `{"kind":"BUILD",
+ * "cellId":"1"}` prosto z JSON-a budowało się poprawnie i zapisywało `Building.cellId`
+ * jako STRING `"1"`. `stateHash` tego nie widział (hashuje indeks tablicy, nie pole —
+ * patrz hash.ts), więc defekt nie miał jak się ujawnić: dziś nic w kodzie produkcyjnym
+ * nie czyta `Building.cellId`, ale pole istnieje, jest publiczne i pierwszy konsument
+ * (renderer Fazy 2, netcode Fazy 5) dostałby string tam, gdzie typ obiecuje `number`.
+ */
+const isCellId = (s: SimState, cellId: number): boolean =>
+  Number.isInteger(cellId) && cellId >= 0 && cellId < s.planet.cells.length;
+
 export function canBuild(s: SimState, cellId: number, type: BuildingType): BuildCheck {
+  if (!isCellId(s, cellId)) return { ok: false, reason: 'NO_SUCH_CELL' };
   const cell = s.planet.cells[cellId];
-  if (cell === undefined) return { ok: false, reason: 'NO_SUCH_CELL' };
   if (s.buildings[cellId] !== null) return { ok: false, reason: 'CELL_OCCUPIED' };
 
-  // `type` jest hartowany TAK SAMO jak `cellId` wyżej, i z tego samego powodu: komendy
+  // `type` jest hartowany TAK SAMO jak `cellId` (patrz `isCellId` wyżej), i z tego samego
+  // powodu: komendy
   // przychodzą z zewnątrz (w Fazie 5 — z sieci), więc sygnatura TypeScriptu nie jest
   // żadną gwarancją w runtime. Bez tej klauzuli `{kind:'BUILD', type:'DEATH_STAR'}`
   // dawało `BUILDINGS[type] === undefined` i `TypeError: Cannot read properties of
@@ -61,11 +76,11 @@ export function canBuild(s: SimState, cellId: number, type: BuildingType): Build
  * Komendy przychodzą z zewnątrz (a w Fazie 5 — z sieci), więc niedozwolona komenda
  * jest po cichu ignorowana, nigdy nie przerywa symulacji.
  *
- * Obietnica dotyczy KAŻDEGO pola komendy, nie tylko `cellId`: nieznany `kind` wypada
- * ze `switch`, nieznany `type` odcina `Object.hasOwn` w `canBuild`, a `cellId` poza
- * zakresem — `cells[cellId] === undefined` / `b == null`. Przed przeglądem gałęzi
- * `type` był jedynym nieobsłużonym: `{kind:'BUILD', type:'DEATH_STAR'}` przerywał tick
- * `TypeError`-em.
+ * Obietnica dotyczy KAŻDEGO pola komendy: nieznany `kind` wypada ze `switch`, nieznany
+ * `type` odcina `Object.hasOwn` w `canBuild`, a `cellId` — `isCellId` (całkowity, w zakresie
+ * komórek planety) w obu gałęziach. Przegląd gałęzi domknął dwa ostatnie: `type` przerywał
+ * tick `TypeError`-em, a `cellId` jako string `"1"` przechodził przez koercję indeksu
+ * tablicy i lądował w `Building.cellId` jako string.
  */
 export function applyCommand(s: SimState, cmd: Command): void {
   switch (cmd.kind) {
@@ -77,10 +92,13 @@ export function applyCommand(s: SimState, cmd: Command): void {
       return;
     }
     case 'DEMOLISH': {
+      // Ta sama straż indeksu, co w `canBuild` — inaczej `"1"` z JSON-a burzyłoby przez
+      // koercję tablicy budynek pod indeksem 1, mimo że pole obiecuje `number`.
+      if (!isCellId(s, cmd.cellId)) return;
       const b = s.buildings[cmd.cellId];
-      // `== null`, nie `===`: cellId poza zakresem (ujemny, za duży, NaN) daje
-      // `undefined` z gęstej tablicy, nie `null` — komendy przychodzą z zewnątrz,
-      // więc obie wartości muszą być traktowane jak "nic tu nie ma do zburzenia".
+      // `== null`, nie `===`: komendy przychodzą z zewnątrz, a gęsta tablica może oddać
+      // `undefined` tam, gdzie typ obiecuje `null` — obie wartości znaczą "nic tu nie ma
+      // do zburzenia".
       if (b == null || b.type === 'CORE') return;
       s.ore += Math.floor(BUILDINGS[b.type].costOre / 2); // [STROJENIE] zwrot 50 %
       s.buildings[cmd.cellId] = null;

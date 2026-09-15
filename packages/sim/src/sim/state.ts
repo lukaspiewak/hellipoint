@@ -163,6 +163,15 @@ export interface SimState {
   waveRng: RngState;
 }
 
+/**
+ * Stan startowy strumienia fal dla tej planety. Wyprowadzenie w JEDNYM miejscu, bo ma
+ * DWÓCH konsumentów: `createState` nim inicjuje `waveRng`, a konstruktor `Sim` porównuje
+ * z jego `seed` migawkę, żeby wykryć migawkę z INNEJ planety (`Rng.fork` zależy wyłącznie
+ * od seeda, więc ten `seed` jest niezmienną funkcją `planet.seed` — darmowy odcisk palca).
+ */
+export const waveRngStateFor = (planet: Planet): RngState =>
+  new Rng(planet.seed).fork(STREAM.WAVES).getState();
+
 export function createState(planet: Planet, startingOre: number): SimState {
   return {
     tick: 0,
@@ -188,6 +197,6 @@ export function createState(planet: Planet, startingOre: number): SimState {
     // w `Sim`: stan ma być kompletny sam z siebie (pomocniki testowe Fazy 1B budują go
     // bez `Sim`), a `Sim` ma go tylko WCZYTYWAĆ — inaczej zostają dwa źródła prawdy
     // o tym, gdzie jest generator, i rozjeżdżają się przy wznowieniu.
-    waveRng: new Rng(planet.seed).fork(STREAM.WAVES).getState(),
+    waveRng: waveRngStateFor(planet),
   };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createPlanet } from '../src/world/planet.js';
 import { createState, type SimState } from '../src/sim/state.js';
-import { applyCommand, canBuild } from '../src/sim/commands.js';
+import { applyCommand, canBuild, type Command } from '../src/sim/commands.js';
 import { BUILDINGS } from '../src/sim/defs.js';
 import { Sim } from '../src/sim/loop.js';
 import { DEFAULT_RUN } from '../src/sim/rules.js';
@@ -248,5 +248,53 @@ describe('hartowanie komend spoza TypeScriptu (obietnica „nigdy nie przerywa s
     expect(sim.state.buildings[plainHex]).toMatchObject({ type: 'PYLON' });
     expect(sim.state.phase).toBe('RUNNING');
     expect(sim.state.tick).toBe(1);
+  });
+});
+
+/**
+ * RUNDA ZAMYKAJĄCA, #2. `cells[cellId] === undefined` NIE hartowało `cellId`, mimo że
+ * komentarz dodany w tej właśnie fali tak twierdził: JavaScript zamienia indeks tablicy
+ * na string, więc `cells["1"]` to `cells[1]` — istnieje. Zmierzone: komenda prosto
+ * z JSON-a, `{"kind":"BUILD","cellId":"1","type":"BARRICADE"}`, budowała się poprawnie
+ * i zapisywała `Building.cellId` jako STRING `"1"`. `stateHash` tego nie widział, bo
+ * haszuje INDEKS tablicy, nie pole (patrz hash.ts) — więc defekt nie miał jak się ujawnić
+ * ani w round-tripie, ani w determinizmie.
+ */
+describe('cellId komendy jest prawdziwym indeksem komórki, nie czymkolwiek, co tablica przyjmie', () => {
+  it('BUILD ze stringowym cellId jest odrzucony — nie zapisuje stringa do Building.cellId', () => {
+    const s = createState(planet, 100000);
+    expect(canBuild(s, '1' as never, 'BARRICADE')).toEqual({ ok: false, reason: 'NO_SUCH_CELL' });
+
+    applyCommand(s, JSON.parse('{"kind":"BUILD","cellId":"1","type":"BARRICADE"}') as Command);
+    expect(s.buildings[1]).toBeNull();
+    expect(s.ore).toBe(100000);
+  });
+
+  it('DEMOLISH ze stringowym cellId nie burzy budynku przez koercję indeksu', () => {
+    const s = createState(planet, 100000);
+    applyCommand(s, { kind: 'BUILD', cellId: 1, type: 'BARRICADE' });
+    expect(s.buildings[1]).not.toBeNull();
+
+    applyCommand(s, JSON.parse('{"kind":"DEMOLISH","cellId":"1"}') as Command);
+    expect(s.buildings[1]).toMatchObject({ type: 'BARRICADE' });
+  });
+
+  it('odrzuca też ułamki, wartości spoza zakresu i NaN — w obu gałęziach', () => {
+    const s = createState(planet, 100000);
+    for (const zly of [1.5, -1, planet.cells.length, NaN, Infinity, null, undefined, {}]) {
+      expect(canBuild(s, zly as never, 'BARRICADE'), String(zly)).toEqual({
+        ok: false,
+        reason: 'NO_SUCH_CELL',
+      });
+      expect(() => applyCommand(s, { kind: 'DEMOLISH', cellId: zly as never }), String(zly)).not.toThrow();
+    }
+    expect(s.buildings.every((b) => b === null)).toBe(true);
+  });
+
+  it('cellId zapisany w Building jest liczbą równą indeksowi tablicy', () => {
+    const s = createState(planet, 100000);
+    applyCommand(s, { kind: 'BUILD', cellId: plainHex, type: 'BARRICADE' });
+    expect(typeof s.buildings[plainHex]?.cellId).toBe('number');
+    expect(s.buildings[plainHex]?.cellId).toBe(plainHex);
   });
 });

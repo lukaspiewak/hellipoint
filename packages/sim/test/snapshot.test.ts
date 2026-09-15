@@ -3,7 +3,7 @@ import { createPlanet } from '../src/world/planet.js';
 import { FLOWFIELD_INTERVAL_TICKS, isResumableTick, Sim } from '../src/sim/loop.js';
 import { stateHash } from '../src/sim/hash.js';
 import { DEFAULT_RUN } from '../src/sim/rules.js';
-import type { SimState } from '../src/sim/state.js';
+import { createState, type SimState } from '../src/sim/state.js';
 import type { Command } from '../src/sim/commands.js';
 
 /**
@@ -169,6 +169,125 @@ describe('SimState jako wznawialna migawka', () => {
     const restored = new Sim(createPlanet({ seed: 102 }), DEFAULT_RUN, snapshotThroughJson(sim));
     expect(restored.state.buildings[planet.startCell]).toBeNull();
     expect(restored.state.phase).toBe('DEFEAT');
+    expect(stateHash(restored.state)).toBe(stateHash(sim.state));
+  });
+});
+
+/**
+ * RUNDA ZAMYKAJĄCA, #1 i #4. Konstruktor z migawką powstał w tej samej fali poprawek
+ * i walidował `RunConfig` piętnastoma strażami, a `SimState` — jedną (granica ticku).
+ * Poniżej straże na te tryby awarii, które są CICHE: konstruują się, biegną i dają
+ * fałszywy świat. Uszkodzenia, które wywalają się głośno same z siebie, zostają
+ * niewalidowane świadomie (patrz `assertResumableSnapshot` w loop.ts).
+ */
+describe('straże migawki', () => {
+  const cut = (sim: Sim): SimState => snapshotThroughJson(sim);
+
+  function simAt(seed: number, ticks: number, opts: { frequency?: number; radius?: number } = {}): Sim {
+    const planet = createPlanet({ seed, ...opts });
+    const sim = new Sim(planet, CONFIG);
+    for (let i = 0; i < ticks; i++) sim.step();
+    return sim;
+  }
+
+  /**
+   * Zmierzone przed strażą: migawka z planety o TYM SAMYM rozmiarze, ale innym seedzie,
+   * przechodziła `isResumableTick`, konstruowała się i biegła 400 ticków czysto — a CORE
+   * lądował na komórce 801 przy `startCell` 503, 215 komórek raportowało rudę mimo
+   * `oreCapacity === 0`, i `canBuild(…, 'EXTRACTOR')` zwracał `{ok:true}` na komórce
+   * bez złoża. Mechanizm wykrycia jest darmowy: `waveRng.seed` to niezmienna funkcja
+   * `planet.seed` (5 -> 2027808481, 102 -> 2027808386) i leży w każdej migawce.
+   */
+  it('odrzuca migawkę z INNEJ planety — inny seed', () => {
+    const snap = cut(simAt(SEED, 200));
+    const inna = createPlanet({ seed: 102 });
+    expect(inna.cells.length).toBe(createPlanet({ seed: SEED }).cells.length); // ten sam rozmiar
+
+    expect(() => new Sim(inna, CONFIG, snap)).toThrow(RangeError);
+    expect(() => new Sim(inna, CONFIG, snap)).toThrow(/does not belong to this planet/);
+    expect(() => new Sim(inna, CONFIG, snap)).toThrow(/waveRng\.seed/);
+  });
+
+  it('odcisk palca planety jest niezmienną funkcją seeda — czyli w ogóle nadaje się na straż', () => {
+    const odcisk = (seed: number) => createState(createPlanet({ seed }), 0).waveRng.seed;
+    expect(odcisk(5)).toBe(2027808481);
+    expect(odcisk(102)).toBe(2027808386);
+    expect(odcisk(5)).toBe(odcisk(5)); // stabilny
+    expect(new Set([0, 1, 5, 7, 102].map(odcisk)).size).toBe(5); // rozróżnia
+  });
+
+  /**
+   * Sam seed nie łapie planety zbudowanej z tego samego seeda, ale innymi opcjami —
+   * `waveRng` zależy WYŁĄCZNIE od `planet.seed`. Stąd druga połowa straży: długości
+   * tablic indeksowanych komórką. Zmierzone przed nią: inny `radius` przechodził,
+   * a inna liczba komórek umierała surowym `TypeError` w środku `flowfield.js`.
+   */
+  it('odrzuca migawkę z planety o tym samym seedzie, ale innej liczbie komórek', () => {
+    const snap = cut(simAt(SEED, 200));
+    const mniejsza = createPlanet({ seed: SEED, frequency: 8 });
+    expect(mniejsza.cells.length).not.toBe(snap.buildings.length); // przesłanka
+
+    expect(() => new Sim(mniejsza, CONFIG, snap)).toThrow(/buildings\.length/);
+    expect(() => new Sim(mniejsza, CONFIG, snap)).toThrow(RangeError);
+  });
+
+  it('odrzuca migawkę ze skróconą tablicą indeksowaną komórką', () => {
+    const planet = createPlanet({ seed: SEED });
+    for (const pole of ['buildings', 'oreRemaining'] as const) {
+      const snap = cut(simAt(SEED, 200));
+      snap[pole].length = 10;
+      expect(() => new Sim(planet, CONFIG, snap), pole).toThrow(new RegExp(`${pole}\\.length=10`));
+    }
+  });
+
+  /**
+   * NAJGORSZY ze zmierzonych trybów cichych: `phase = 42` konstruowało się, przyjmowało
+   * `step()` i NIGDY nie symulowało — 20 kroków, `tick` stał na 200 — bo każda ścieżka
+   * porównuje z `'RUNNING'`. Run „działał", tylko świat był zamrożony.
+   */
+  it('odrzuca migawkę z phase spoza trzech legalnych wartości', () => {
+    const planet = createPlanet({ seed: SEED });
+    for (const zla of [42, 'GOING', '', null, undefined]) {
+      const snap = cut(simAt(SEED, 200));
+      (snap as { phase: unknown }).phase = zla;
+      expect(() => new Sim(planet, CONFIG, snap), String(zla)).toThrow(/invalid phase/);
+    }
+    // Wszystkie TRZY legalne przechodzą — straż odsiewa, nie zatrzaskuje.
+    for (const dobra of ['RUNNING', 'VICTORY', 'DEFEAT'] as const) {
+      const snap = cut(simAt(SEED, 200));
+      snap.phase = dobra;
+      expect(() => new Sim(planet, CONFIG, snap), dobra).not.toThrow();
+    }
+  });
+
+  it('odrzuca tick ujemny, ułamkowy i nie-liczbowy osobnym komunikatem niż granica migawki', () => {
+    const planet = createPlanet({ seed: SEED });
+    for (const zly of [-4, 4.5, '8', NaN]) {
+      const snap = cut(simAt(SEED, 200));
+      (snap as { tick: unknown }).tick = zly;
+      expect(() => new Sim(planet, CONFIG, snap), String(zly)).toThrow(/invalid tick/);
+    }
+    // Tick poprawny, ale poza granicą — INNY komunikat, bo to inna wada.
+    const snap = cut(simAt(SEED, 200));
+    snap.tick = 401;
+    expect(() => new Sim(planet, CONFIG, snap)).toThrow(/cannot be resumed bit-identically/);
+  });
+
+  it('migawka z uszkodzonym waveRng trafia w komunikat straży, nie w surowy TypeError', () => {
+    const planet = createPlanet({ seed: SEED });
+    const snap = cut(simAt(SEED, 200));
+    (snap as { waveRng: unknown }).waveRng = null;
+    expect(() => new Sim(planet, CONFIG, snap)).toThrow(RangeError);
+    expect(() => new Sim(planet, CONFIG, snap)).toThrow(/does not belong to this planet/);
+  });
+
+  /**
+   * Straż nie może być tak ciasna, żeby odrzucała PRAWIDŁOWĄ migawkę — bez tego
+   * wszystkie testy wyżej byłyby spełnione przez `throw` w pierwszej linii.
+   */
+  it('prawidłowa migawka nadal przechodzi wszystkie cztery straże', () => {
+    const sim = simAt(SEED, 200);
+    const restored = new Sim(createPlanet({ seed: SEED }), CONFIG, cut(sim));
     expect(stateHash(restored.state)).toBe(stateHash(sim.state));
   });
 });

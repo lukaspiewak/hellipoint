@@ -17,7 +17,7 @@ import {
 import { updatePower } from './power.js';
 import { currentCycle, updateRules, type RunConfig } from './rules.js';
 import { updateSpawning } from './spawning.js';
-import { createState, TICK_SECONDS, type SimState } from './state.js';
+import { createState, TICK_SECONDS, waveRngStateFor, type SimState } from './state.js';
 
 /** [STROJENIE] Co ile ticków przeliczane są pola przepływu. 4 ticki = 5 Hz (§4.5). */
 export const FLOWFIELD_INTERVAL_TICKS = 4;
@@ -29,6 +29,97 @@ export const FLOWFIELD_INTERVAL_TICKS = 4;
  */
 export const isResumableTick = (tick: number): boolean =>
   Number.isInteger(tick) && tick >= 0 && tick % FLOWFIELD_INTERVAL_TICKS === 0;
+
+/** Trzy legalne wartości `Phase`, w jednym miejscu — patrz straż `phase` niżej. */
+const PHASES: readonly string[] = ['RUNNING', 'VICTORY', 'DEFEAT'];
+
+/**
+ * Straże migawki. MINIMUM, nie walidator schematu — i granica tego minimum jest tu
+ * spisana wprost, żeby następna osoba wiedziała, gdzie kończy się gwarancja.
+ *
+ * SPRAWDZANE (każde zmierzone jako realny, cichy tryb awarii):
+ *
+ *  • TOŻSAMOŚĆ PLANETY. `waveRng.seed` jest niezmienną funkcją `planet.seed`
+ *    (`Rng.fork` zależy wyłącznie od seeda), leży w KAŻDEJ migawce i do niczego innego
+ *    nie służy — więc jest darmowym odciskiem palca planety. Bez tego porównania migawka
+ *    z planety o tym samym rozmiarze, ale innym seedzie, konstruowała się bez słowa
+ *    i biegła 400 ticków czysto (zmierzone: CORE lądował na komórce 801 przy
+ *    `startCell` 503, 215 komórek raportowało rudę mimo `oreCapacity === 0`,
+ *    a `canBuild(…, 'EXTRACTOR')` zwracał `{ok:true}` na komórce bez złoża). Sam `seed`
+ *    nie łapie innego `radius`/`frequency` — stąd druga połowa, długości tablic.
+ *
+ *  • TICK: całkowity i nieujemny, a potem na granicy przeliczania pól przepływu.
+ *    Rozdzielone na dwa komunikaty, bo to dwie różne wady: „−4 nie jest numerem ticka"
+ *    i „401 jest, ale nie da się z niego wznowić co do bitu".
+ *
+ *  • PHASE: jedna z trzech wartości. NAJGORSZY ze zmierzonych trybów cichych —
+ *    `phase = 42` konstruowało się, przyjmowało `step()` i NIGDY nie symulowało
+ *    (20 kroków, `tick` stał na 200), bo każda ścieżka porównuje z `'RUNNING'`.
+ *
+ *  • DŁUGOŚCI TABLIC INDEKSOWANYCH KOMÓRKĄ (`buildings`, `oreRemaining`). Zmierzone:
+ *    skrócone `oreRemaining` przechodziło i biegło dalej; inna liczba komórek planety
+ *    umierała surowym `TypeError` w środku `flowfield.js`.
+ *
+ * NIEsprawdzane, świadomie: typy i zakresy POZOSTAŁYCH pól (`ore`, `storedEnergy`,
+ * `nextUnitId`, `evacCharge`, `evacAlarmRemaining`, `evacUnlockTick`, liczniki zgonów),
+ * zawartość `units`/`buildings`/`pentagons` element po elemencie oraz długość
+ * `pentagons`. Zmierzone przykłady, które PRZEJDĄ: `ore = "100"`, `ore = null`,
+ * `nextUnitId = -1`, `killsBySun = "x"`. Powód: pełny walidator schematu `SimState`
+ * to osobna decyzja projektowa Fazy 5 (razem z formatem zapisu i wersjonowaniem), a nie
+ * coś, co ma powstać przy okazji. Tutaj odcinane jest wyłącznie CICHE zło — stany, które
+ * biegną dalej i dają fałszywy świat; uszkodzenia typu `units = null` czy `pentagons = []`
+ * wywalają się GŁOŚNO same z siebie i mogą tak zostać.
+ */
+function assertResumableSnapshot(planet: Planet, snapshot: SimState): void {
+  const expectedSeed = waveRngStateFor(planet).seed;
+  // `?.` celowo: `waveRng = null` z uszkodzonego JSON-a daje `undefined`, które nie jest
+  // równe liczbie — czyli trafia w TEN komunikat, a nie w surowy TypeError niżej.
+  if (snapshot.waveRng?.seed !== expectedSeed) {
+    throw new RangeError(
+      `SimState snapshot does not belong to this planet: snapshot.waveRng.seed=${snapshot.waveRng?.seed} ` +
+        `but planet seed=${planet.seed} derives ${expectedSeed}. Restore the snapshot into the planet ` +
+        'it was taken from (createPlanet is deterministic — rebuild it from the same seed and options).',
+    );
+  }
+  for (const [name, actual] of [
+    ['buildings', snapshot.buildings?.length],
+    ['oreRemaining', snapshot.oreRemaining?.length],
+  ] as const) {
+    if (actual !== planet.cells.length) {
+      throw new RangeError(
+        `SimState snapshot does not belong to this planet: snapshot.${name}.length=${actual} ` +
+          `but the planet has ${planet.cells.length} cells.`,
+      );
+    }
+  }
+  if (!Number.isInteger(snapshot.tick) || snapshot.tick < 0) {
+    throw new RangeError(
+      `SimState snapshot has an invalid tick: ${snapshot.tick} — must be a non-negative integer.`,
+    );
+  }
+  if (!PHASES.includes(snapshot.phase)) {
+    throw new RangeError(
+      `SimState snapshot has an invalid phase: ${JSON.stringify(snapshot.phase)} — must be one of ` +
+        `${PHASES.join('/')}. Any other value makes every 'RUNNING' comparison false, so the run ` +
+        'would construct, accept step() and silently never simulate.',
+    );
+  }
+  // Granica przeliczania pól przepływu. Pola są czystą funkcją `buildings`, ale NIE leżą
+  // w `SimState` (niosą `Infinity` — patrz niezmiennik serializowalności w state.ts), więc
+  // `Sim` wznowiony w ticku T odbudowuje je z `buildings@T`, podczas gdy oryginał używał
+  // w tym ticku pola zbudowanego w ticku 4⌊T/4⌋. Zmierzone: wznowienie poza granicą
+  // rozjeżdża hash po 1 ticku (15 z 241 przemiecionych ticków zapisu; te, w których
+  // zabudowa zmieniła się w oknie), a NA granicy jest identyczne co do bitu przez
+  // 400+ ticków. Odrzucane GŁOŚNO tutaj, zamiast cicho rozjeżdżać się później.
+  if (!isResumableTick(snapshot.tick)) {
+    throw new RangeError(
+      `SimState snapshot at tick ${snapshot.tick} cannot be resumed bit-identically: flow fields ` +
+        `are rebuilt every ${FLOWFIELD_INTERVAL_TICKS} ticks and that cache is NOT part of SimState, ` +
+        `so a snapshot taken off the boundary resumes with a differently-phased cache. Take the ` +
+        `snapshot at a tick where tick % ${FLOWFIELD_INTERVAL_TICKS} === 0 (see isResumableTick).`,
+    );
+  }
+}
 
 export class Sim {
   readonly config: RunConfig;
@@ -42,6 +133,21 @@ export class Sim {
    * `snapshot` — wznowienie z zapisanego `SimState` (Faza 5: wczytanie gry,
    * resynchronizacja klienta). Podany stan jest PRZEJMOWANY (płytka kopia z podmienioną
    * `planet`, bo planetę odtwarza się z seeda, nie z zapisu), nie kopiowany głęboko.
+   * Co migawka musi spełniać — patrz `assertResumableSnapshot` wyżej.
+   *
+   * ŚWIADOMIE NIENAPRAWIONE, do rozstrzygnięcia w Fazie 5: **komenda zakolejkowana przed
+   * zrobieniem migawki GINIE.** `pending` nie jest częścią `SimState`, a wznowiony `Sim`
+   * startuje z pustą kolejką. Zmierzone: BUILD barykady zakolejkowany na ticku 200, zapis,
+   * wznowienie, po jednym kroku oryginał ma `buildings[800] = BARRICADE`, a wznowiony
+   * `null`.
+   *
+   * To NIE jest błąd do załatania tutaj, tylko decyzja o tym, CZYM JEST MIGAWKA: samym
+   * stanem świata, czy stanem plus kolejką wejść jeszcze niezastosowanych. Netcode Fazy 5
+   * rozstrzygnie to razem z formatem zapisu — i może wyjść, że to `pending` ma zniknąć
+   * (komendy jako osobny, potwierdzany strumień), a nie trafić do `SimState`. Nie
+   * „naprawiaj" tego przypadkiem, dopisując `pending` do stanu, zanim ta decyzja zapadnie:
+   * `Command[]` w `SimState` musiałby przejść round-trip JSON i hash, czyli sam stałby
+   * się częścią kontraktu determinizmu.
    */
   constructor(planet: Planet, config: RunConfig, snapshot?: SimState) {
     // `!(x > 0)` NIE łapie Infinity (Infinity > 0 jest prawdziwe) — stąd Number.isFinite.
@@ -181,22 +287,7 @@ export class Sim {
     }
 
     this.config = config;
-    // Migawka MUSI trafić w granicę przeliczania pól przepływu. Pola są czystą funkcją
-    // `buildings`, ale NIE leżą w `SimState` (niosą `Infinity` — patrz niezmiennik
-    // serializowalności w state.ts), więc `Sim` wznowiony w ticku T odbudowuje je
-    // z `buildings@T`, podczas gdy oryginał używał w tym ticku pola zbudowanego
-    // w ticku 4⌊T/4⌋. Zmierzone: wznowienie poza granicą rozjeżdża hash po 1 ticku
-    // (15 z 241 przemiecionych ticków zapisu; te, w których zabudowa zmieniła się
-    // w oknie), a NA granicy jest identyczne co do bitu przez 400+ ticków.
-    // Odrzucane GŁOŚNO tutaj, zamiast cicho rozjeżdżać się później.
-    if (snapshot !== undefined && !isResumableTick(snapshot.tick)) {
-      throw new RangeError(
-        `SimState snapshot at tick ${snapshot.tick} cannot be resumed bit-identically: flow fields ` +
-          `are rebuilt every ${FLOWFIELD_INTERVAL_TICKS} ticks and that cache is NOT part of SimState, ` +
-          `so a snapshot taken off the boundary resumes with a differently-phased cache. Take the ` +
-          `snapshot at a tick where tick % ${FLOWFIELD_INTERVAL_TICKS} === 0 (see isResumableTick).`,
-      );
-    }
+    if (snapshot !== undefined) assertResumableSnapshot(planet, snapshot);
     // Płytka kopia z podmienioną planetą: planetę odtwarza się z seeda (`createPlanet`
     // jest deterministyczne), nie z zapisu — po round-tripie JSON byłaby i tak zwykłym
     // obiektem danych, a tak `Sim` i wołający patrzą na TĘ SAMĄ instancję.

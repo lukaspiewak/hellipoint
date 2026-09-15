@@ -105,6 +105,45 @@ describe('Rng', () => {
 
     expect(restored.fork(STREAM.WAVES).nextUint32()).toBe(original.fork(STREAM.WAVES).nextUint32());
   });
+
+  /**
+   * RUNDA ZAMYKAJĄCA, #3. Konstruktor `Rng` ma straż na stan złożony z samych zer
+   * (`if (… === 0) this.s[0] = 1`) — `fromState` jej NIE miał, a to właśnie przez
+   * `fromState` wchodzi teraz stan z migawki, czyli z JSON-a, czyli spoza naszej kontroli.
+   * Zmierzone: `Rng.fromState({seed:1, s:[0,0,0,0]})` produkowało `0,0,0,0,0` — xoshiro
+   * jest w stanie zerowym punktem stałym i emituje zera NA ZAWSZE. W symulacji znaczyłoby
+   * to „`pickType` zawsze bierze pierwszy typ z puli", czyli fale bez ARMOR-ów
+   * i DISRUPTOR-ów, bez jednego błędu po drodze.
+   */
+  it('fromState odrzuca stan złożony z samych zer — xoshiro emitowałby wtedy zera na zawsze', () => {
+    expect(() => Rng.fromState({ seed: 1, s: [0, 0, 0, 0] })).toThrow(RangeError);
+    expect(() => Rng.fromState({ seed: 1, s: [0, 0, 0, 0] })).toThrow(/zero/);
+    // Przesłanka: sam KONSTRUKTOR nie da się namówić na stan zerowy dla żadnego seeda —
+    // czyli zerowa migawka NIE MOŻE pochodzić z prawidłowego zapisu, jest uszkodzeniem.
+    for (const seed of [0, 1, -1, 12345, 2 ** 31]) {
+      const w = new Rng(seed).getState().s;
+      expect((w[0] | w[1] | w[2] | w[3]) === 0, `seed ${seed}`).toBe(false);
+    }
+    // Jedno niezerowe słowo wystarczy — straż jest o STANIE, nie o poszczególnych słowach.
+    expect(() => Rng.fromState({ seed: 1, s: [0, 0, 0, 7] })).not.toThrow();
+  });
+
+  it('fromState odrzuca migawkę bez czterech całkowitych słów, zamiast po cichu przyciąć', () => {
+    // Bez tej połowy „wszystkie zera" nie ma sensu jako pytanie: `undefined | undefined`
+    // to 0, a `Uint32Array.set` i tak po cichu przycina ułamki i `undefined` do zera —
+    // czyli śmieci zamieniałyby się w prawidłowo wyglądający generator.
+    const zle = [
+      { seed: 1, s: [1, 2, 3] },
+      { seed: 1, s: [1, 2, 3, 4, 5] },
+      { seed: 1, s: [1, 2, 3, 1.5] },
+      { seed: 1, s: null },
+      { seed: 1, s: '1,2,3,4' },
+      {},
+    ];
+    for (const stan of zle) {
+      expect(() => Rng.fromState(stan as never), JSON.stringify(stan)).toThrow(RangeError);
+    }
+  });
 });
 
 describe('vec3', () => {
