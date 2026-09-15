@@ -80,7 +80,7 @@ export type Palette = readonly Rgb[];
  * kosztuje to dokładnie tyle samo co dobór trzech odcieni szarości).
  */
 export const DEFAULT_PALETTE: Palette = [
-  [0.03, 0.05, 0.12], // noc — ciemny, chłodny granat (nie czysta czerń, żeby nie zlewał się z tłem canvasu, patrz CLEAR_COLOR w index.ts)
+  [0.03, 0.05, 0.12], // noc — ciemny, chłodny granat (nie czysta czerń, żeby nie zlewał się z tłem canvasu, patrz CLEAR_COLOR w scene.ts)
   [0.85, 0.42, 0.16], // terminator — ciepły pomarańcz świtu/zmierzchu, punkt zaczepienia dla oka
   [0.98, 0.92, 0.74], // dzień — ciepła biel/żółć
 ]; // [WYGLĄD]
