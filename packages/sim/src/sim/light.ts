@@ -68,8 +68,38 @@ export function lightAt(normal: Vec3, sunDir: Vec3): number {
  */
 export function lightField(planet: Planet, sunDir: Vec3): Float32Array {
   const out = new Float32Array(planet.cells.length);
-  for (let i = 0; i < planet.cells.length; i++) {
+  lightFieldInto(planet, sunDir, out);
+  return out;
+}
+
+/**
+ * Jak `lightField`, ale pisze do BUFORA WŁASNOŚCI WYWOŁUJĄCEGO — bez alokacji. Ten sam
+ * wzorzec co `updatePower` w `power.ts` i `writeCellColors` w `@heliopolis/render`:
+ * bufor zaalokowany RAZ, wypełniany wielokrotnie.
+ *
+ * Powód istnienia: pętla renderu (`apps/client/src/main.ts`) potrzebuje oświetlenia w
+ * KAŻDEJ klatce. `lightField` alokuje tam `Float32Array(1442)` = 5768 B na klatkę, czyli
+ * ok. 346 kB/s przy 60 Hz — wewnątrz tej samej pętli, której czas raportuje licznik
+ * klatek. Zmierzone (`light.test.ts`): 2000 wywołań `lightField` daje cykle odśmiecania,
+ * 2000 wywołań `lightFieldInto` — dokładnie zero.
+ *
+ * `lightField` deleguje TUTAJ, a nie odwrotnie: dwie niezależne pętle mogłyby się z czasem
+ * rozjechać i dać RÓŻNE liczby dla tego samego wejścia — a to jest pole, po którym
+ * symulacja decyduje o spawnie, paleniu i produkcji energii.
+ *
+ * @throws {RangeError} gdy `out.length !== planet.cells.length`. Bez tej straży krótszy
+ *   bufor zostawiłby część komórek w świetle z POPRZEDNIEJ klatki (zapis poza koniec
+ *   `Float32Array` gubi się po cichu, bez wyjątku) — awaria widoczna jako komórka
+ *   zamrożona w dawnym świetle, nie jako błąd przy starcie.
+ */
+export function lightFieldInto(planet: Planet, sunDir: Vec3, out: Float32Array): void {
+  const cellCount = planet.cells.length;
+  if (out.length !== cellCount) {
+    throw new RangeError(
+      `lightFieldInto: out.length (${out.length}) must equal planet.cells.length (${cellCount})`,
+    );
+  }
+  for (let i = 0; i < cellCount; i++) {
     out[i] = lightAt(planet.cells[i].normal, sunDir);
   }
-  return out;
 }

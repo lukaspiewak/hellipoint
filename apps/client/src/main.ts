@@ -1,5 +1,5 @@
 import { createRollingWindow, createScene, median, percentile, RENDER_VERSION } from '@heliopolis/render';
-import { createPlanet, DEFAULT_RUN, lightField, sunDirection } from '@heliopolis/sim';
+import { createPlanet, DEFAULT_RUN, lightFieldInto, sunDirection } from '@heliopolis/sim';
 
 console.log(`Heliopolis render ${RENDER_VERSION}`);
 
@@ -46,12 +46,23 @@ document.body.appendChild(hud);
 // ma — wchodzi w Fazie 2C razem z `Sim.enqueue`, patrz `global-constraints.md`) i przelicza
 // `sunDirection`/`lightField` co klatkę na jego podstawie.
 const startTime = performance.now();
+
+// Bufor oświetlenia zaalokowany RAZ, poza pętlą — nie co klatkę. `lightField` zwraca
+// świeżą `Float32Array(1442)` (5768 B) przy każdym wywołaniu, czyli ok. 346 kB/s przy
+// 60 Hz, rzucane pod nogi odśmiecaczowi WEWNĄTRZ tej samej pętli, której czas raportuje
+// licznik klatek wyżej. To ta sama dyscyplina, którą reszta tej gałęzi stosuje wszędzie
+// indziej — `writeCellColors` (`shading.ts`), bufor `colors` (`planetMesh.ts`), okno
+// kroczące (`frameStats.ts`) — i nie było powodu, żeby akurat tu jej nie stosować.
+// Zmierzone w `packages/sim/test/light.test.ts`: 2000 wywołań `lightFieldInto` daje zero
+// cykli odśmiecania, 2000 wywołań `lightField` — kilka.
+const light = new Float32Array(planet.cells.length);
+
 function tick(): void {
   const frameStart = performance.now();
 
   const elapsedSeconds = (frameStart - startTime) / 1000;
   const sunDir = sunDirection(elapsedSeconds, DEFAULT_RUN.rotationPeriod);
-  const light = lightField(planet, sunDir);
+  lightFieldInto(planet, sunDir, light);
   scene.render(light, sunDir);
 
   const frameMs = performance.now() - frameStart;

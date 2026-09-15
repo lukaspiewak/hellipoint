@@ -8,6 +8,8 @@ import {
   focusPosition,
   MAX_DISTANCE_FACTOR,
   MIN_DISTANCE_FACTOR,
+  ORBIT_ROTATE_SPEED,
+  ORBIT_ZOOM_SPEED,
 } from '../src/camera.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
 
@@ -230,5 +232,77 @@ describe('createCamera / OrbitCamera.focusOn — to samo spięte z prawdziwym Or
 
     expect(disposeSpy).toHaveBeenCalledTimes(1);
     disposeSpy.mockRestore();
+  });
+
+  // Czułość sterowania była jedynym parametrem odczucia z kamery bez stałej i bez taga
+  // [WYGLĄD] — wynikała milcząco z domyślnych Three.js. Dwie rzeczy warte sprawdzenia, i
+  // każda łapie inną regresję.
+  it('createCamera USTAWIA czułość obrotu i zoomu z naszych stałych [WYGLĄD]', () => {
+    // UWAGA na pułapkę, w którą sam wpadłem pisząc ten test i zmierzyłem to: oczywista
+    // wersja — złap instancję `OrbitControls` i sprawdź `controls.rotateSpeed ===
+    // ORBIT_ROTATE_SPEED` — jest TAUTOLOGIĄ. Nasze stałe są równe domyślnym biblioteki, więc
+    // pole ma tę wartość NIEZALEŻNIE od tego, czy `createCamera` cokolwiek przypisuje.
+    // Zmierzone: po usunięciu obu przypisań ze źródła tamta wersja zostawiała 22/22 zielone.
+    //
+    // Ten wariant sprawdza SAM FAKT PRZYPISANIA, nie wartość końcową: akcesor podstawiony na
+    // prototypie przechwytuje każdy zapis (konstruktor `OrbitControls` robi
+    // `this.rotateSpeed = 1.0`, czyli zwykłe przypisanie, więc trafia w setter z prototypu
+    // zamiast tworzyć własne pole). Konstruktor daje pierwszy zapis, `createCamera` musi dać
+    // drugi.
+    const proto = OrbitControls.prototype as unknown as Record<string, unknown>;
+    const writes: Record<'rotateSpeed' | 'zoomSpeed', number[]> = { rotateSpeed: [], zoomSpeed: [] };
+    const original = {
+      rotateSpeed: Object.getOwnPropertyDescriptor(proto, 'rotateSpeed'),
+      zoomSpeed: Object.getOwnPropertyDescriptor(proto, 'zoomSpeed'),
+    };
+    for (const key of ['rotateSpeed', 'zoomSpeed'] as const) {
+      const slot = `__test_${key}`;
+      Object.defineProperty(proto, key, {
+        configurable: true,
+        get(this: Record<string, unknown>): unknown {
+          return this[slot];
+        },
+        set(this: Record<string, unknown>, value: number): void {
+          this[slot] = value;
+          writes[key].push(value);
+        },
+      });
+    }
+
+    let camera: ReturnType<typeof createCamera> | null = null;
+    try {
+      camera = createCamera(createFakeCanvas(), radius);
+    } finally {
+      for (const key of ['rotateSpeed', 'zoomSpeed'] as const) {
+        delete proto[key];
+        if (original[key]) Object.defineProperty(proto, key, original[key]);
+      }
+    }
+
+    // Kontrola pozytywna na sam przyrząd: akcesor NAPRAWDĘ przechwycił zapis konstruktora —
+    // bez tego "dwa zapisy" nie dałoby się odróżnić od "przyrząd nic nie widzi".
+    expect(writes.rotateSpeed.length).toBeGreaterThan(0);
+    expect(writes.zoomSpeed.length).toBeGreaterThan(0);
+    // Dwa zapisy: konstruktor biblioteki + nasze jawne przypisanie.
+    expect(writes.rotateSpeed.length).toBeGreaterThanOrEqual(2);
+    expect(writes.zoomSpeed.length).toBeGreaterThanOrEqual(2);
+    expect(writes.rotateSpeed[writes.rotateSpeed.length - 1]).toBe(ORBIT_ROTATE_SPEED);
+    expect(writes.zoomSpeed[writes.zoomSpeed.length - 1]).toBe(ORBIT_ZOOM_SPEED);
+    camera?.dispose();
+  });
+
+  it('nasze stałe czułości są DOKŁADNIE dzisiejszymi domyślnymi Three.js — zmiana w bibliotece ma być widoczna, nie cicha', () => {
+    // Cały zamiar wpisania tych stałych to „niczego dziś nie zmieniamy, ale wartość jest
+    // nasza i jawna". Ten test pilnuje obu połówek naraz: gdyby ktoś zmienił nasze stałe,
+    // oblewa (i słusznie — to zmiana odczucia sterowania, ma być świadoma); gdyby
+    // aktualizacja Three.js zmieniła domyślne, też oblewa — i wtedy jest to decyzja do
+    // podjęcia (iść za biblioteką czy zostać przy swoim), nie cicha zmiana pod ręką gracza.
+    const defaults = new OrbitControls(
+      createCamera(createFakeCanvas(), radius).object,
+      createFakeCanvas(),
+    );
+    expect(ORBIT_ROTATE_SPEED).toBe(defaults.rotateSpeed);
+    expect(ORBIT_ZOOM_SPEED).toBe(defaults.zoomSpeed);
+    defaults.dispose();
   });
 });

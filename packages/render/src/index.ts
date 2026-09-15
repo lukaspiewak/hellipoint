@@ -28,6 +28,8 @@ export {
   INITIAL_DISTANCE_FACTOR,
   MAX_DISTANCE_FACTOR,
   MIN_DISTANCE_FACTOR,
+  ORBIT_ROTATE_SPEED,
+  ORBIT_ZOOM_SPEED,
   type OrbitCamera,
 } from './camera.js';
 export { createPlanetMesh, type PlanetMesh } from './planetMesh.js';

@@ -53,6 +53,21 @@ export const INITIAL_DISTANCE_FACTOR = 3; // [WYGLĄD]
 /** Bezwładność swobodnej orbity (K1) — `OrbitControls.dampingFactor`. [WYGLĄD] */
 export const DAMPING_FACTOR = 0.08; // [WYGLĄD]
 
+/**
+ * Czułość sterowania kamerą K1 — `[WYGLĄD]`, tak samo jak bezwładność wyżej.
+ *
+ * Obie wartości są DOKŁADNIE domyślnymi `OrbitControls` (1.0), więc ich wpisanie tutaj
+ * NICZEGO nie zmienia w zachowaniu — i to jest cały zamiar. Do tej pory czułość orbity i
+ * zoomu była jedynym parametrem odczucia z kamery, który nie miał ani stałej, ani taga
+ * `[WYGLĄD]`: wynikał milcząco z domyślnych biblioteki, więc (a) nie dało się go znaleźć
+ * greppując `[WYGLĄD]`, jak każe dyscyplina tej gałęzi, i (b) zmiana domyślnych w
+ * kolejnej wersji Three.js po cichu zmieniłaby odczucie sterowania, bez śladu w diffie.
+ * Teraz wartość jest nasza i jawna; Faza 4 stroi ją tutaj, obok pola widzenia i
+ * bezwładności, nie szukając jej w źródle biblioteki.
+ */
+export const ORBIT_ROTATE_SPEED = 1.0; // [WYGLĄD] czułość obrotu (przeciągnięcie myszą)
+export const ORBIT_ZOOM_SPEED = 1.0; // [WYGLĄD] czułość przybliżania (kółko myszy)
+
 const NEAR_FACTOR = 0.01; // [WYGLĄD] płaszczyzna bliska, jako czynnik promienia
 const FAR_MARGIN_FACTOR = 2; // [WYGLĄD] margines za MAX_DISTANCE_FACTOR, żeby nie obcinać dalekiej płaszczyzny
 
@@ -134,6 +149,8 @@ export function createCamera(canvas: HTMLCanvasElement, radius: number): OrbitCa
   controls.maxDistance = max;
   controls.enableDamping = true;
   controls.dampingFactor = DAMPING_FACTOR;
+  controls.rotateSpeed = ORBIT_ROTATE_SPEED;
+  controls.zoomSpeed = ORBIT_ZOOM_SPEED;
   controls.update();
 
   return {

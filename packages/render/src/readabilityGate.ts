@@ -99,6 +99,17 @@ const NEUTRAL_COLOR = 0xffffff; // [WYGLĄD] barwa OBU znaczników, dopóki para
 const REVEAL_LIT_COLOR = 0x2ecc71; // [WYGLĄD] odsłonięcie: znacznik nad faktycznie oświetloną komórką
 const REVEAL_DARK_COLOR = 0xe23d3d; // [WYGLĄD] odsłonięcie: znacznik nad faktycznie ciemną komórką
 
+// --- Dwutonowość znacznika: to NIE jest zwykła estetyka ------------------------------
+// Te trzy stałe niosą własność "znacznik nie zdradza, po której stronie terminatora stoi"
+// (uzasadnienie w komentarzu modułu wyżej). Jasne wypełnienie wybija się na tle nocy,
+// ciemny obrys wybija się na tle dnia — więc sumaryczna widoczność znacznika jest podobna
+// po obu stronach granicy. Jeden jednolity kolor tej własności NIE MA. Tagi [WYGLĄD] są
+// tu z tego samego powodu co przy `LIGHT_BANDS`: Faza 4 może chcieć je stroić, i ma wtedy
+// przeczytać, że stroi coś, na czym stoi WAŻNOŚĆ bramki, nie sam ładny wygląd.
+const MARKER_FILL_COLOR = '#ffffff'; // [WYGLĄD] wypełnienie — jasne, dla kontrastu z nocą
+const MARKER_STROKE_COLOR = '#000000'; // [WYGLĄD] obrys — ciemny, dla kontrastu z dniem
+const MARKER_STROKE_WIDTH_FACTOR = 0.08; // [WYGLĄD] grubość obrysu jako ułamek MARKER_TEXTURE_SIZE
+
 /**
  * Buduje neutralną, dwutonową teksturę znacznika (patrz uzasadnienie w komentarzu modułu).
  * Zwraca `undefined` w środowisku bez DOM (Vitest/Node) — TEN SAM wzorzec straży co
@@ -116,14 +127,14 @@ function createMarkerTexture(): CanvasTexture | undefined {
   if (!ctx) return undefined;
 
   const r = MARKER_TEXTURE_SIZE / 2;
-  const strokeWidth = MARKER_TEXTURE_SIZE * 0.08;
+  const strokeWidth = MARKER_TEXTURE_SIZE * MARKER_STROKE_WIDTH_FACTOR;
   ctx.clearRect(0, 0, MARKER_TEXTURE_SIZE, MARKER_TEXTURE_SIZE);
   ctx.beginPath();
   ctx.arc(r, r, r - strokeWidth, 0, Math.PI * 2);
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = MARKER_FILL_COLOR;
   ctx.fill();
   ctx.lineWidth = strokeWidth;
-  ctx.strokeStyle = '#000000';
+  ctx.strokeStyle = MARKER_STROKE_COLOR;
   ctx.stroke();
 
   return new CanvasTexture(canvas);
