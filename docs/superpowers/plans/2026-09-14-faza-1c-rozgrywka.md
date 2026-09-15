@@ -1188,6 +1188,29 @@ describe('updateSpawning', () => {
     expect(s.units).toHaveLength(0);
   });
 
+  /**
+   * Concern #2 z przeglądu (task-4-fix-report.md): D1 był sprawdzany tylko na
+   * skrajnościach (pełne światło / pełny cień) — nigdy na własnej granicy
+   * (`light[cellId] > 0`, ostra nierówność). Tu: NAJMNIEJSZA reprezentowalna dodatnia
+   * wartość Float32 (2⁻¹⁴⁹, denormal) musi tłumić tak samo jak pełne światło; dokładne
+   * zero musi zachowywać się jak zwykły cień (baseline 7 z testu fractional-carry).
+   */
+  it('D1: nawet najmniejsza dodatnia wartość światła tłumi spawn; dokładne zero — nie', () => {
+    const target = planet.pentagons[0];
+    const smallestPositiveFloat32 = new Float32Array(new Uint32Array([1]).buffer)[0];
+
+    const almostDark = new Float32Array(N).fill(0);
+    almostDark[target] = smallestPositiveFloat32;
+    const s1 = fresh();
+    run(s1, almostDark, 30);
+    expect(s1.units.filter((u) => u.cellId === target)).toHaveLength(0);
+
+    const exactlyDark = new Float32Array(N).fill(0); // target jawnie na dokładne 0
+    const s2 = fresh();
+    run(s2, exactlyDark, 30);
+    expect(s2.units.filter((u) => u.cellId === target)).toHaveLength(7);
+  });
+
   it('wszystkie jednostki pojawiają się na pentagonach, nigdy gdzie indziej', () => {
     const s = fresh();
     run(s, allDark, 30);
@@ -1220,9 +1243,18 @@ describe('updateSpawning', () => {
    * Ten test przypina moment PIERWSZEJ erupcji dokładnie: tick przed interwałem (0
    * jednostek), dokładnie na interwale (4 — `eruptionBurstBase` przy capCount=1) i
    * tick po (wciąż 4 — druga erupcja jest kolejny pełny interwał później, nie tick
-   * później). Wartości zmierzone bezpośrednio na żywej implementacji (patrz
-   * task-4-report.md) — 20 s / 0,05 s = 400 ticków, bez dryfu zmiennoprzecinkowego
-   * między testowanymi ticka.
+   * później). Wartości zmierzone bezpośrednio na żywej implementacji: 20 s / 0,05 s
+   * = 400 ticków DOKŁADNIE, zero odległości od granicy w którąkolwiek stronę.
+   *
+   * Uwaga po przeglądzie (Concern #4, task-4-fix-report.md): ta precyzja jest
+   * specyficzna dla TEGO mechanizmu — odliczanie W DÓŁ od stałej `eruptionInterval`,
+   * resetowane przez `+=` dopiero PO odpaleniu. Nie uogólniać na strumień ciągły
+   * (`spawnAccumulator`, liczony W GÓRĘ od zera przez powtarzane `+=` KAŻDEGO ticku) —
+   * ten na WŁASNYCH granicach (`1/rate`) wykazuje deterministyczne opóźnienie o
+   * dokładnie jeden tick, zmierzone i przypięte w teście "strumień ciągły: na
+   * dokładnej granicy…" niżej. Inny kierunek akumulacji, inny znak błędu zaokrągleń —
+   * "brak dryfu" NIE jest właściwością całego systemu spawnu, tylko wynikiem
+   * zmierzonym dla TEGO jednego mechanizmu.
    */
   it('erupcja jest przypięta DOKŁADNIE do interwału — tick przed i tick po granicy', () => {
     const measure = (seconds: number) => {
@@ -1236,6 +1268,65 @@ describe('updateSpawning', () => {
     expect(measure(DEFAULT_SPAWN.eruptionInterval - 0.05)).toBe(0);
     expect(measure(DEFAULT_SPAWN.eruptionInterval)).toBe(DEFAULT_SPAWN.eruptionBurstBase);
     expect(measure(DEFAULT_SPAWN.eruptionInterval + 0.05)).toBe(DEFAULT_SPAWN.eruptionBurstBase);
+  });
+
+  /**
+   * IMPORTANT z przeglądu (task-4-fix-report.md, punkt 1): zegar erupcji należy do
+   * PENTAGONU, nie do CAPA. Wcześniejsza wersja zerowała `eruptionArmed` przy
+   * odkapowaniu, więc rozbiórka+odbudowa (płaski koszt ok. 38 rudy — 75 kosztu minus
+   * 37 zwrotu z DEMOLISH) w kółko odsuwała rosnącą z `capCount` erupcję o pełny
+   * interwał, za darmo w nieskończoność — wywracając cały argument §5.3 ("capowanie
+   * wszystkich 12 nadal generuje zagrożenie"). Test: doprowadź do stanu tuż PRZED
+   * erupcją (398 ticków — zmierzone, brakują 2), rozbierz cap, odczekaj JEDEN tick
+   * niezatkany, odbuduj — erupcja MUSI odpalić w PIERWOTNYM terminie (przesuniętym
+   * wyłącznie o ten jeden tick przerwy), nie interwał (400 ticków) później.
+   */
+  it('rozbiórka i odbudowa capa NIE resetują odliczania erupcji — zegar należy do pentagonu, nie do capa', () => {
+    const s = fresh();
+    const target = planet.pentagons[0];
+    applyCommand(s, { kind: 'BUILD', cellId: target, type: 'GEOTHERMAL_CAP' });
+
+    // 19,9 s = 398 ticków: tuż przed erupcją (brakują 2 ticki zatkane — zmierzone).
+    run(s, allDark, DEFAULT_SPAWN.eruptionInterval - 0.1);
+    expect(s.units.filter((u) => u.cellId === target)).toHaveLength(0);
+
+    applyCommand(s, { kind: 'DEMOLISH', cellId: target });
+    run(s, allDark, 0.05); // jeden tick niezatkany — zegar erupcji MUSI zamrozić się
+    applyCommand(s, { kind: 'BUILD', cellId: target, type: 'GEOTHERMAL_CAP' });
+
+    // Dokładnie tyle ticków, ile brakowało PRZED rozbiórką (2) — nie interwał (400) więcej.
+    run(s, allDark, 0.1);
+    expect(s.units.filter((u) => u.cellId === target)).toHaveLength(DEFAULT_SPAWN.eruptionBurstBase);
+  });
+
+  /**
+   * Concern #3 z przeglądu: ta sama zasada zamrażania co wyżej (punkt 1), ale przez
+   * DRUGI wyzwalacz (D1 — światło), nie przez odkapowanie. Uzbrojony w połowie
+   * odliczania pentagon trafia w światło na 10 s — DZIESIĘĆ RAZY dłużej niż
+   * pozostałe mu 0,5 s do erupcji — a mimo to nic się nie dzieje: D1 zamraża
+   * odliczanie, nie tylko strumień ciągły. Po powrocie do cienia wznawia się
+   * DOKŁADNIE tam, gdzie stanęło (brakuje wciąż tych samych 10 ticków), nie od
+   * pełnego interwału.
+   */
+  it('zatkany pentagon W ŚWIETLE zamraża odliczanie erupcji (nie zeruje) — wznawia dokładnie tam, gdzie stanęło', () => {
+    const s = fresh();
+    const target = planet.pentagons[0];
+    applyCommand(s, { kind: 'BUILD', cellId: target, type: 'GEOTHERMAL_CAP' });
+
+    // 19,5 s = 390 ticków zatkane w ciemności: zostaje 0,5 s (10 ticków) do erupcji.
+    run(s, allDark, DEFAULT_SPAWN.eruptionInterval - 0.5);
+    expect(s.units.filter((u) => u.cellId === target)).toHaveLength(0);
+
+    const lit = new Float32Array(N).fill(0);
+    lit[target] = 1;
+    run(s, lit, 10); // 10 s w świetle — 10× więcej niż zostało do erupcji, a mimo to nic
+    expect(s.units.filter((u) => u.cellId === target)).toHaveLength(0);
+
+    // Powrót do ciemności: brakuje DOKŁADNIE tych samych 10 ticków co przed zaświeceniem.
+    run(s, allDark, 0.45);
+    expect(s.units.filter((u) => u.cellId === target)).toHaveLength(0);
+    run(s, allDark, 0.05);
+    expect(s.units.filter((u) => u.cellId === target)).toHaveLength(DEFAULT_SPAWN.eruptionBurstBase);
   });
 
   it('więcej capów ⇒ silniejsze erupcje', () => {
@@ -1366,6 +1457,34 @@ describe('updateSpawning', () => {
     run(s, allDark, 30);
     expect(s.units.filter((u) => u.cellId === target)).toHaveLength(7);
   });
+
+  /**
+   * Concern #4 z przeglądu (task-4-fix-report.md): zmierzone bezpośrednio na strumieniu
+   * ciągłym (nie na erupcji — patrz uwaga przy teście granicy interwału powyżej).
+   * `baseRatePerPentagon = 0,25`/s w cyklu 1 ⇒ `1/rate = 4 s` to granica, na której
+   * "powinna" pojawić się pierwsza jednostka. W praktyce, DOKŁADNIE na tej granicy
+   * brakuje jej — suma powtarzanych `+= rate*TICK_SECONDS` ląduje tuż PONIŻEJ 1,0
+   * (ten sam mechanizm co `EXPOSURE_EPSILON` w burning.ts), więc jednostka pojawia się
+   * o jeden tick później. Kluczowe: to opóźnienie jest STAŁE, nie narasta — zmierzone
+   * też przy 100-krotności granicy (400 s): wciąż brakuje DOKŁADNIE jednej jednostki
+   * (99, nie 90 czy 0), nie stu.
+   */
+  it('strumień ciągły: na dokładnej granicy 1/rate brakuje DOKŁADNIE jednego egzemplarza — stałe, nie narastające', () => {
+    const target = planet.pentagons[0];
+    const at = (seconds: number) => {
+      const s = fresh();
+      run(s, allDark, seconds);
+      return s.units.filter((u) => u.cellId === target).length;
+    };
+
+    // 1/rate = 1/0,25 = 4 s.
+    expect(at(4)).toBe(0);
+    expect(at(4.05)).toBe(1);
+
+    // 100-krotność tej samej granicy — opóźnienie WCIĄŻ jednym tickiem, nie 100.
+    expect(at(400)).toBe(99);
+    expect(at(400.05)).toBe(100);
+  });
 });
 ```
 
@@ -1423,6 +1542,17 @@ export const DEFAULT_SPAWN: SpawnConfig = {
  * strumienia" w krótkim oknie poniżej interwału — patrz task-4-report.md). `eruptionArmed`
  * zapewnia, że pierwsze uzbrojenie liczników PO (po)nownym zatkaniu ustawia pełny
  * interwał zamiast fałszywie "przeterminowanego" zera.
+ *
+ * ZEGAR ERUPCJI NALEŻY DO PENTAGONU, NIE DO CAPA (rozstrzygnięcie z przeglądu Taska 4,
+ * patrz task-4-fix-report.md, punkt 1): `eruptionCooldown`/`eruptionArmed` ZAMRAŻAJĄ SIĘ,
+ * gdy pentagon przestaje być zatkany — nie zerują się. Dwa niezależne wyzwalacze
+ * zamrożenia (światło — strażnik D1 na górze pętli; brak capa — gałąź niżej) realizują
+ * TĘ SAMĄ zasadę: ciśnienie siedzi w kominie (pentagonie), nie w pokrywie (capie), więc
+ * zdjęcie pokrywy go nie upuszcza. Wcześniejsza wersja zerowała `eruptionArmed` przy
+ * odkapowaniu — dawało to darmowy exploit: rozbiórka+odbudowa capa (płaski koszt ok. 38
+ * rudy — 75 kosztu minus 37 zwrotu z DEMOLISH) w nieskończoność odsuwała rosnącą z
+ * `capCount` erupcję, więc capowanie wszystkich 12 STAWAŁO SIĘ strategią wygrywającą
+ * zamiast dowodem na to, że nią nie jest (cały sens §5.3).
  */
 export function updateSpawning(
   s: SimState,
@@ -1467,11 +1597,15 @@ export function updateSpawning(
       continue;
     }
 
-    // Odkapowany (albo nigdy nie zakapowany) pentagon zapomina odliczanie erupcji —
-    // ponowne zacapowanie w przyszłości ma liczyć pełny interwał od nowa, nie
-    // kontynuować stare, zamrożone odliczenie.
-    ps.eruptionArmed = false;
-
+    // Odkapowany (albo nigdy nie zakapowany) pentagon NIE dotyka eruptionCooldown/
+    // eruptionArmed — odliczanie (jeśli już uzbrojone) po prostu ZAMRAŻA SIĘ, tak samo
+    // jak robi to D1 dla światła (patrz strażnik na górze pętli). Zegar erupcji należy
+    // do PENTAGONU (ciśnienie w kominie), nie do capa (pokrywy): zdjęcie pokrywy nie
+    // zeruje ciśnienia, więc rozbiórka+odbudowa capa nie kupuje graczowi ani sekundy —
+    // usuwa to realny exploit (poprzednia wersja z `eruptionArmed = false` tutaj
+    // resetowała odliczanie do pełnego interwału przy KAŻDYM cyklu rozbiórka-odbudowa,
+    // za płaski koszt ~38 rudy/cykl, tłumiąc rosnącą z capCount erupcję za darmo —
+    // patrz task-4-fix-report.md, punkt 1).
     ps.spawnAccumulator += rate * TICK_SECONDS;
     while (ps.spawnAccumulator >= 1) {
       ps.spawnAccumulator -= 1;
