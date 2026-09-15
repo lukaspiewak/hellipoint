@@ -23,6 +23,12 @@ importers:
 
   packages/sim: {}
 
+  tools/headless:
+    dependencies:
+      '@heliopolis/sim':
+        specifier: workspace:*
+        version: link:../../packages/sim
+
 packages:
 
   '@jridgewell/resolve-uri@3.1.2':

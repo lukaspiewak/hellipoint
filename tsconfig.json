@@ -2,6 +2,8 @@
   "files": [],
   "references": [
     { "path": "packages/sim" },
-    { "path": "packages/sim/tsconfig.test.json" }
+    { "path": "packages/sim/tsconfig.test.json" },
+    { "path": "tools/headless" },
+    { "path": "tools/headless/tsconfig.test.json" }
   ]
 }
