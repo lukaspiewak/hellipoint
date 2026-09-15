@@ -185,7 +185,10 @@ To jest zadanie, w którym rozstrzyga się filar D1. Bramka Fazy 0 zmierzyła, �
 4. `writeCellColors` zapisuje **jednolity kolor w całym zakresie komórki** — wszystkie wierzchołki komórki mają identyczny kolor co do bitu
 5. sąsiadujące komórki po dwóch stronach terminatora dostają **różne pasma** przy rzeczywistym `lightField` — wzięte z prawdziwej planety i prawdziwego `sunDirection`, nie z liczb wpisanych ręcznie
 6. `out` o złej długości → `RangeError` nazywający obie długości (wzorzec z `updatePower`)
-7. **`palette` o złej liczbie pozycji → `RangeError`.** To jest szew między `LIGHT_BANDS`
+7. **`light` o złej długości → `RangeError`.** Ten sam rodzaj zagrożenia co `out` i `palette`,
+   przeoczony w pierwszej wersji tej listy — wykonawca Taska 3 dopisał go i dowiódł mutacją,
+   że nie jest martwym kodem.
+8. **`palette` o złej liczbie pozycji → `RangeError`.** To jest szew między `LIGHT_BANDS`
    a `DEFAULT_PALETTE`: dwie stałe, które muszą się zgadzać co do długości, a nic ich nie wiąże
    składniowo. Faza 4 będzie zmieniać paletę i progi niezależnie, więc niezgodność jest kwestią
    czasu. Dopisz też test, że **`DEFAULT_PALETTE` ma dokładnie `LIGHT_BANDS.length + 1` pozycji** —
@@ -194,7 +197,18 @@ To jest zadanie, w którym rozstrzyga się filar D1. Bramka Fazy 0 zmierzyła, �
 - [ ] **Krok 2: Uruchom testy i potwierdź porażkę**
 - [ ] **Krok 3: Zaimplementuj**
 - [ ] **Krok 4: Testy zielone**
-- [ ] **Krok 5: Zmierz** ile komórek wypada w każdym paśmie przy `sunDirection(0, 180)` i zapisz w komentarzu. Jeśli jedno pasmo obejmuje ponad połowę komórek, progi są źle dobrane — zgłoś to zamiast zostawiać
+- [ ] **Krok 5: Zmierz** ile komórek wypada w każdym paśmie przy `sunDirection(0, 180)` i zapisz w komentarzu.
+
+  > **Kryterium poprawione — pierwsza wersja była niespełnialna i wykonawca to zmierzył.**
+  > Brzmiała „jeśli jedno pasmo obejmuje ponad połowę komórek, progi są źle dobrane". Ale
+  > `saturate(dot)` sprowadza **całą półkulę nocną do dokładnie 0,0** — to jest clamp samej
+  > symulacji, fizyka sceny, nie skutek doboru progów. Pasmo najciemniejsze będzie więc zawsze
+  > trzymać około połowy komórek, przy **każdym** możliwym progu. Kryterium odrzucałoby każdą
+  > implementację.
+  >
+  > Właściwa postać: **noc jest zwolniona, ale żadne pasmo po stronie DZIENNEJ nie może
+  > przekroczyć połowy.** Zmierzone przy wykonaniu: noc 753 (52,2 %), półmrok 256 (17,8 %),
+  > dzień 433 (30,0 %).
 - [ ] **Krok 6: Commit**
 
 ---
