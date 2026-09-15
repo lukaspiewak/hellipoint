@@ -30,7 +30,12 @@ export { updatePower } from './sim/power.js';
 export { ORE_PER_SECOND, updateEconomy } from './sim/economy.js';
 export { buildAllFlowFields, buildFlowField } from './sim/flowfield.js';
 export type { FlowField } from './sim/flowfield.js';
-export { spawnUnit, updateMovement } from './sim/movement.js';
+export {
+  minRotationPeriod,
+  motionContext,
+  spawnUnit,
+  updateMovement,
+} from './sim/movement.js';
 export type { MotionContext } from './sim/movement.js';
 export { cellsWithinSteps, updateCombat } from './sim/combat.js';
 export { updateBurning } from './sim/burning.js';

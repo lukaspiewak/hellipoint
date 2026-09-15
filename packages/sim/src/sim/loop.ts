@@ -1,4 +1,3 @@
-import { cellSpacing, terminatorSpeedCells } from '../world/scale.js';
 import { Rng, STREAM } from '../math/rng.js';
 import type { Planet } from '../world/planet.js';
 import { updateBurning } from './burning.js';
@@ -9,7 +8,12 @@ import { updateEconomy } from './economy.js';
 import { buildAllFlowFields } from './flowfield.js';
 import { lightField, sunDirection } from './light.js';
 import type { MotionContext } from './movement.js';
-import { updateMovement } from './movement.js';
+import {
+  minRotationPeriod,
+  motionContext,
+  motionIsSimulable,
+  updateMovement,
+} from './movement.js';
 import { updatePower } from './power.js';
 import { currentCycle, updateRules, type RunConfig } from './rules.js';
 import { updateSpawning } from './spawning.js';
@@ -34,16 +38,31 @@ export class Sim {
     if (!Number.isFinite(config.rotationPeriod) || config.rotationPeriod <= 0) {
       throw new RangeError(`RunConfig.rotationPeriod must be finite and positive, got ${config.rotationPeriod}`);
     }
-    // Druga warstwa tej samej straży, na poziomie DOMENY zamiast arytmetyki: finite i
-    // dodatni nie wystarczy, jeśli okres jest krótszy niż jeden tick — Słońce robiłoby
-    // wtedy pełny obrót WEWNĄTRZ pojedynczego kroku symulacji, co nie jest cyklem
-    // dzień/noc w żadnym sensownym znaczeniu (a przy skrajnych wartościach, np. 1e-320,
-    // to właśnie ten zakres, w którym `angle` w `sunDirection` przepełnia się do
-    // Infinity — patrz light.ts). Granica inclusive: dokładnie jeden tick jest ostatnią
-    // wartością, przy której obrót JEST rozłożony na (przynajmniej) jeden krok.
-    if (config.rotationPeriod < TICK_SECONDS) {
+    // Druga warstwa tej samej straży, na poziomie DOMENY zamiast arytmetyki: finite
+    // i dodatni nie wystarczy. Poprzednia wersja stawiała tu podłogę `TICK_SECONDS`
+    // ("Słońce nie może zrobić pełnego obrotu wewnątrz jednego ticka") — rozumowanie
+    // słuszne, ale granica ZA NISKA o dwa rzędy wielkości, więc straż nie robiła tego,
+    // co obiecywała: `rotationPeriod = 0,05` konstruowało się bez słowa i dopiero
+    // `.step()` rzucał `RangeError` w ticku 12, z komunikatem o `speedFactor`
+    // i `MotionContext` — czyli o wszystkim poza jedynym polem, które wołający ustawił.
+    //
+    // Prawdziwa podłoga wynika z niezmiennika `updateMovement`: krok kątowy NAJSZYBSZEGO
+    // wroga musi zostać PONIŻEJ kątowego rozstawu komórek (inaczej `nearestLocalCell`
+    // przeskakuje sąsiada, którego w ogóle nie widzi). Wyprowadzenie i pomiar — patrz
+    // `minRotationPeriod` w movement.ts; dla planety domyślnej wychodzi 7,2031 s, co
+    // zgadza się z pomiarem z przeglądu gałęzi co do czwartego miejsca po przecinku.
+    //
+    // Sprawdzane tym SAMYM predykatem, którego używa pętla ruchu (`motionIsSimulable`
+    // na tym samym `MotionContext`, który dostanie `updateMovement`), a nie niezależnie
+    // przeliczoną liczbą: obie strony liczone osobno rozjeżdżają się o 1-2 ULP-y, więc
+    // zostawiłyby wąskie pasmo wartości przyjmowanych tutaj i odrzucanych tam.
+    this.motion = motionContext(planet, config.rotationPeriod);
+    if (!motionIsSimulable(this.motion)) {
       throw new RangeError(
-        `RunConfig.rotationPeriod must be at least one tick (${TICK_SECONDS}s), got ${config.rotationPeriod} — a shorter period completes a full day/night cycle inside a single tick and is not a simulable cycle`,
+        `RunConfig.rotationPeriod=${config.rotationPeriod} is too short to simulate on this planet: ` +
+          `the fastest enemy would cover at least one whole cell per tick, so unit cellId would silently ` +
+          `drift away from its true position. Minimum that works here: ${minRotationPeriod(planet)}s ` +
+          `(derived from the planet's ${planet.cells.length} cells and the fastest speedFactor in ENEMIES).`,
       );
     }
     if (!Number.isFinite(config.startingOre) || config.startingOre < 0) {
@@ -175,13 +194,6 @@ export class Sim {
       );
     }
     this.s.evacUnlockTick = unlockTick;
-
-    const n = planet.cells.length;
-    this.motion = {
-      termSpeedCells: terminatorSpeedCells(n, config.rotationPeriod),
-      spacing: cellSpacing(planet.radius, n),
-      radius: planet.radius,
-    };
 
     // CORE na komórce startowej: punkt wyjścia runu, nie decyzja gracza — więc bez kosztu
     // i WPROST do stanu, nie przez `applyCommand`. `canBuild` odrzuca CORE niezależnie od

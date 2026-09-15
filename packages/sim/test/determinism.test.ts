@@ -3,6 +3,7 @@ import { createPlanet } from '../src/world/planet.js';
 import { Sim } from '../src/sim/loop.js';
 import { stateHash } from '../src/sim/hash.js';
 import { TICK_SECONDS } from '../src/sim/state.js';
+import { minRotationPeriod } from '../src/sim/movement.js';
 import type { Command } from '../src/sim/commands.js';
 import { DEFAULT_RUN } from '../src/sim/rules.js';
 import { DEFAULT_SPAWN } from '../src/sim/spawning.js';
@@ -162,22 +163,64 @@ describe('RunConfig — walidacja w konstruktorze Sim', () => {
 
   /**
    * Residual z przeglądu końcowego Fazy 1B: `rotationPeriod` skończony i dodatni
-   * (przechodzi powyższą straż) ale krótszy niż jeden tick oznacza, że Słońce robi
-   * pełny obrót WEWNĄTRZ pojedynczego ticku — to nie jest symulowalny cykl dzień/noc,
-   * niezależnie od tego, czy akurat przepełnia `angle` w `sunDirection` (por.
-   * light.test.ts, `rotationPeriod = 1e-320`). Druga warstwa tej samej straży: tu
-   * łapiemy DOMENOWO ("za krótki, żeby cokolwiek symulować"), w `sunDirection` —
-   * LOKALNIE ("angle wyszedł nieskończony"). Zweryfikowano: żaden istniejący test
-   * w tym pakiecie nie używa rotationPeriod < 180s poza testami odrzucenia.
+   * (przechodzi powyższą straż) ale za krótki, żeby symulacja dała się przeliczyć.
+   * Druga warstwa tej samej straży: tu łapiemy DOMENOWO ("za krótki, żeby cokolwiek
+   * symulować"), w `sunDirection` — LOKALNIE ("angle wyszedł nieskończony", por.
+   * light.test.ts, `rotationPeriod = 1e-320`).
    */
-  it('odrzuca rotationPeriod krótszy niż jeden tick — pełny obrót Słońca w jednym ticku nie jest symulowalnym cyklem dzień/noc', () => {
+  it('odrzuca rotationPeriod za krótki do przeliczenia', () => {
     expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(RangeError);
     expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 1e-320, startingOre: 100 })).toThrow(RangeError);
     expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(/rotationPeriod/);
   });
 
-  it('akceptuje rotationPeriod dokładnie równy jednemu tickowi — granica jest inclusive, "krótszy niż" to ostra nierówność', () => {
-    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: TICK_SECONDS, startingOre: 100 })).not.toThrow();
+  /**
+   * PRZEGLĄD GAŁĘZI, Important #1. Poprzednia wersja tego bloku asercjowała
+   * `not.toThrow()` dla `rotationPeriod = TICK_SECONDS` i NIGDY nie wykonywała kroku —
+   * przypinała więc kontrakt, którego symulacja nie spełnia. Zmierzone: `new Sim(planet,
+   * {...DEFAULT_RUN, rotationPeriod: 0.05})` konstruuje się bez słowa, a `.step()` rzuca
+   * `RangeError` w ticku 12 (pierwszym niosącym jednostkę) — z komunikatem o `speedFactor`
+   * i `MotionContext`, czyli o wszystkim poza polem, które wołający naprawdę ustawił.
+   * Zmierzony przemiat: KAŻDY okres ≤ 7,20 s rzucał (w ticku 12/21/85/123/148/150
+   * zależnie od seeda), 7,21 s przechodził 3000 ticków czysto.
+   *
+   * Podłoga jest teraz WYPROWADZONA z niezmiennika `updateMovement` (patrz
+   * `minRotationPeriod` w movement.ts) i wynosi dla planety domyślnej
+   * 7,203121207399654 s — zgodnie z pomiarem.
+   */
+  it('odrzuca KAŻDY okres poniżej wyprowadzonej podłogi — łącznie z tym, który konstruował się bez słowa i wywalał dopiero w ticku 12', () => {
+    const podloga = minRotationPeriod(planet);
+    expect(podloga).toBeCloseTo(7.2031, 4);
+
+    for (const rp of [TICK_SECONDS, 1, 7, 7.19, 7.2, podloga * (1 - 1e-12)]) {
+      expect(
+        () => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: rp, startingOre: 100 }),
+        `rotationPeriod=${rp} powinien zostać odrzucony przez KONSTRUKTOR`,
+      ).toThrow(RangeError);
+    }
+  });
+
+  /**
+   * Odwrotny kierunek dowodu, i ten jest tu ważniejszy: podłoga musi być DOKŁADNIE
+   * granicą straży w `updateMovement`, nie ostrożnym marginesem "gdzieś w okolicy".
+   * Sama wartość zwracana przez `minRotationPeriod` przechodzi konstrukcję ORAZ realny
+   * przebieg — 3000 ticków to ~20× ponad zmierzone miejsce, w którym stary kod wywalał.
+   */
+  it('okres dokładnie równy podłodze konstruuje się I PRZELICZA — granica nie jest ostrożnym marginesem', () => {
+    const podloga = minRotationPeriod(planet);
+    const sim = new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: podloga, startingOre: 100 });
+    expect(() => { for (let i = 0; i < 3000; i++) sim.step(); }).not.toThrow();
+    // Przesłanka: przebieg NAPRAWDĘ niósł jednostki, więc straż ruchu była wołana.
+    expect(sim.state.nextUnitId).toBeGreaterThan(1);
+  });
+
+  it('komunikat odrzucenia nazywa rotationPeriod, podaną wartość i minimum, które zadziała', () => {
+    let msg = '';
+    try { new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 0.05, startingOre: 100 }); }
+    catch (e) { msg = (e as Error).message; }
+    expect(msg).toContain('rotationPeriod');
+    expect(msg).toContain('0.05');
+    expect(msg).toContain(String(minRotationPeriod(planet)));
   });
 });
 
@@ -264,7 +307,10 @@ describe('RunConfig — walidacja pozostałych sześciu pól', () => {
       { cyclesPerRun: 1, evacUnlockFraction: 0 },
       { cyclesPerRun: 1, evacUnlockFraction: 1 },
       { cyclesPerRun: 1_000_000, evacUnlockFraction: 1 },
-      { rotationPeriod: TICK_SECONDS, cyclesPerRun: 1_000_000 },
+      // Najkrótszy DOPUSZCZALNY obrót, liczony z planety — nie `TICK_SECONDS`, który
+      // przed przeglądem gałęzi był tu podłogą, a symulacji nie dało się przy nim
+      // przeliczyć (patrz `minRotationPeriod` w movement.ts).
+      { rotationPeriod: minRotationPeriod(planet), cyclesPerRun: 1_000_000 },
       { rotationPeriod: 1e6, evacAlarmSeconds: 1e-6 },
       { evacAlarmSeconds: 1e6, evacEnergyRequired: 1e-9, evacChargeRate: 1e9 },
     ];
