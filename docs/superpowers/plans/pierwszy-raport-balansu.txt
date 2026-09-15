@@ -1,7 +1,7 @@
 Pierwszy raport balansu — Heliopolis, headless runner (Task 6, Faza 1C)
 =========================================================================
 
-Wygenerowano: 2026-09-15
+Wygenerowano: 2026-09-15 (runda poprawek 1: wieża przed barykadą w ScriptedPolicy)
 Polecenie:    pnpm --filter @heliopolis/headless bench 1000 0
 Seeds:        0..999 (1000 runów), ScriptedPolicy, DEFAULT_RUN
 Środowisko:   node v22.22.0, pnpm 11.17.0 (patrz wersje.txt w tym katalogu)
@@ -14,40 +14,67 @@ są przybliżeniami zależnymi od implementacji; patrz komentarz nad `lightField
 
 Ten raport NIE ma być dobry. Ma istnieć, być powtarzalny i wyznaczyć pracę Fazy 3.
 
+Ta wersja zastępuje poprzednią (z tego samego dnia, sprzed poprawki polityki).
+Poprzednie liczby zachowane w task-6-report.md jako punkt odniesienia „przed".
+
 -------------------------------------------------------------------------
 runów: 1000
 zwycięstw: 0 (0.0%)
 
-moment porażki [s]  p10=30.6 p50=45.2 p90=117.6
+moment porażki [s]  p10=28.8 p50=40.1 p90=113.3
 cykl porażki        p10=1 p50=1 p90=1
-szczyt zabudowy     p10=8 p50=10 p90=32
-wydobyta ruda       p10=0 p50=47.8 p90=144.8
+szczyt zabudowy     p10=7 p50=8 p90=22
+wydobyta ruda       p10=0 p50=43.8 p90=116.2
 
 wyczerpanie 1. złoża: 0.0% runów, czas [s] brak danych
-ubite przez słońce: 45.4% · przez wieże: 54.6%
+ubite przez słońce: 44.4% · przez wieże: 55.6%
 -------------------------------------------------------------------------
+
+Dodatkowo zmierzone (poza formatem §8.3, tym samym przebiegiem 1000 seedów):
+wież postawionych/run — p10=0 p50=0 p90=1, średnio 0,35; 763/1000 runów (76,3%)
+nie stawia ŻADNEJ wieży w całym swoim życiu.
 
 Odczyt (dla Fazy 3, nie ostateczna diagnoza):
 
-- 0% zwycięstw na 1000 seedach. ScriptedPolicy nigdy nie dożywa odblokowania
-  Evac (cykl 7 / tick 21600 przy DEFAULT_RUN) — mediana porażki to cykl 1
-  (p90 wciąż cykl 1), czyli baza pada w pierwszych ~180 s gry.
-- Mediana szczytu zabudowy to 10 budynków, w tym CORE. Polityka priorytetyzuje
-  ekstraktory/energię przed obroną (§ priorytety w policy.ts) i w praktyce prawie
-  nigdy nie dochodzi do wieży: koszt LASER_TURRET (100)/KINETIC_TURRET (50) rzadko
-  jest osiągalny, zanim nadwyżka rudy zostanie wydana na BARRICADE (8) — zmierzone
-  osobno (task-6-report.md): 0 wież na wielu seedach, BARRICADE budowany dziesiątki
-  razy pod rząd.
-- „wyczerpanie 1. złoża": 0,0% na WSZYSTKICH 1000 seedach. Presja wroga kończy run,
-  zanim jakikolwiek ekstraktor zdąży wydobyć swoje ~400 rudy — złoża nigdy nie są
-  wąskim gardłem przy dzisiejszym balansie. (Sama ścieżka detekcji jest realna
-  i przetestowana pod innym, spokojniejszym configiem — patrz test
-  `firstDepletionTick odróżnia…` w headless.test.ts).
-- Zabicia dzielą się niemal po połowie (45,4% słońce / 54,6% wieże) — ale przy
-  medianie 0 wież postawionych w większości runów to w dużej mierze zasługa
-  nielicznych długich przebiegów (do ~10 tys. ticków), w których obrona jednak
-  się rozwija; patrz task-6-report.md dla rozbicia po długości runu.
+- 0% zwycięstw na 1000 seedach — bez zmiany. Poprzednia wersja polityki wydawała
+  nadwyżkę rudy na BARRICADE (8), zanim zdążyła urosnąć do progu wieży (50/100);
+  poprawka każe botowi OSZCZĘDZAĆ (nie stawiać barykad) dopóki nie stoi żadna
+  wieża. Zmierzony efekt tej jednej zmiany na 1000 seedach: mediana szczytu
+  zabudowy spadła z 10 do 8, mediana momentu porażki spadła z 45,2 s do 40,1 s,
+  a mediana wież na run OSTAŁA SIĘ BEZ ZMIANY (0 → 0, średnia 0,35 → 0,35).
+  Wniosek zmierzony, nie domniemany: dla mediany seeda reguła kolejności
+  (wieża-przed-barykadą) nie ma szansy zadziałać, bo baza pada, zanim
+  zaoszczędzona ruda kiedykolwiek zbliży się do progu wieży — a w miejsce
+  barykad, które choć nikogo nie zabijają, pochłaniają obrażenia, run kończy
+  się odrobinę SZYBCIEJ, nie wolniej.
+- Diagnoza porażki (na tych samych 1000 runach, wszystkie DEFEAT): mediana
+  cyklu porażki to wciąż cykl 1. W chwili porażki: 53,5% biegów miało
+  JAKIKOLWIEK zasilany budynek (46,5% było już w całkowitym brownoucie),
+  19,5% miało stojącą wieżę, 96,1% miało jakąkolwiek rudę w banku, ale
+  0,0% (dosłownie zero) miało >=50 rudy — progu na najtańszą wieżę
+  (KINETIC_TURRET) NIE osiągnął w chwili śmierci NI JEDEN z 1000 runów.
+  Mediana rudy w banku przy porażce: 7,6 (p90=13,4) — dokładnie rząd
+  wielkości ceny barykady (8), o rząd wielkości poniżej ceny wieży.
+  Innymi słowy: run łamie się na TEMPIE, nie na DYSCYPLINIE WYDATKÓW — baza
+  ginie szybciej, niż jakikolwiek porządek priorytetów zdążyłby jej pomóc,
+  bo dochód z ekstraktorów nie nadąża za tempem, w jakim wrogowie niszczą
+  CORE, niezależnie od tego, na co idzie ruda po drodze.
+- „wyczerpanie 1. złoża": nadal 0,0% na wszystkich 1000 seedach — z tego
+  samego powodu co wyżej: presja wroga kończy run, zanim jakikolwiek
+  ekstraktor zdąży wydobyć swoje ~400 rudy.
+- Zabicia: 44,4% słońce / 55,6% wieże — praktycznie bez zmiany względem
+  „przed" (45,4%/54,6%), zdominowane przez tę samą nieliczną grupę długich
+  przebiegów co poprzednio (patrz task-6-report.md).
 
-Te liczby wyznaczają punkt startowy Fazy 3: obecny balans [STROJENIE] (koszty
-budynków, tempo spawnu, progi energii) systematycznie faworyzuje wczesną, szybką
-porażkę nad jakąkolwiek formą obrony wieżowej dla tej klasy polityki.
+Dodatkowa obserwacja (zgłoszona, NIE naprawiona w tym zadaniu — możliwe drugie
+wystąpienie tej samej klasy zagłodzenia): w pojedynczych długich przebiegach
+polityka stawia kilkanaście SOLAR_PANEL pod rząd (zaobserwowane: 19 w jednym
+runie) — próg `storedEnergy < 50` przy rosnącej bazie może nigdy trwale nie
+zostać przekroczony, więc panel jest „zawsze pierwszą przystępną opcją" tej
+samej rangi co barykada przed poprawką. Nie zbadane głębiej w tym zadaniu.
+
+Te liczby wyznaczają punkt startowy Fazy 3: obecny balans [STROJENIE] — tempo
+spawnu, koszt ekstraktora, HP i tempo produkcji CORE — sprawia, że baza pada
+szybciej, niż JAKAKOLWIEK reguła wydawania trzymającej się dzisiejszych cen
+budynków zdąży coś na to poradzić. To pytanie o TEMPO EKONOMII względem
+TEMPA ATAKU, nie o kolejność priorytetów bota.
