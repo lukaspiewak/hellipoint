@@ -174,6 +174,41 @@ describe('stateHash', () => {
     variant.phase = 'VICTORY';
     expect(stateHash(variant)).not.toBe(h);
   });
+
+  // `createState` zawsze populuje `pentagons` (jeden wpis na pentagon planety, patrz
+  // `PentagonState` w state.ts, Task 4), więc — analogicznie do budynków/jednostek
+  // wyżej — bez poniższych pętla po pentagonach w hash.ts nigdy by się nie wykonała
+  // w całym pakiecie testów, a regresja w którymkolwiek z jej trzech pól przeszłaby
+  // niezauważona.
+
+  it('pentagon: zmiana `spawnAccumulator` zmienia hash', () => {
+    const h = stateHash(createState(planet, 150));
+    const variant = createState(planet, 150);
+    variant.pentagons[0].spawnAccumulator += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('pentagon: zmiana `eruptionCooldown` zmienia hash', () => {
+    const h = stateHash(createState(planet, 150));
+    const variant = createState(planet, 150);
+    variant.pentagons[0].eruptionCooldown += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('pentagon: zmiana `eruptionArmed` zmienia hash', () => {
+    const h = stateHash(createState(planet, 150));
+    const variant = createState(planet, 150);
+    variant.pentagons[0].eruptionArmed = true;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('pentagon: pozycja w tablicy ma znaczenie — ta sama zmiana pod innym indeksem daje inny hash', () => {
+    const a = createState(planet, 150);
+    a.pentagons[0].spawnAccumulator = 0.5;
+    const b = createState(planet, 150);
+    b.pentagons[1].spawnAccumulator = 0.5;
+    expect(stateHash(a)).not.toBe(stateHash(b));
+  });
 });
 
 /**
@@ -223,6 +258,7 @@ function perturb(s: SimState, key: HashedField): SimState {
     case 'oreRemaining': clone.oreRemaining[0] += 1; return clone;
     case 'buildings': clone.buildings[0]!.hp += 1; return clone;
     case 'units': clone.units[0].hp += 1; return clone;
+    case 'pentagons': clone.pentagons[0].spawnAccumulator += 1; return clone;
   }
 }
 

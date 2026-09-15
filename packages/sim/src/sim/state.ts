@@ -13,6 +13,26 @@ export type BuildingType =
 
 export type EnemyType = 'SWARM' | 'ARMOR' | 'DISRUPTOR';
 
+/**
+ * Stan pentagonu, równoległy do `planet.pentagons` (patrz pole `pentagons` niżej) —
+ * NIE indeksowany `cellId`. Populowany przez `updateSpawning` (spawning.ts, Task 4).
+ */
+export interface PentagonState {
+  /** Ułamkowy licznik jednostek do wypuszczenia — spawn bywa wolniejszy niż 1/tick. */
+  spawnAccumulator: number;
+  /** Sekundy do najbliższej erupcji. Używane wyłącznie przez zatkane pentagony. */
+  eruptionCooldown: number;
+  /**
+   * Czy `eruptionCooldown` zostało uzbrojone pełnym `eruptionInterval` od (po)nownego
+   * zatkania. Bez tej flagi startowe `eruptionCooldown = 0` jest nieodróżnialne od
+   * "właśnie odliczyło do zera" — pierwsza erupcja wystrzeliwałaby w TYM SAMYM ticku,
+   * w którym stanął cap, zamiast po pełnym interwale (patrz spawning.ts).
+   * Resetowana na `false`, gdy pentagon przestaje być zatkany, żeby ponowne zacapowanie
+   * liczyło interwał od nowa, a nie kontynuowało stare odliczenie.
+   */
+  eruptionArmed: boolean;
+}
+
 export interface Building {
   cellId: number;
   type: BuildingType;
@@ -69,6 +89,8 @@ export interface SimState {
   units: Unit[];
   nextUnitId: number;
   phase: Phase;
+  /** Równoległe do planet.pentagons, NIE indeksowane cellId. */
+  pentagons: PentagonState[];
 }
 
 export function createState(planet: Planet, startingOre: number): SimState {
@@ -82,5 +104,10 @@ export function createState(planet: Planet, startingOre: number): SimState {
     units: [],
     nextUnitId: 1,
     phase: 'RUNNING',
+    pentagons: planet.pentagons.map(() => ({
+      spawnAccumulator: 0,
+      eruptionCooldown: 0,
+      eruptionArmed: false,
+    })),
   };
 }

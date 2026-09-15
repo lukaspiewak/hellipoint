@@ -29,6 +29,12 @@ export function stateHash(s: SimState): string {
     h.float(s.oreRemaining[i]);
   }
 
+  for (const p of s.pentagons) {
+    h.float(p.spawnAccumulator);
+    h.float(p.eruptionCooldown);
+    h.int(p.eruptionArmed ? 1 : 0);
+  }
+
   for (const u of s.units) {
     h.int(u.id);
     h.str(u.type);
