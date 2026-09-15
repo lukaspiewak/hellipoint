@@ -829,13 +829,32 @@ describe('updateBurning', () => {
     const peak = s.units[0].exposure;
 
     for (let i = 0; i < 10; i++) updateBurning(s, noLight);
-    expect(s.units[0].exposure).toBeCloseTo(peak - 10 * TICK_SECONDS * SHADOW_RECOVERY_RATE, 6);
+    // Math.max(0, …) po obu stronach: kod klamruje w miejscu, więc oczekiwanie
+    // musi klamrować tak samo, inaczej test pęka przy legalnym przestrojeniu
+    // SHADOW_RECOVERY_RATE [STROJENIE] (Faza 3), nie przy regresji w kodzie —
+    // zmierzone: przy rate ≥ 2,0 (4× dzisiejszej wartości) `peak - 10*TICK*rate`
+    // sam wychodzi ujemny, mimo że kod poprawnie stoi na zerze.
+    expect(s.units[0].exposure).toBeCloseTo(
+      Math.max(0, peak - 10 * TICK_SECONDS * SHADOW_RECOVERY_RATE),
+      6,
+    );
   });
 
   it('regeneracja nie schodzi poniżej zera', () => {
     const s = withCore();
     spawnUnit(s, 'SWARM', 10);
-    for (let i = 0; i < 500; i++) updateBurning(s, noLight);
+    // Ekspozycja startowa MNIEJSZA niż jeden krok regeneracji
+    // (TICK_SECONDS * SHADOW_RECOVERY_RATE) — połowa jednego kroku, liczona ZE
+    // STAŁEJ, nie z literału (SHADOW_RECOVERY_RATE jest [STROJENIE], test ma
+    // zostać poprawny przy każdej dodatniej wartości). Bez tego jeden tick
+    // regeneracji nigdy nie przestrzeliwuje zera z tego konkretnego stanu:
+    // `spawnUnit` daje exposure=0, a `else if (u.exposure > 0)` w ogóle nie
+    // wchodzi w gałąź regeneracji przy zerze — `Math.max(0, …)`, jedyna rzecz,
+    // którą ten test nazywa, nigdy nie była osiągana (zmierzone mutacją:
+    // usunięcie samego Math.max przy tym samym starcie od zera zostawiało
+    // całą suitę zieloną).
+    s.units[0].exposure = (TICK_SECONDS * SHADOW_RECOVERY_RATE) / 2;
+    updateBurning(s, noLight);
     expect(s.units[0].exposure).toBe(0);
   });
 
@@ -854,7 +873,13 @@ describe('updateBurning', () => {
     spawnUnit(s, 'ARMOR', shallow);
     const fields = buildAllFlowFields(s);
 
-    const maxTicks = Math.ceil((ENEMIES.ARMOR.burnTime * 4) / TICK_SECONDS);
+    // Zmierzone: ARMOR ginie dokładnie na ticku 165 — tylko 5 ticków później niż czysty
+    // budżet spalania w miejscu (160 = burnTime/TICK_SECONDS), czyli ucieczka kupuje mu
+    // prawie nic, zgodnie z N3. Budżet `burnTime*4/TICK_SECONDS` (640) miał ~3,9× zapasu:
+    // zmierzone, że regresja spowalniająca akumulację ekspozycji o połowę przesuwa śmierć
+    // na tick 376 — WCIĄŻ w budżecie 640, test zielony. 250 (~1,5× zmierzonej potrzeby)
+    // łapie każdą regresję wolniejszą niż ~1,5×, w tym tamtą.
+    const maxTicks = 250;
     for (let t = 0; t < maxTicks && s.units.length > 0; t++) {
       const sun = sunDirection(t * TICK_SECONDS, T);
       const light = lightField(planet, sun);
@@ -910,6 +935,20 @@ import { TICK_SECONDS, type SimState } from './state.js';
 export const SHADOW_RECOVERY_RATE = 0.5;
 
 /**
+ * Tolerancja na błąd akumulacji zmiennoprzecinkowej `u.exposure += TICK_SECONDS`.
+ * NIE jest to liczba balansowa. TICK_SECONDS (0,05) nie ma dokładnej reprezentacji
+ * binarnej, więc suma po dokładnie `burnTime / TICK_SECONDS` krokach ląduje tuż
+ * PONIŻEJ `burnTime`, nie w nim — zmierzone: SWARM (burnTime 3, 60 kroków) daje
+ * 2,9999999999999973, ARMOR (burnTime 8, 160 kroków) daje 7,99999999999998.
+ * Bez tej tolerancji `>=` przegapia dokładną granicę o CAŁY TICK, za każdym razem,
+ * i implementacja oblewa własny test „ginie po dokładnie burnTime sekund".
+ * 1e-9 to ten sam rząd co `theta < 1e-9` w slerpToward: wiele rzędów wielkości
+ * powyżej zmierzonego błędu (~1e-14), i wiele rzędów poniżej jednego ticku (0,05 s),
+ * więc pochłania błąd i nie może przyspieszyć śmierci o krok.
+ */
+const EXPOSURE_EPSILON = 1e-9;
+
+/**
  * Ekspozycja na światło i śmierć od słońca (§4.4).
  * Sam RUCH ucieczki realizuje updateMovement — tutaj wyłącznie akumulacja i skutek.
  */
@@ -919,7 +958,7 @@ export function updateBurning(s: SimState, light: Float32Array): void {
   for (const u of s.units) {
     if (light[u.cellId] > 0) {
       u.exposure += TICK_SECONDS;
-      if (u.exposure >= ENEMIES[u.type].burnTime) {
+      if (u.exposure >= ENEMIES[u.type].burnTime - EXPOSURE_EPSILON) {
         u.hp = 0;
         anyDead = true;
       }
