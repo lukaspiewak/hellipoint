@@ -115,7 +115,20 @@ Testy do napisania, każdy z wartością wziętą z rzeczywistej planety, nie z 
    > normalnych na wyjściu**. Asercja ma czytać to, co funkcja wyprodukowała.
 6. kolejność wierzchołków daje trójkąty **zwrócone na zewnątrz** (winding), sprawdzone iloczynem wektorowym wobec normalnej komórki
 7. determinizm: dwa wywołania na tym samym seedzie dają identyczne tablice co do bitu
-8. **kontrola pozytywna:** inna `frequency` daje inne liczby wierzchołków i trójkątów.
+8. **tożsamość per komórka, PRZEZ WARTOŚĆ** — wierzchołek pod `cellVertexStart[i]` to
+   `cells[i].center`, a kolejne `cellVertexCount[i] - 1` to jej **własne** `corners`, w kolejności.
+
+   > **To jest najważniejszy test w tym zadaniu i nie wynika z żadnego innego.** Wszystkie
+   > pozostałe sprawdzają własności SUMARYCZNE — sumę, pokrycie, brak nakładania, położenie
+   > na sferze — a **zamiana zakresów między dwiema komórkami tego samego typu zachowuje je
+   > wszystkie**. Zmierzone: taka zamiana przechodziła komplet ośmiu testów, przy ~1,02 miliona
+   > możliwych par samych heksów. Skutek byłby widoczny i mylący: `writeCellColors` pomalowałby
+   > wielobok jednej komórki kolorem drugiej, a raycaster Fazy 2C zwracałby po kliknięciu cudze
+   > `cellId`. Obie awarie wyglądają jak błąd renderu, nie jak błąd mapowania.
+   > Po dopisaniu: zamiana daje **14 rozbieżności** (7 wierzchołków × 2 komórki) i oblewa
+   > **wyłącznie ten test**, przy ośmiu pozostałych zielonych.
+
+9. **kontrola pozytywna:** inna `frequency` daje inne liczby wierzchołków i trójkątów.
    Ten test istnieje po to, żeby złapać implementację zwracającą puste tablice — i **złapał
    realny defekt dwóch innych testów z tej listy**: punkty 2 i 5, zapisane naiwnie, degenerują
    się przy pustych tablicach do pustej pętli, więc ich `expect` nie wykonuje się ani razu.
