@@ -30,4 +30,10 @@ export {
   type OrbitCamera,
 } from './camera.js';
 export { createPlanetMesh, type PlanetMesh } from './planetMesh.js';
-export { createScene, type PlanetScene, type SceneRenderer } from './scene.js';
+export {
+  cappedPixelRatio,
+  createScene,
+  MAX_PIXEL_RATIO,
+  type PlanetScene,
+  type SceneRenderer,
+} from './scene.js';

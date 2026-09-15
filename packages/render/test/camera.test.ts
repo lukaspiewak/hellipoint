@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createPlanet, cross, dot, normalize, scale, type Vec3 } from '@heliopolis/sim';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   clampDistance,
   createCamera,
@@ -213,5 +214,21 @@ describe('createCamera / OrbitCamera.focusOn — to samo spięte z prawdziwym Or
   it('dispose() nie rzuca (OrbitControls poprawnie odłączony od atrapy canvasu)', () => {
     const camera = createCamera(createFakeCanvas(), radius);
     expect(() => camera.dispose()).not.toThrow();
+  });
+
+  // Runda poprawek 1: przegląd zmierzył, że wypatroszenie dispose() (we wszystkich trzech
+  // modułach Zadania 4) do pustej funkcji zostawiało komplet testów zielonym — "nie rzuca"
+  // wyżej przechodzi identycznie, czy dispose() coś robi, czy nic. Ten test sprawdza SKUTEK
+  // (czy `OrbitControls.dispose` faktycznie się wykonał), szpiegując na prototypie klasy —
+  // `controls` jest lokalną zmienną w domknięciu `createCamera`, więc nie da się złapać jej
+  // PO INSTANCJI z zewnątrz.
+  it('dispose() faktycznie woła OrbitControls.dispose() (nie tylko nie rzuca)', () => {
+    const disposeSpy = vi.spyOn(OrbitControls.prototype, 'dispose');
+    const camera = createCamera(createFakeCanvas(), radius);
+
+    camera.dispose();
+
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    disposeSpy.mockRestore();
   });
 });

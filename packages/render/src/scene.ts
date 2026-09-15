@@ -22,6 +22,16 @@ export interface PlanetScene {
    */
   render(light: Float32Array, sunDir: Vec3): void;
   readonly camera: OrbitCamera;
+  /**
+   * Przelicza proporcje kamery i `devicePixelRatio` renderera na podstawie bieżących
+   * wymiarów `canvas` — wołane automatycznie raz przy tworzeniu sceny i przy każdym
+   * zdarzeniu `resize` okna (patrz `createSceneWithRenderer`). Wystawione też WPROST
+   * (nie tylko jako prywatny nasłuch), z dwóch powodów: (1) testowalność — Vitest/Node
+   * nie ma `window`, więc bez tej metody nic z tej logiki nie dałoby się wywołać z testu;
+   * (2) wywołujący, który osadza canvas w panelu zmieniającym rozmiar bez natywnego
+   * zdarzenia `resize` okna, może wymusić przeliczenie sam.
+   */
+  resize(): void;
   /** Zwalnia kamerę, siatkę planety i renderer; odłącza nasłuch resize okna. */
   dispose(): void;
 }
@@ -30,6 +40,25 @@ export interface PlanetScene {
 // pusty canvas dowodzący, że rura Three.js → `<canvas>` działa); teraz żyje przy
 // PRAWDZIWEJ scenie, którą to zadanie dostarcza.
 const CLEAR_COLOR = 0x0a0e14; // [WYGLĄD]
+
+/**
+ * Górny limit `devicePixelRatio` faktycznie przekazywany do renderera — [WYGLĄD].
+ * Wyświetlacze retina/HiDPI potrafią zgłaszać 3 i więcej; liczba pikseli do wypełnienia
+ * rośnie z KWADRATEM tego czynnika (podwojenie → 4× kosztu), a oko przestaje odróżniać
+ * różnicę ostrości powyżej ok. 2× z typowej odległości od ekranu grania. Bez tego limitu
+ * (albo bez wołania `setPixelRatio` w ogóle) renderer albo rysuje w rozdzielczości CSS
+ * (rozmyte na HiDPI), albo płaci pełną cenę fizycznych pikseli bez potrzeby.
+ */
+export const MAX_PIXEL_RATIO = 2; // [WYGLĄD]
+
+/**
+ * Przycina `devicePixelRatio` do `MAX_PIXEL_RATIO`. Funkcja CZYSTA — testowalna bez
+ * `window` (którego Vitest/Node nie ma), w przeciwieństwie do samego odczytu
+ * `window.devicePixelRatio`, który jest DOM-owy i zostaje w `resize()` niżej.
+ */
+export function cappedPixelRatio(devicePixelRatio: number): number {
+  return Math.min(devicePixelRatio, MAX_PIXEL_RATIO);
+}
 
 /**
  * Dokładnie te metody `WebGLRenderer`, których faktycznie używa `createSceneWithRenderer`
@@ -78,9 +107,16 @@ export function createSceneWithRenderer(
   // nieistotne dla własności, które sprawdza `scene.test.ts` — a pozwala tej samej,
   // prawdziwej funkcji `resize` wykonać się bez wyjątku w Node/Vitest (brak `window`),
   // czyli dokładnie "trzymać logikę DOM poza asercją", nie "osłabiać asercję".
+  //
+  // `setPixelRatio` żyje TUTAJ (nie jako osobne wywołanie tylko przy konstrukcji), żeby
+  // jedno miejsce pokrywało oba wymagane momenty: przy tworzeniu sceny (`resize()` wołane
+  // niżej, raz) i przy każdej zmianie rozmiaru okna (przez nasłuch) — bez duplikowania
+  // tej samej linii w dwóch miejscach.
   const resize = (): void => {
     const width = canvas.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1);
     const height = canvas.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1);
+    const devicePixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio : 1;
+    renderer.setPixelRatio(cappedPixelRatio(devicePixelRatio));
     renderer.setSize(width, height, false);
     camera.object.aspect = width / height;
     camera.object.updateProjectionMatrix();
@@ -92,6 +128,7 @@ export function createSceneWithRenderer(
 
   return {
     camera,
+    resize,
     render(light: Float32Array, sunDir: Vec3): void {
       void sunDir; // patrz komentarz przy `PlanetScene.render` wyżej
       camera.update();

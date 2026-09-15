@@ -7,7 +7,12 @@ import { DEFAULT_PALETTE, writeCellColors, type Palette } from './shading.js';
  * odświeżenie kolorów (Zadanie 3) co klatkę bez alokacji.
  */
 export interface PlanetMesh {
-  readonly mesh: Mesh;
+  // Generyki podane WPROST (nie domyślne `Mesh`): domyślny `TMaterial` w typach Three.js
+  // to `Material | Material[]` (mesh może mieć wiele materiałów per grupa geometrii) — bez
+  // zawężenia `mesh.material` byłoby tą szeroką unią dla KAŻDEGO konsumenta tego interfejsu,
+  // zmuszając do rzutowania nawet tam, gdzie wiadomo, że to zawsze jeden `MeshBasicMaterial`
+  // (dokładnie to, co ten moduł konstruuje, patrz `createPlanetMesh` niżej).
+  readonly mesh: Mesh<BufferGeometry, MeshBasicMaterial>;
   /**
    * Przelicza kolory wszystkich komórek wg `light` (np. z `lightField`) i pisze je do
    * WŁASNEGO, raz zaalokowanego bufora — patrz komentarz przy `colors` niżej. Bezpieczne

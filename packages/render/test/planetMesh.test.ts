@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BufferAttribute, MeshBasicMaterial, MeshStandardMaterial } from 'three';
 import { createPlanet, lightField, sunDirection } from '@heliopolis/sim';
 import { buildPlanetGeometry } from '../src/geometry.js';
@@ -17,7 +17,7 @@ describe('createPlanetMesh — materiał BEZ modelu oświetlenia (D1 stoi na tym
     const planetMesh = createPlanetMesh(geo);
     expect(planetMesh.mesh.material).toBeInstanceOf(MeshBasicMaterial);
     expect(planetMesh.mesh.material).not.toBeInstanceOf(MeshStandardMaterial);
-    expect((planetMesh.mesh.material as MeshBasicMaterial).vertexColors).toBe(true);
+    expect(planetMesh.mesh.material.vertexColors).toBe(true);
     planetMesh.dispose();
   });
 });
@@ -70,5 +70,24 @@ describe('createPlanetMesh — bufor kolorów: własność tego modułu, zaaloko
     // paletą, o poprawnej długości `LIGHT_BANDS.length + 1` (dziedziczonej z DEFAULT_PALETTE).
     expect(() => planetMesh.updateColors(light, DEFAULT_PALETTE)).not.toThrow();
     planetMesh.dispose();
+  });
+});
+
+// Runda poprawek 1: przegląd zmierzył, że wypatroszenie dispose() do pustej funkcji (we
+// wszystkich trzech modułach Zadania 4) zostawiało komplet testów zielonym. Tu — w
+// przeciwieństwie do `scene.test.ts`, gdzie `PlanetMesh` nie jest wystawiony — mamy
+// bezpośredni dostęp do `planetMesh.mesh.geometry`/`.material` (Three.js `Mesh` wystawia
+// je publicznie), więc szpiegujemy PO INSTANCJI, nie po prototypie klasy — ostrzejsze,
+// bo dowodzi, że dysponuje się WŁAŚCIWYM obiektem, nie "jakąkolwiek instancją tej klasy".
+describe('createPlanetMesh — dispose() zwalnia geometrię i materiał', () => {
+  it('woła dispose() na geometrii i materiale TEJ KONKRETNEJ siatki', () => {
+    const planetMesh = createPlanetMesh(geo);
+    const geometryDisposeSpy = vi.spyOn(planetMesh.mesh.geometry, 'dispose');
+    const materialDisposeSpy = vi.spyOn(planetMesh.mesh.material, 'dispose');
+
+    planetMesh.dispose();
+
+    expect(geometryDisposeSpy).toHaveBeenCalledTimes(1);
+    expect(materialDisposeSpy).toHaveBeenCalledTimes(1);
   });
 });
