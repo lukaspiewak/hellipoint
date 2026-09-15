@@ -119,11 +119,24 @@
       <div id="prompt"></div>
       <div id="tally"></div>
       <button id="next-btn" disabled>Dalej →</button>
-      <h2>Kontrola pozytywna</h2>
+      <h2>Tryb porównawczy (to NIE jest kontrola pozytywna)</h2>
       <div style="opacity: 0.85">
-        Jeśli granica jest niewidoczna nawet w cieniowaniu progowanym, to jest realny wynik.
-        Poniższy przycisk pokazuje tę samą planetę BEZ progowania (gładki gradient) — dowód,
-        że ten test w ogóle POTRAFI wyprodukować "nie widzę". Klik w tym trybie się nie liczy.
+        Jeśli granica jest niewidoczna nawet w cieniowaniu progowanym, to jest realny wynik —
+        zapisz go, nie próbuj go obejść. Klik w trybie porównawczym się nie liczy.
+        <br /><br />
+        <strong>Uwaga, jeśli znasz poprzednią wersję tego panelu:</strong> ten przycisk był tu
+        opisany jako kontrola pozytywna, czyli dowód, że bramka potrafi wyprodukować odpowiedź
+        „nie widzę". <strong>Nie potrafi</strong>, i to zdanie zostało usunięte jako fałszywe.
+        Tryb gładki zmienia mapowanie palety, a nie interpolację: nadal maluje każdą komórkę
+        jednym płaskim kolorem, bo każda ma własne wierzchołki. Awaria zmierzona w Fazie 0 była
+        inna — tam kolor rozmazywał się PO POWIERZCHNI między wierzchołkami współdzielonymi.
+        Tej awarii ta architektura nie umie odtworzyć. Zmierzone: w trybie gładkim komórka
+        oświetlona nadal jest jaśniejsza od ciemnej (0,030–0,081 na kanał), więc komplet
+        trafień jest tu osiągalny przez samo wskazywanie jaśniejszej.
+        <br /><br />
+        Co ten przycisk pokazuje NAPRAWDĘ: ile kontrastu dokłada progowanie ponad to, co dowozi
+        sama geometria. Odległość barwna pary rośnie z około 0,07–0,12 do 0,90, czyli 7–13 razy.
+        Czytelność granicy dowozi geometria (płaskie komórki); progowanie czyni ją wygodną.
       </div>
       <button id="mode-toggle"></button>
       <div id="final" hidden>

@@ -10,6 +10,7 @@ import {
   type Palette,
   type Rgb,
 } from '../src/shading.js';
+import { findTerminatorPairs, selectSpreadPairs } from '../src/terminatorPairs.js';
 
 // Ta sama planeta-fixture co `geometry.test.ts` (ten sam seed) — oba pliki testowe w tym
 // pakiecie mówią więc o TEJ SAMEJ "prawdziwej planecie", nie o dwóch różnych.
@@ -283,34 +284,94 @@ describe('writeCellColors', () => {
   });
 });
 
-describe('writeCellColorsSmooth — KONTROLA POZYTYWNA bramki czytelności (Zadanie 5)', () => {
-  it('14. dwie komórki z RÓŻNYMI light dostają RÓŻNE, ale BLISKIE kolory na granicy geometrycznej — brak progu, brak skoku', () => {
-    // Fixture syntetyczna (wzorzec testu 11 powyżej): dwie komórki, jeden wierzchołek każda,
-    // `light` tuż pod i tuż nad `dot == 0` — dokładnie tam, gdzie `writeCellColors` (progowane)
-    // robi swój NAJWIĘKSZY skok (pasmo 0 -> pasmo 1), a ten wariant ma zamiast tego dać
-    // kolor niemal identyczny: to JEST "granica niewidoczna", zoperacjonalizowana jako liczba.
-    const geo2: PlanetGeometry = {
-      positions: new Float32Array(2 * 3),
-      normals: new Float32Array(2 * 3),
-      indices: new Uint32Array(0),
-      cellVertexStart: Uint32Array.from([0, 1]),
-      cellVertexCount: Uint32Array.from([1, 1]),
+describe('writeCellColorsSmooth — tryb gładki na PRAWDZIWYCH parach terminatora (Zadanie 5)', () => {
+  it('14. na PRAWDZIWYCH parach terminatora tryb gładki daje różnicę WYRAŹNIE niezerową, zawsze w tę samą stronę — i dlatego NIE jest kontrolą', () => {
+    // Ten test był wcześniej napisany na fixture SYNTETYCZNEJ `light = [0.499, 0.501]` z
+    // komentarzem, że to miejsce "NAJWIĘKSZEGO skoku (pasmo 0 -> 1)" progowania. Zmierzone —
+    // obie te liczby leżą w paśmie 2 (progi to [0,05, 0,4]), więc `writeCellColors` daje tam
+    // odległość barwną DOKŁADNIE 0,0000, a nie największy skok; największy skok (pasmo 0->1)
+    // wynosi 0,9005 i występuje gdzie indziej. `dot == 0` znaczy `light == 0`, nie 0,5.
+    // Asercja `|Δ| < 0,01` była przy tym spełniona Z KONSTRUKCJI: interpolacja liniowa ×
+    // odstęp wejścia 0,002 × rozpiętość palety ≤ 0,95 daje najwyżej 0,0019.
+    //
+    // Przepisane na PRAWDZIWE `lightField` i PRAWDZIWE pary sąsiadów przez terminator — te
+    // same, które bramka pokazuje człowiekowi. Liczby są takie, jakie wyszły; stara asercja
+    // na tych danych OBLEWA.
+    //
+    // To jest zarazem zapis ustalenia z §7.3.1 specu: `writeCellColorsSmooth` zmienia
+    // MAPOWANIE palety, nie INTERPOLACJĘ — nadal maluje każdą komórkę jednym płaskim
+    // kolorem, bo geometria Zadania 2 daje każdej własne wierzchołki. Tryb awarii Fazy 0
+    // (kolor interpolowany PO POWIERZCHNI, między współdzielonymi wierzchołkami) jest przez
+    // tę architekturę nieodtwarzalny z konstrukcji. Dlatego ta funkcja NIE jest kontrolą
+    // pozytywną bramki — i ten test mierzy dokładnie to, dlaczego nie jest.
+    const smooth = new Float32Array(geo.positions.length);
+    const thresholded = new Float32Array(geo.positions.length);
+    writeCellColorsSmooth(geo, light, smooth, DEFAULT_PALETTE);
+    writeCellColors(geo, light, thresholded, DEFAULT_PALETTE);
+
+    const colorOf = (buf: Float32Array, cellId: number): Rgb => {
+      const o = geo.cellVertexStart[cellId] * 3;
+      return [buf[o], buf[o + 1], buf[o + 2]];
     };
-    const light2 = Float32Array.from([0.499, 0.501]);
-    const out2 = new Float32Array(geo2.positions.length);
+    const distance = (a: Rgb, b: Rgb): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    // Luminancja wg współczynników sRGB — "która komórka wygląda jaśniej", nie "która ma
+    // większą sumę składowych": przy dwóch różnych odcieniach (granat vs ciepła biel) suma
+    // składowych i wrażenie jasności mogą się rozjechać.
+    const luminance = (c: Rgb): number => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 
-    writeCellColorsSmooth(geo2, light2, out2, DEFAULT_PALETTE);
-    const colorA: Rgb = [out2[0], out2[1], out2[2]];
-    const colorB: Rgb = [out2[3], out2[4], out2[5]];
+    // Pary z `findTerminatorPairs` — DOKŁADNIE te, których używa harness bramki, a nie
+    // osobno wymyślone na potrzeby tego testu.
+    const pairs = selectSpreadPairs(findTerminatorPairs(planet.cells, light), 5);
+    expect(pairs.length).toBe(5); // kontrola pozytywna: pętla niżej ma na czym pracować
 
-    // Kontrola pozytywna na sam test: kolory NIE są identyczne (funkcja naprawdę reaguje na
-    // light, nie zwraca stałej) — ale różnica musi być drobna, rzędu różnicy wejścia (0,002),
-    // nie rzędu skoku między pasmami DEFAULT_PALETTE (który dla writeCellColors — patrz test
-    // 6 — wynosi całą odległość między dwoma sąsiednimi kolorami palety).
-    expect(colorA).not.toEqual(colorB);
-    for (let i = 0; i < 3; i++) {
-      expect(Math.abs(colorA[i] - colorB[i])).toBeLessThan(0.01);
+    let checked = 0;
+    let minPerChannel = Number.POSITIVE_INFINITY;
+    let maxPerChannel = 0;
+    let minRatio = Number.POSITIVE_INFINITY;
+
+    for (const pair of pairs) {
+      const litSmooth = colorOf(smooth, pair.litCellId);
+      const darkSmooth = colorOf(smooth, pair.darkCellId);
+      const litThresh = colorOf(thresholded, pair.litCellId);
+      const darkThresh = colorOf(thresholded, pair.darkCellId);
+
+      // (1) W trybie gładkim różnica jest NIEZEROWA i zawsze w tę samą stronę: komórka,
+      //     którą symulacja oświetla, jest jaśniejsza. To jest cała przyczyna, dla której
+      //     ten tryb nie potrafi wyprodukować odpowiedzi "nie widzę" przy wymuszonym
+      //     wyborze dwóch alternatyw — wystarczy wskazać jaśniejszą.
+      expect(luminance(litSmooth), `para (${pair.litCellId}, ${pair.darkCellId})`).toBeGreaterThan(
+        luminance(darkSmooth),
+      );
+
+      // (2) Rozmiar różnicy — zmierzony, nie założony. Na tych parach różnica na kanał
+      //     mieści się w 0,030..0,081, czyli KILKAKROTNIE POWYŻEJ progu 0,01, którego
+      //     wymagała poprzednia wersja tego testu na fixture syntetycznej (tam wychodziło
+      //     0,0012..0,0019 — i wychodziło tak z konstrukcji, nie z własności funkcji).
+      for (let i = 0; i < 3; i++) {
+        const d = Math.abs(litSmooth[i] - darkSmooth[i]);
+        minPerChannel = Math.min(minPerChannel, d);
+        maxPerChannel = Math.max(maxPerChannel, d);
+      }
+
+      // (3) Progowanie na TEJ SAMEJ parze daje pełny skok palety — zawsze ten sam, bo to
+      //     skok między dwoma stałymi kolorami, niezależny od tego, jak blisko progu leży
+      //     konkretna komórka. Progowanie więc kontrast PODBIJA; nie ono go TWORZY.
+      const smoothDistance = distance(litSmooth, darkSmooth);
+      const thresholdDistance = distance(litThresh, darkThresh);
+      expect(thresholdDistance).toBeCloseTo(
+        distance(froundRgb(DEFAULT_PALETTE[0]), froundRgb(DEFAULT_PALETTE[1])),
+        5,
+      );
+      minRatio = Math.min(minRatio, thresholdDistance / smoothDistance);
+      checked++;
     }
+
+    expect(checked).toBe(pairs.length); // pętla przeszła wszystkie pary, nie zero
+    // Przypięte zakresy — szerokie na tyle, żeby nie łamały się na zmianie palety o włos,
+    // wąskie na tyle, żeby złapać powrót do fixture, która "spełnia asercję z konstrukcji".
+    expect(minPerChannel).toBeGreaterThan(0.02);
+    expect(maxPerChannel).toBeLessThan(0.15);
+    expect(minRatio).toBeGreaterThan(5); // zmierzone: 7,4..12,7 razy
   });
 
   it('15. light=0 daje DOKŁADNIE palette[0], light=1 daje DOKŁADNIE palette[ostatni] — końce gradientu są końcami palety', () => {

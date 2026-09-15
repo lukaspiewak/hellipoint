@@ -252,7 +252,7 @@ describe('createReadabilityGate — handleClick: scoring i odsłonięcie', () =>
     gate.dispose();
   });
 
-  it('13. [KONTROLA POZYTYWNA trybu kontrolnego] w trybie "smooth" klik NIE zapisuje odpowiedzi, nawet trafiając idealnie we znacznik', () => {
+  it('13. [TRYB PORÓWNAWCZY] w trybie "smooth" klik NIE zapisuje odpowiedzi, nawet trafiając idealnie we znacznik', () => {
     const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
       createFakeRenderer(),
     );

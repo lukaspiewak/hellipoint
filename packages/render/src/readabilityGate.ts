@@ -69,12 +69,25 @@ import type { GateTrial } from './terminatorPairs.js';
  *   obciążeniem typu "chcę, żeby wyszło PASS" — piętnaście trafień z rzędu przez czysty zgad
  *   ma prawdopodobieństwo 0,5¹⁵ ≈ 0,00003.
  *
- * ## Tryb kontrolny (KONTROLA POZYTYWNA)
+ * ## Tryb porównawczy — NIE jest kontrolą pozytywną
  *
  * `setMode('smooth')` przełącza cieniowanie CAŁEJ planety (nie samych znaczników) na
- * `writeCellColorsSmooth` — gładki gradient bez progowania, dokładnie to, co bramka Fazy 0
- * zmierzyła jako nieczytelne. Klik w tym trybie NIC nie zapisuje (`handleClick` zwraca
- * `null`) — to jest demonstracja czułości instrumentu, nie część piętnastu ocenianych prób.
+ * `writeCellColorsSmooth` — gradient bez progowania. Klik w tym trybie NIC nie zapisuje
+ * (`handleClick` zwraca `null`): nie jest częścią piętnastu ocenianych prób.
+ *
+ * **Ten tryb był opisany jako kontrola pozytywna i tym nie jest.** Ustalone przez
+ * właściciela projektu i zmierzone (spec §7.3.1): `writeCellColorsSmooth` zmienia MAPOWANIE
+ * palety, a nie INTERPOLACJĘ — nadal maluje każdą komórkę jednym płaskim kolorem, bo
+ * `geometry.ts` daje każdej własne wierzchołki. Tryb awarii Fazy 0 (kolor interpolowany PO
+ * POWIERZCHNI, między wierzchołkami współdzielonymi, granica ROZMAZANA) jest przez tę
+ * architekturę nieodtwarzalny z konstrukcji. Na prawdziwych parach terminatora różnica
+ * barwna w trybie gładkim jest niezerowa (0,030–0,081 na kanał) i zawsze w tę samą stronę,
+ * więc przy wymuszonym wyborze dwóch alternatyw komplet trafień jest osiągalny także tutaj.
+ *
+ * Co ten przełącznik POKAZUJE, i co jest warte pokazania: ile kontrastu dokłada progowanie
+ * ponad to, co dowozi sama geometria (odległość barwna pary rośnie z ~0,07–0,12 do 0,90).
+ * Czytelność dowozi GEOMETRIA; progowanie czyni ją wygodną. Kontrola pozytywna
+ * odtwarzająca RZECZYWISTY tryb awarii Fazy 0 jest do domknięcia w Fazie 2B (§7.3.2).
  */
 
 // --- Stałe wizualne znacznika — [WYGLĄD], żadna nie wpływa na WŁASNOŚĆ "identyczne dla
@@ -175,7 +188,7 @@ export interface ReadabilityGate {
   setMode(mode: GateMode): void;
   /**
    * Skoruje klik na WSPÓŁRZĘDNYCH CANVASU (piksele CSS — `event.offsetX`/`offsetY`).
-   * Zwraca `null`, gdy: tryb ≠ `'threshold'` (klik w kontroli pozytywnej się nie liczy),
+   * Zwraca `null`, gdy: tryb ≠ `'threshold'` (klik w trybie porównawczym się nie liczy),
    * bieżąca próba jest już odsłonięta, gate jest już skończony, albo klik nie trafił w
    * ŻADEN z dwóch znaczników bieżącej pary. W przeciwnym razie zapisuje odpowiedź, odsłania
    * prawdę na znacznikach (zielony = faktycznie oświetlony, czerwony = faktycznie ciemny —

@@ -68,7 +68,9 @@ modeBtn.addEventListener('click', () => {
 function refreshUI(): void {
   const controlMode = gate.mode() !== 'threshold';
   modeBtn.textContent =
-    gate.mode() === 'threshold' ? 'Pokaż kontrolę pozytywną (cieniowanie ciągłe)' : 'Wróć do progowania (tryb oceniany)';
+    gate.mode() === 'threshold'
+      ? 'Pokaż tryb porównawczy (cieniowanie ciągłe) — to NIE jest kontrola pozytywna'
+      : 'Wróć do progowania (tryb oceniany)';
 
   if (gate.isFinished()) {
     statusEl.textContent = `Zakończono — ${trials.length}/${trials.length} prób rozstrzygniętych.`;
@@ -99,7 +101,7 @@ function refreshUI(): void {
 
   if (controlMode) {
     promptEl.textContent =
-      'TRYB KONTROLNY (cieniowanie ciągłe, bez progowania) — kliknięcia się NIE liczą. Wróć do progowania, żeby kontynuować ocenianą próbę.';
+      'TRYB PORÓWNAWCZY (cieniowanie ciągłe, bez progowania) — kliknięcia się NIE liczą. To NIE jest kontrola pozytywna: komórka oświetlona jest tu nadal jaśniejsza od ciemnej, więc trafienie jest osiągalne. Pokazuje, ile kontrastu dokłada progowanie. Wróć do progowania, żeby kontynuować ocenianą próbę.';
     nextBtn.disabled = true;
   } else if (!gate.isRevealed()) {
     promptEl.textContent = 'Kliknij znacznik, który Twoim zdaniem leży na OŚWIETLONEJ komórce.';

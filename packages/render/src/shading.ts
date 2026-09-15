@@ -171,22 +171,43 @@ export function writeCellColors(
 }
 
 /**
- * KONTROLA POZYTYWNA bramki czytelności (Zadanie 5, harness `readabilityGate.ts`) — odtwarza
- * CELOWO dokładnie to, co bramka Fazy 0 zmierzyła jako NIECZYTELNE: gładką interpolację
- * `saturate(dot(normal, sunDir))` między kolorem nocy a kolorem dnia, całkowicie POMIJAJĄC
- * `LIGHT_BANDS`/`lightBand`. Nigdy używana w normalnym renderze gry — `planetMesh.ts`/`scene.ts`
- * wołają wyłącznie `writeCellColors` powyżej. Istnieje wyłącznie po to, żeby harness bramki
- * czytelności miał tryb, w którym granica dzień/noc NAPRAWDĘ znika, żeby człowiek mógł
- * potwierdzić, że instrument jest w ogóle zdolny wyprodukować odpowiedź "nie widzę" — bez tego
- * kontrastu piętnaście poprawnych wskazań niczego by nie dowodziło (mogłyby wyjść poprawne,
- * nawet gdyby harness w ogóle nie umiał pokazać nieczytelnej granicy).
+ * Tryb GŁADKI cieniowania: interpolacja liniowa między kolorem nocy a kolorem dnia wg
+ * `saturate(dot(normal, sunDir))`, całkowicie POMIJAJĄC `LIGHT_BANDS`/`lightBand`. Nigdy
+ * używana w normalnym renderze gry — `planetMesh.ts`/`scene.ts` wołają wyłącznie
+ * `writeCellColors` powyżej. Napędza przełącznik porównawczy w harnessie bramki
+ * (`readabilityGate.ts`, `setMode('smooth')`).
  *
- * Interpoluje liniowo, PER KOMÓRKA (nie per wierzchołek — te i tak niosą tę samą wartość
- * `light[i]`, bo `geometry.ts` daje płaskie normalne, więc nie ma tu żadnej interpolacji PO
- * WIERZCHOŁKU, którą robiłby GPU między dwoma różnymi wartościami tej samej komórki — to nie
- * jest ten sam gradient, co discutowany w Fazie 0; TU chodzi wyłącznie o brak progowania
- * MIĘDZY komórkami), między `palette[0]` ("noc") i `palette[palette.length - 1]` ("dzień")
- * wg `light[i]` (0..1, już `saturate(dot)` z `lightAt`/`lightField`).
+ * ## TO NIE JEST KONTROLA POZYTYWNA BRAMKI — i było tak opisane błędnie
+ *
+ * Pierwotnie ta funkcja miała być kontrolą pozytywną: trybem, w którym granica dzień/noc
+ * NAPRAWDĘ znika, żeby człowiek potwierdził, że instrument w ogóle potrafi wyprodukować
+ * odpowiedź "nie widzę". NIE POTRAFI. Ustalone przez właściciela projektu na żywym renderze
+ * i zmierzone (spec §7.3.1):
+ *
+ * **Ta funkcja zmienia MAPOWANIE palety, nie INTERPOLACJĘ.** Nadal maluje każdą komórkę
+ * JEDNYM płaskim kolorem, bo `geometry.ts` daje każdej komórce własne wierzchołki. Tryb
+ * awarii zmierzony w Fazie 0 był inny: tam kolor był interpolowany PO POWIERZCHNI, między
+ * wierzchołkami WSPÓŁDZIELONYMI przez sąsiadów, i granica się ROZMAZYWAŁA. Tej awarii ta
+ * architektura nie potrafi odtworzyć z konstrukcji — musiałaby mieć współdzielone
+ * wierzchołki albo liczyć kolor per wierzchołek z pozycji, a nie per komórka.
+ *
+ * Zmierzone na prawdziwych parach terminatora (`shading.test.ts`, test 14): różnica barwna
+ * w trybie gładkim wynosi 0,030–0,081 na kanał, jest NIEZEROWA i zawsze w tę samą stronę —
+ * komórka oświetlona jest jaśniejsza. Przy wymuszonym wyborze dwóch alternatyw wystarczy
+ * wskazać jaśniejszą, więc komplet trafień jest w tym trybie osiągalny.
+ *
+ * Co ta funkcja NAPRAWDĘ pokazuje, i co jest warte pokazania: **ile kontrastu dokłada
+ * progowanie ponad to, co dowozi sama geometria.** Progowanie podbija odległość barwną
+ * pary z ~0,07–0,12 do 0,90 (7,4–12,7×). Czytelność granicy dowozi GEOMETRIA z Zadania 2
+ * (płaskie cieniowanie per komórka czyni granicę WIDZIALNĄ); progowanie z Zadania 3 czyni
+ * ją WYGODNĄ. To dwie różne zasługi i dotąd przypisywaliśmy obie progowaniu.
+ *
+ * Kontrola pozytywna odtwarzająca RZECZYWISTY tryb awarii Fazy 0 jest do domknięcia w
+ * Fazie 2B (spec §7.3.2).
+ *
+ * Interpoluje liniowo, PER KOMÓRKA, między `palette[0]` ("noc") i
+ * `palette[palette.length - 1]` ("dzień") wg `light[i]` (0..1, już `saturate(dot)` z
+ * `lightAt`/`lightField`).
  *
  * Te same trzy `RangeError` co `writeCellColors`, z tego samego powodu (te same bufory
  * własności wywołującego) — poza strażnikiem długości palety: ta funkcja nie zna

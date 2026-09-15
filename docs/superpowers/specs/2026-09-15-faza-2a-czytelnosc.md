@@ -212,23 +212,37 @@ To jest najbardziej newralgiczna część projektu — patrz ostrzeżenie w brie
    oświetlona, czerwony = faktycznie ciemna — niezależnie od tego, co kliknięto (patrz
    `readabilityGate.test.ts`, testy 8–10).
 
-### 5.3 Kontrola pozytywna
+### 5.3 Tryb porównawczy — NIE jest kontrolą pozytywną
 
-`gate.html` ma przycisk "Pokaż kontrolę pozytywną (cieniowanie ciągłe)", który przełącza
-`ReadabilityGate.setMode('smooth')` — CAŁA planeta (nie znaczniki) przechodzi na
-`writeCellColorsSmooth` (`shading.ts`): interpolację liniową między kolorem nocy i dnia,
-BEZ progowania `LIGHT_BANDS` — dosłownie to, co bramka Fazy 0 zmierzyła jako
-NIECZYTELNE. Kliknięcia w tym trybie **nie są zapisywane** (`handleClick` zwraca `null`
-— zweryfikowane testem 13 w `readabilityGate.test.ts`, nazwanym wprost "KONTROLA
-POZYTYWNA"). Przełącznik nie rusza pozycji znaczników ani stanu bieżącej próby (test
-14) — więc porównanie progowane↔gładkie jest na TEJ SAMEJ parze, w TEJ SAMEJ kamerze.
+> **Ta sekcja została skorygowana.** Zdanie, że przyrząd „potrafi wydać werdykt nie",
+> zostało usunięte jako fałszywe — patrz §7.3.1 i §7.3.2. Poniżej jest to, co ten
+> przełącznik robi naprawdę.
 
-**Zweryfikowałem to osobiście na żywym renderze** (§6.2, nie tylko w kodzie): po
-przełączeniu na tryb gładki granica dzień/noc, dotąd ostro widoczna, **wizualnie
-zanika** — widać wciąż siatkę heksagonów (bo cieniowanie jest nadal płaskie per komórka),
-ale bez żadnego skoku jasności między sąsiadami. To jest dowód, że instrument NAPRAWDĘ
-potrafi wyprodukować "nie widzę" — bez tego piętnaście trafień w trybie progowanym nie
-dowodziłoby niczego.
+`gate.html` ma przycisk przełączający `ReadabilityGate.setMode('smooth')` — CAŁA planeta
+(nie znaczniki) przechodzi na `writeCellColorsSmooth` (`shading.ts`): interpolację liniową
+między kolorem nocy i dnia, BEZ progowania `LIGHT_BANDS`. Kliknięcia w tym trybie **nie są
+zapisywane** (`handleClick` zwraca `null` — test 13 w `readabilityGate.test.ts`).
+Przełącznik nie rusza pozycji znaczników ani stanu bieżącej próby (test 14) — więc
+porównanie progowane↔gładkie jest na TEJ SAMEJ parze, w TEJ SAMEJ kamerze.
+
+**Czego ten tryb NIE robi.** Nie odtwarza trybu awarii zmierzonego w Fazie 0.
+`writeCellColorsSmooth` zmienia **mapowanie palety**, a nie **interpolację**: nadal maluje
+każdą komórkę jednym płaskim kolorem, bo geometria Zadania 2 daje każdej własne
+wierzchołki. W Fazie 0 kolor był interpolowany **po powierzchni**, między wierzchołkami
+współdzielonymi, i granica się **rozmazywała**. Tej awarii ta architektura nie potrafi
+odtworzyć z konstrukcji. Zmierzone na prawdziwych parach terminatora (`shading.test.ts`,
+test 14): różnica barwna w trybie gładkim wynosi **0,030–0,081 na kanał**, jest niezerowa
+i zawsze w tę samą stronę — komórka oświetlona jest jaśniejsza. Przy wymuszonym wyborze
+dwóch alternatyw wystarczy wskazać jaśniejszą.
+
+**Co ten tryb pokazuje naprawdę, i co jest warte pokazania.** Ile kontrastu dokłada
+progowanie ponad to, co dowozi sama geometria: odległość barwna pary rośnie z ~0,07–0,12
+do 0,9005, czyli **7,4–12,7×** (zmierzone na pięciu parach fazy 1). Czytelność granicy
+dowozi **geometria** z Zadania 2 — płaskie cieniowanie per komórka czyni ją WIDZIALNĄ;
+progowanie z Zadania 3 czyni ją WYGODNĄ.
+
+Kontrola pozytywna odtwarzająca RZECZYWISTY tryb awarii Fazy 0 (współdzielone wierzchołki
+albo kolor liczony per wierzchołek z pozycji) jest **do domknięcia w Fazie 2B** — §7.3.2.
 
 ---
 
@@ -269,8 +283,10 @@ Uruchomiłem `pnpm --filter @heliopolis/client dev` i przeszedłem cały interfe
   przed kliknięciem (zrzuty ekranu potwierdzają to gołym okiem, nie tylko testem);
   kliknięcie w prawidłowy znacznik daje "Poprawnie!" i zielono-czerwone odsłonięcie;
   kliknięcie w zły znacznik daje "Niepoprawnie" z tym samym odsłonięciem; kliknięcie
-  OBOK obu znaczników nic nie robi; **tryb kontrolny wizualnie usuwa granicę** (§5.3);
-  powrót do progowania natychmiast ją przywraca, na tej samej parze; trzy fazy słońca
+  OBOK obu znaczników nic nie robi; tryb porównawczy wyraźnie ZMNIEJSZA kontrast
+  granicy, a powrót do progowania natychmiast go przywraca, na tej samej parze —
+  **skorygowane:** pierwotnie zapisałem tu, że tryb ten granicę USUWA; właściciel projektu
+  ustalił, że jej nie usuwa, i pomiar to potwierdził (§5.3, §7.3.1); trzy fazy słońca
   faktycznie dają trzy różne, widoczne pozycje terminatora; ekran końcowy po
   piętnastej próbie poprawnie pokazuje wynik, werdykt mechaniczny i tabelę Markdown do
   wklejenia — z prawdziwymi identyfikatorami komórek prawdziwej planety.
