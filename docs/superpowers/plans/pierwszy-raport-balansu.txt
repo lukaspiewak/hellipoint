@@ -1,7 +1,7 @@
 Pierwszy raport balansu — Heliopolis, headless runner (Task 6, Faza 1C)
 =========================================================================
 
-Wygenerowano: 2026-09-15 (runda poprawek 1: wieża przed barykadą w ScriptedPolicy)
+Wygenerowano: 2026-09-15 (runda poprawek 2: ogólna rezerwa rudy w ScriptedPolicy)
 Polecenie:    pnpm --filter @heliopolis/headless bench 1000 0
 Seeds:        0..999 (1000 runów), ScriptedPolicy, DEFAULT_RUN
 Środowisko:   node v22.22.0, pnpm 11.17.0 (patrz wersje.txt w tym katalogu)
@@ -14,67 +14,83 @@ są przybliżeniami zależnymi od implementacji; patrz komentarz nad `lightField
 
 Ten raport NIE ma być dobry. Ma istnieć, być powtarzalny i wyznaczyć pracę Fazy 3.
 
-Ta wersja zastępuje poprzednią (z tego samego dnia, sprzed poprawki polityki).
-Poprzednie liczby zachowane w task-6-report.md jako punkt odniesienia „przed".
+Ta wersja zastępuje poprzednią (runda poprawek 1: "wieża przed barykadą" — punktowa
+łatka na jedną gałąź, niewystarczająca, patrz niżej). Wcześniejsze liczby zachowane
+w task-6-report.md jako punkt odniesienia.
 
 -------------------------------------------------------------------------
 runów: 1000
 zwycięstw: 0 (0.0%)
 
-moment porażki [s]  p10=28.8 p50=40.1 p90=113.3
+moment porażki [s]  p10=31.1 p50=51.6 p90=119.4
 cykl porażki        p10=1 p50=1 p90=1
-szczyt zabudowy     p10=7 p50=8 p90=22
-wydobyta ruda       p10=0 p50=43.8 p90=116.2
+szczyt zabudowy     p10=6 p50=11 p90=29
+wydobyta ruda       p10=0 p50=31.0 p90=101.7
 
 wyczerpanie 1. złoża: 0.0% runów, czas [s] brak danych
-ubite przez słońce: 44.4% · przez wieże: 55.6%
+ubite przez słońce: 40.1% · przez wieże: 59.9%
 -------------------------------------------------------------------------
 
-Dodatkowo zmierzone (poza formatem §8.3, tym samym przebiegiem 1000 seedów):
-wież postawionych/run — p10=0 p50=0 p90=1, średnio 0,35; 763/1000 runów (76,3%)
-nie stawia ŻADNEJ wieży w całym swoim życiu.
+Dodatkowo zmierzone (poza formatem §8.3, ten sam przebieg 1000 seedów):
+wież postawionych/run — p10=1 p50=1 p90=1, średnio 1,157; tylko 8/1000 runów
+(0,8%) nigdy nie stawia żadnej wieży (było 763/1000 = 76,3% przed tą rundą).
+Tick pierwszej wieży (z 992 runów, które ją kiedykolwiek stawiają): p10=40
+p50=60 p90=80.
 
 Odczyt (dla Fazy 3, nie ostateczna diagnoza):
 
-- 0% zwycięstw na 1000 seedach — bez zmiany. Poprzednia wersja polityki wydawała
-  nadwyżkę rudy na BARRICADE (8), zanim zdążyła urosnąć do progu wieży (50/100);
-  poprawka każe botowi OSZCZĘDZAĆ (nie stawiać barykad) dopóki nie stoi żadna
-  wieża. Zmierzony efekt tej jednej zmiany na 1000 seedach: mediana szczytu
-  zabudowy spadła z 10 do 8, mediana momentu porażki spadła z 45,2 s do 40,1 s,
-  a mediana wież na run OSTAŁA SIĘ BEZ ZMIANY (0 → 0, średnia 0,35 → 0,35).
-  Wniosek zmierzony, nie domniemany: dla mediany seeda reguła kolejności
-  (wieża-przed-barykadą) nie ma szansy zadziałać, bo baza pada, zanim
-  zaoszczędzona ruda kiedykolwiek zbliży się do progu wieży — a w miejsce
-  barykad, które choć nikogo nie zabijają, pochłaniają obrażenia, run kończy
-  się odrobinę SZYBCIEJ, nie wolniej.
-- Diagnoza porażki (na tych samych 1000 runach, wszystkie DEFEAT): mediana
-  cyklu porażki to wciąż cykl 1. W chwili porażki: 53,5% biegów miało
-  JAKIKOLWIEK zasilany budynek (46,5% było już w całkowitym brownoucie),
-  19,5% miało stojącą wieżę, 96,1% miało jakąkolwiek rudę w banku, ale
-  0,0% (dosłownie zero) miało >=50 rudy — progu na najtańszą wieżę
-  (KINETIC_TURRET) NIE osiągnął w chwili śmierci NI JEDEN z 1000 runów.
-  Mediana rudy w banku przy porażce: 7,6 (p90=13,4) — dokładnie rząd
-  wielkości ceny barykady (8), o rząd wielkości poniżej ceny wieży.
-  Innymi słowy: run łamie się na TEMPIE, nie na DYSCYPLINIE WYDATKÓW — baza
-  ginie szybciej, niż jakikolwiek porządek priorytetów zdążyłby jej pomóc,
-  bo dochód z ekstraktorów nie nadąża za tempem, w jakim wrogowie niszczą
-  CORE, niezależnie od tego, na co idzie ruda po drodze.
-- „wyczerpanie 1. złoża": nadal 0,0% na wszystkich 1000 seedach — z tego
-  samego powodu co wyżej: presja wroga kończy run, zanim jakikolwiek
-  ekstraktor zdąży wydobyć swoje ~400 rudy.
-- Zabicia: 44,4% słońce / 55,6% wieże — praktycznie bez zmiany względem
-  „przed" (45,4%/54,6%), zdominowane przez tę samą nieliczną grupę długich
-  przebiegów co poprzednio (patrz task-6-report.md).
+- Runda poprawek 1 ("wieża przed barykadą") była łatką na JEDNĄ gałąź i nie
+  wystarczyła: usunięcie barykady jako zapchajdziury otworzyło drogę do
+  PYLONU (40 rudy) — wciąż taniej niż wieża (50), więc ruda odbijała się od
+  40 i nigdy nie docierała do 50 (zmierzone: 375 rudy wydane w jednym runie,
+  wieża nigdy). Prawdziwy defekt nie leżał w jednej gałęzi: KAŻDA gałąź
+  wydaje wszystko, na co ją stać, więc polityka nie miała pojęcia rezerwy.
+- Naprawa tej rundy: JEDNA zasada nad wszystkimi pięcioma gałęziami —
+  dopóki nie stoi żadna wieża, żaden zakup (poza samą wieżą) nie może zejść
+  z rudy poniżej ceny najtańszej wieży (50). Zmierzony efekt na 1000 seedach:
+  mediana wież na run 0 -> 1, runy-bez-wieży 76,3% -> 0,8%, mediana momentu
+  porażki 40,1 s -> 51,6 s (+29%). Pierwsza realna poprawa od początku tej
+  serii rund — poprzednie dwie próby (barykada, potem pylon) POGARSZAŁY
+  medianę, ta ją POPRAWIA.
+- Eksperyment z wyjątkiem dla ekstraktora (czy pierwszy ekstraktor wolno
+  postawić mimo rezerwy — hipoteza: inaczej ekonomia nigdy nie ruszy):
+  Z WYJĄTKIEM: mediana porażki 42,5 s, mediana wież/run 0, 60,4% bez wieży.
+  BEZ WYJĄTKU: mediana porażki 51,6 s, mediana wież/run 1, 0,8% bez wieży.
+  Hipoteza się nie potwierdziła — BEZ wyjątku wygrywa na wszystkich trzech
+  osiach. Wolniejsza druga/trzecia kopalnia kosztuje mniej, niż daje
+  wcześniejsza i pewniejsza wieża. Ekstraktor nie dostaje taryfy ulgowej.
+- Zwycięstw nadal 0/1000, ale bot dalej NIE dożywa poza cykl 1 (mediana i p90
+  cyklu porażki oba = 1) — rezerwa poprawia PRZEŻYWALNOŚĆ w sekundach, nie
+  ZASIĘG w cyklach. W chwili porażki: mediana 1 wieży stojącej (było 0),
+  57,8% ma wieżę stojącą (było 19,5%), 77,9% ma jakiekolwiek zasilanie (było
+  53,5%) — obrona jest teraz NORMĄ, nie wyjątkiem, a mimo to CORE pada.
+- Porównanie z Task 5 (fullrun.test.ts, `WINNING_OPENING`): na TYM SAMYM
+  DEFAULT_RUN istnieje kolejka, która dochodzi do ZWYCIĘSTWA na ticku 24 133
+  — więc "gra jest nieprzechodzalna" jest fałszem. Ta kolejka różni się od
+  ScriptedPolicy w trzech rzeczach na raz: (1) KOLEJNOŚĆ — jej pierwsze DWIE
+  pozycje to LASER_TURRET, przed jakąkolwiek energią czy ekonomią; u nas
+  ekstraktor wciąż jest priorytetem 1. przed obroną, rezerwa tylko chroni
+  DOLNĄ granicę, nie zmienia KOLEJNOŚCI. (2) BRAK EKONOMII W OGÓLE — kolejka
+  nie stawia ANI JEDNEGO ekstraktora ani pylonu, żyje wyłącznie ze stałych
+  10/s CORE-a i nagród za zabójstwa; ScriptedPolicy zakłada, że ekonomia
+  musi urosnąć, więc płaci czasem za wzrost, na który wróg nie czeka.
+  (3) ZDYSCYPLINOWANY ZASIĘG — cała obrona kolejki mieści się w 4 krokach od
+  CORE (hex1-hex4), nigdy nie sięga po odległe złoża czy pentagony; nasz
+  bot wciąż ma gałąź 5 (pylon) zdolną ciągnąć sieć w niebronione rejony,
+  nawet jeśli rezerwa teraz ją utrudnia. Kolejka jest z natury rzeczy
+  otwarciem EKSPERCKIM, dobranym pod te konkretne liczby [STROJENIE]
+  (patrz komentarz `WINNING_OPENING` w fullrun.test.ts) — ScriptedPolicy ma
+  reprezentować rozsądnego POCZĄTKUJĄCEGO gracza, nie tę samą kolejkę.
+  Różnica między nimi jest więc miarą, ile balansu gry "kupuje" foresight
+  (obrona przed ekonomią, zero rozciągania sieci), a nie dowodem na to, że
+  gra jest niewygrywalna dla żadnej rozsądnej strategii.
+- „wyczerpanie 1. złoża": nadal 0,0% — ten sam powód co poprzednio: presja
+  wroga (a teraz też sama rezerwa, hamująca tempo budowy ekstraktorów) kończy
+  run, zanim jakikolwiek ekstraktor wydobędzie swoje ~400 rudy.
 
-Dodatkowa obserwacja (zgłoszona, NIE naprawiona w tym zadaniu — możliwe drugie
-wystąpienie tej samej klasy zagłodzenia): w pojedynczych długich przebiegach
-polityka stawia kilkanaście SOLAR_PANEL pod rząd (zaobserwowane: 19 w jednym
-runie) — próg `storedEnergy < 50` przy rosnącej bazie może nigdy trwale nie
-zostać przekroczony, więc panel jest „zawsze pierwszą przystępną opcją" tej
-samej rangi co barykada przed poprawką. Nie zbadane głębiej w tym zadaniu.
-
-Te liczby wyznaczają punkt startowy Fazy 3: obecny balans [STROJENIE] — tempo
-spawnu, koszt ekstraktora, HP i tempo produkcji CORE — sprawia, że baza pada
-szybciej, niż JAKAKOLWIEK reguła wydawania trzymającej się dzisiejszych cen
-budynków zdąży coś na to poradzić. To pytanie o TEMPO EKONOMII względem
-TEMPA ATAKU, nie o kolejność priorytetów bota.
+Te liczby wyznaczają punkt startowy Fazy 3: rezerwa rudy realnie poprawia
+przeżywalność (wieża jako NORMA, nie wyjątek), ale bot wciąż ginie w cyklu 1,
+bo — inaczej niż zwycięska kolejka z Taska 5 — wciąż płaci czasem za
+ekonomiczny wzrost, zanim zapłaci za obronę. To jest dokładnie ta oś (obrona
+kontra ekonomia jako PIERWSZY wydatek), na której polityka i zwycięska
+kolejka się rozjeżdżają.
