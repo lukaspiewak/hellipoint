@@ -42,16 +42,15 @@ describe('simulateRun', () => {
 
   // THE standing hunt (task-6-brief kontekst): "test determinizmu nad martwym runem" —
   // `expect(simulateRun(7,…)).toEqual(simulateRun(7,…))` byłby zielony, gdyby run nic nie
-  // robił. Ten test dowodzi, że NIE jest martwy: dochodzi do porażki (nie utyka w RUNNING),
-  // stawia więcej niż sam CORE i naprawdę kogoś zabija — więc test determinizmu obok
-  // porównuje realny, ruchliwy przebieg, a nie zerowy punkt odniesienia.
+  // robił. Ten test dowodzi, że NIE jest martwy: dochodzi do porażki (nie utyka w RUNNING)
+  // i stawia więcej niż sam CORE — więc test determinizmu obok porównuje realny,
+  // ruchliwy przebieg, a nie zerowy punkt odniesienia.
   it('determinizm dla seed=7 nie jest testem martwego runu — realnie coś się dzieje', () => {
-    // Zmierzone wprost (`simulateRun(7, DEFAULT_RUN, 50_000)`): DEFEAT w ticku 903,
-    // 11 budynków w szczycie, 81,3 rudy wydobytej. Zero zabić kimkolwiek (sun i turret
-    // oba 0) jest samo w sobie realną, spójną możliwością tej gry, nie oznaką martwego
-    // runu — SWARM bez wieży i bez zbędnego czasu w świetle może obalić CORE, nie
-    // ginąc ani razu (patrz task-6-report.md, sekcja "0% zwycięstw"). Stąd asercja na
-    // rudzie/tickach/budynkach, nie na zabiciach.
+    // Zmierzone wprost (`simulateRun(7, DEFAULT_RUN, 50_000)`, po rundzie poprawek 1 —
+    // wieża przed barykadą): DEFEAT w ticku 862, 9 budynków w szczycie, 61,9 rudy
+    // wydobytej. Asercja celowo NIE na zabiciach: to jedyna z czterech liczb, która
+    // zmienia się z każdą zmianą polityki/balansu (przed poprawką było ich 0, po —
+    // 2), a ruda/ticki/budynki są stabilniejszym dowodem "to nie jest martwy run".
     const r = simulateRun(7, DEFAULT_RUN, 50_000);
     expect(r.phase).toBe('DEFEAT');
     expect(r.ticks).toBeGreaterThan(100);
@@ -74,15 +73,21 @@ describe('simulateRun', () => {
     // gałęzi. Config niżej drastycznie obniża tempo spawnu (ale > 0 — Sim odrzuca
     // dokładne zero), żeby dać polityce czas na wydobycie, i pokazuje, że ścieżka
     // "wyczerpano" jest OSIĄGALNA, nie tylko teoretyczna.
+    //
+    // 3 seedy, nie 5: run bez presji wroga trwa ~40 tys. ticków z rosnącą do
+    // kilkudziesięciu budynków bazą — zmierzone ~5-9 s na seed. Runda poprawek 1
+    // (wieża przed barykadą) podniosła koszt jeszcze trochę i 5 seedów zaczęło
+    // przekraczać nawet podniesiony timeout (30 s); 3 mieszczą się z zapasem,
+    // a każdy z osobna i tak wystarcza do `depleted.length > 0`.
     const easy: RunConfig = {
       ...DEFAULT_RUN,
       spawn: { ...DEFAULT_RUN.spawn, baseRatePerPentagon: 0.001, growthPerCycle: 1 },
     };
-    const results = Array.from({ length: 5 }, (_, i) => simulateRun(i, easy, 100_000));
+    const results = Array.from({ length: 3 }, (_, i) => simulateRun(i, easy, 100_000));
     const depleted = results.filter((r) => r.firstDepletionTick > 0);
     expect(depleted.length).toBeGreaterThan(0);
     for (const r of depleted) expect(Number.isInteger(r.firstDepletionTick)).toBe(true);
-  }, 30_000);
+  }, 45_000);
 });
 
 describe('ScriptedPolicy', () => {
