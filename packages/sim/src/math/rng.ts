@@ -74,8 +74,34 @@ export class Rng {
    * spawny wobec serwera, który nie przestawał liczyć.
    */
   static fromState(state: RngState): Rng {
+    // TA SAMA straż, co w konstruktorze wyżej (`if (… === 0) this.s[0] = 1`), tylko tutaj
+    // ODRZUCA zamiast naprawiać. Powód różnicy: w konstruktorze stan zerowy to skrajnie
+    // rzadki przypadek mieszania seeda, który wolno cicho podciągnąć; tutaj jest ZAWSZE
+    // uszkodzonym wejściem — przez `fromState` wchodzi stan z migawki, czyli z JSON-a,
+    // czyli spoza naszej kontroli. Cichy fix zamieniłby uszkodzony zapis na niezauważalnie
+    // INNĄ sekwencję; brak straży (stan sprzed poprawki) daje jeszcze gorzej: xoshiro
+    // w stanie zerowym jest punktem stałym i produkuje same zera NA ZAWSZE — zmierzone,
+    // pięć pierwszych losowań z `fromState({seed:1, s:[0,0,0,0]})` to `0,0,0,0,0`.
+    // W symulacji znaczyłoby to „`pickType` zawsze wybiera pierwszy typ z puli", czyli
+    // fale bez ARMOR-ów i DISRUPTOR-ów, bez jednego błędu po drodze.
+    //
+    // Sprawdzana jest też SAMA OBECNOŚĆ czterech całkowitych słów: bez tego „wszystkie
+    // zera" nie ma sensu jako pytanie (`undefined | undefined` to 0, więc śmieci
+    // przechodziłyby przez test zerowości), a `Uint32Array.set` i tak po cichu
+    // przycinałby ułamki i `undefined` do zera.
+    const words = state?.s;
+    if (
+      !Array.isArray(words) || words.length !== 4 ||
+      !words.every((w) => Number.isInteger(w)) ||
+      ((words[0] | words[1] | words[2] | words[3]) === 0)
+    ) {
+      throw new RangeError(
+        `Rng.fromState: invalid generator state ${JSON.stringify(state?.s)} — expected four integers, ` +
+          'not all zero (xoshiro is a fixed point at all-zero and would emit 0 forever).',
+      );
+    }
     const rng = new Rng(state.seed);
-    rng.s.set(state.s);
+    rng.s.set(words);
     return rng;
   }
 }

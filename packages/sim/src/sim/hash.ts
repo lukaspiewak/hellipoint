@@ -11,8 +11,20 @@ export function stateHash(s: SimState): string {
   h.int(s.tick);
   h.float(s.ore);
   h.float(s.storedEnergy);
+  h.float(s.evacCharge);
+  h.float(s.evacAlarmRemaining);
+  h.int(s.evacUnlockTick);
+  h.float(s.killsBySun);
+  h.float(s.killsByTurret);
   h.str(s.phase);
   h.int(s.nextUnitId);
+
+  // Pozycja generatora fal — hashowana jak każde inne pole stanu. Bez tego test
+  // round-tripu JSON (state.test.ts) nie widziałby, czy migawka niesie ją poprawnie,
+  // a dwa przebiegi o różnej pozycji generatora miałyby ten sam hash aż do pierwszego
+  // spawnu, w którym pula ma więcej niż jeden typ.
+  h.int(s.waveRng.seed);
+  for (let i = 0; i < s.waveRng.s.length; i++) h.int(s.waveRng.s[i]);
 
   for (let i = 0; i < s.buildings.length; i++) {
     const b = s.buildings[i];
@@ -27,6 +39,12 @@ export function stateHash(s: SimState): string {
     if (s.oreRemaining[i] === 0) continue;
     h.int(i);
     h.float(s.oreRemaining[i]);
+  }
+
+  for (const p of s.pentagons) {
+    h.float(p.spawnAccumulator);
+    h.float(p.eruptionCooldown);
+    h.int(p.eruptionArmed ? 1 : 0);
   }
 
   for (const u of s.units) {

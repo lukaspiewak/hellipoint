@@ -3,9 +3,20 @@ import { createPlanet } from '../src/world/planet.js';
 import { Sim } from '../src/sim/loop.js';
 import { stateHash } from '../src/sim/hash.js';
 import { TICK_SECONDS } from '../src/sim/state.js';
+import { minRotationPeriod } from '../src/sim/movement.js';
 import type { Command } from '../src/sim/commands.js';
+import { DEFAULT_RUN } from '../src/sim/rules.js';
+import { DEFAULT_SPAWN } from '../src/sim/spawning.js';
 
-const CONFIG = { rotationPeriod: 180, startingOre: 150 };
+/**
+ * Pola `rotationPeriod`/`startingOre` wypisane JAWNIE, mimo że `DEFAULT_RUN` ma dziś
+ * dokładnie te wartości: reszta `DEFAULT_RUN` jest oznaczona `[STROJENIE]` i Faza 3
+ * będzie ją przestawiać headlessem, a te dwie liczby są dobrane pod konkretne asercje
+ * tego pliku (1200 ticków = 60 s przy obrocie 180 s; 150 rudy starcza na skrypt
+ * PYLON+BARRICADE). Bez jawnego nadpisania przestrojenie `DEFAULT_RUN` po cichu
+ * zmieniałoby sens tych testów.
+ */
+const CONFIG = { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 150 };
 
 /**
  * `withCommands = false` daje IDENTYCZNĄ pętlę step() bez żadnej komendy w kolejce —
@@ -123,50 +134,273 @@ describe('drenowanie kolejki komend poza fazą RUNNING', () => {
  * w tym miejscu. Walidacja w konstruktorze chroni WSZYSTKICH konsumentów naraz.
  * `!(x > 0)` NIE łapie Infinity (Infinity > 0 jest prawdziwe) — stąd Number.isFinite.
  */
-describe('SimConfig — walidacja w konstruktorze Sim', () => {
+describe('RunConfig — walidacja w konstruktorze Sim', () => {
   const planet = createPlanet({ seed: 1 });
 
   it('odrzuca rotationPeriod <= 0 lub nieskończony', () => {
-    expect(() => new Sim(planet, { rotationPeriod: 0, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: -180, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: NaN, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: Infinity, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: -Infinity, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 0, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: -180, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: NaN, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: Infinity, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: -Infinity, startingOre: 100 })).toThrow(RangeError);
   });
 
   it('odrzuca startingOre ujemny lub nieskończony', () => {
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -1 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: NaN })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: Infinity })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -Infinity })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: -1 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: NaN })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: Infinity })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: -Infinity })).toThrow(RangeError);
   });
 
   it('akceptuje startingOre = 0 — niezerowa dolna granica byłaby błędem (pole jest NIEUJEMNE, nie dodatnie)', () => {
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: 0 })).not.toThrow();
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 0 })).not.toThrow();
   });
 
   it('komunikat błędu nazywa pole i wartość, a nie tylko ogólnikowo "invalid config"', () => {
-    expect(() => new Sim(planet, { rotationPeriod: -5, startingOre: 100 })).toThrow(/rotationPeriod.*-5/);
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -5 })).toThrow(/startingOre.*-5/);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: -5, startingOre: 100 })).toThrow(/rotationPeriod.*-5/);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: -5 })).toThrow(/startingOre.*-5/);
   });
 
   /**
    * Residual z przeglądu końcowego Fazy 1B: `rotationPeriod` skończony i dodatni
-   * (przechodzi powyższą straż) ale krótszy niż jeden tick oznacza, że Słońce robi
-   * pełny obrót WEWNĄTRZ pojedynczego ticku — to nie jest symulowalny cykl dzień/noc,
-   * niezależnie od tego, czy akurat przepełnia `angle` w `sunDirection` (por.
-   * light.test.ts, `rotationPeriod = 1e-320`). Druga warstwa tej samej straży: tu
-   * łapiemy DOMENOWO ("za krótki, żeby cokolwiek symulować"), w `sunDirection` —
-   * LOKALNIE ("angle wyszedł nieskończony"). Zweryfikowano: żaden istniejący test
-   * w tym pakiecie nie używa rotationPeriod < 180s poza testami odrzucenia.
+   * (przechodzi powyższą straż) ale za krótki, żeby symulacja dała się przeliczyć.
+   * Druga warstwa tej samej straży: tu łapiemy DOMENOWO ("za krótki, żeby cokolwiek
+   * symulować"), w `sunDirection` — LOKALNIE ("angle wyszedł nieskończony", por.
+   * light.test.ts, `rotationPeriod = 1e-320`).
    */
-  it('odrzuca rotationPeriod krótszy niż jeden tick — pełny obrót Słońca w jednym ticku nie jest symulowalnym cyklem dzień/noc', () => {
-    expect(() => new Sim(planet, { rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: 1e-320, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(/rotationPeriod/);
+  it('odrzuca rotationPeriod za krótki do przeliczenia', () => {
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 1e-320, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(/rotationPeriod/);
   });
 
-  it('akceptuje rotationPeriod dokładnie równy jednemu tickowi — granica jest inclusive, "krótszy niż" to ostra nierówność', () => {
-    expect(() => new Sim(planet, { rotationPeriod: TICK_SECONDS, startingOre: 100 })).not.toThrow();
+  /**
+   * PRZEGLĄD GAŁĘZI, Important #1. Poprzednia wersja tego bloku asercjowała
+   * `not.toThrow()` dla `rotationPeriod = TICK_SECONDS` i NIGDY nie wykonywała kroku —
+   * przypinała więc kontrakt, którego symulacja nie spełnia. Zmierzone: `new Sim(planet,
+   * {...DEFAULT_RUN, rotationPeriod: 0.05})` konstruuje się bez słowa, a `.step()` rzuca
+   * `RangeError` w ticku 12 (pierwszym niosącym jednostkę) — z komunikatem o `speedFactor`
+   * i `MotionContext`, czyli o wszystkim poza polem, które wołający naprawdę ustawił.
+   * Zmierzony przemiat: KAŻDY okres ≤ 7,20 s rzucał (w ticku 12/21/85/123/148/150
+   * zależnie od seeda), 7,21 s przechodził 3000 ticków czysto.
+   *
+   * Podłoga jest teraz WYPROWADZONA z niezmiennika `updateMovement` (patrz
+   * `minRotationPeriod` w movement.ts) i wynosi dla planety domyślnej
+   * 7,203121207399654 s — zgodnie z pomiarem.
+   */
+  it('odrzuca KAŻDY okres poniżej wyprowadzonej podłogi — łącznie z tym, który konstruował się bez słowa i wywalał dopiero w ticku 12', () => {
+    const podloga = minRotationPeriod(planet);
+    expect(podloga).toBeCloseTo(7.2031, 4);
+
+    for (const rp of [TICK_SECONDS, 1, 7, 7.19, 7.2, podloga * (1 - 1e-12)]) {
+      expect(
+        () => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: rp, startingOre: 100 }),
+        `rotationPeriod=${rp} powinien zostać odrzucony przez KONSTRUKTOR`,
+      ).toThrow(RangeError);
+    }
+  });
+
+  /**
+   * Odwrotny kierunek dowodu, i ten jest tu ważniejszy: podłoga musi być DOKŁADNIE
+   * granicą straży w `updateMovement`, nie ostrożnym marginesem "gdzieś w okolicy".
+   * Sama wartość zwracana przez `minRotationPeriod` przechodzi konstrukcję ORAZ realny
+   * przebieg — 3000 ticków to ~20× ponad zmierzone miejsce, w którym stary kod wywalał.
+   */
+  it('okres dokładnie równy podłodze konstruuje się I PRZELICZA — granica nie jest ostrożnym marginesem', () => {
+    const podloga = minRotationPeriod(planet);
+    const sim = new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: podloga, startingOre: 100 });
+    expect(() => { for (let i = 0; i < 3000; i++) sim.step(); }).not.toThrow();
+    // Przesłanka: przebieg NAPRAWDĘ niósł jednostki, więc straż ruchu była wołana.
+    expect(sim.state.nextUnitId).toBeGreaterThan(1);
+  });
+
+  it('komunikat odrzucenia nazywa rotationPeriod, podaną wartość i minimum, które zadziała', () => {
+    let msg = '';
+    try { new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 0.05, startingOre: 100 }); }
+    catch (e) { msg = (e as Error).message; }
+    expect(msg).toContain('rotationPeriod');
+    expect(msg).toContain('0.05');
+    expect(msg).toContain(String(minRotationPeriod(planet)));
+  });
+});
+
+/**
+ * Sześć pozostałych pól `RunConfig` nie miało żadnej walidacji, a DWA z nich wpływają
+ * wprost do `SimState`: `cyclesPerRun` → `evacUnlockTick`, `evacAlarmSeconds` →
+ * `evacAlarmRemaining`. Zmierzone przed poprawką: `cyclesPerRun: NaN` dawało
+ * `evacUnlockTick = NaN`, a `evacAlarmSeconds: Infinity` — `evacAlarmRemaining = Infinity`.
+ * `JSON.stringify` zamienia obie wartości na `null`, więc po wczytaniu zapisu w Fazie 5
+ * `s.tick < null` jest fałszem na zawsze (bramka §5.6 odwraca się w „zawsze otwarta"),
+ * a `null >= 0` i `null - 0,05 <= ALARM_EPSILON` są jednocześnie prawdziwe — pierwszy
+ * tick po wczytaniu ogłasza ZWYCIĘSTWO.
+ */
+describe('RunConfig — walidacja pozostałych sześciu pól', () => {
+  const planet = createPlanet({ seed: 1 });
+  const build = (patch: Partial<typeof DEFAULT_RUN>) =>
+    () => new Sim(planet, { ...DEFAULT_RUN, ...patch });
+
+  it('cyclesPerRun musi być całkowity i >= 1', () => {
+    expect(build({ cyclesPerRun: 0 })).toThrow(/cyclesPerRun.*0/);
+    expect(build({ cyclesPerRun: -3 })).toThrow(/cyclesPerRun.*-3/);
+    expect(build({ cyclesPerRun: NaN })).toThrow(RangeError);
+    expect(build({ cyclesPerRun: Infinity })).toThrow(RangeError);
+    expect(build({ cyclesPerRun: 2.5 })).toThrow(/cyclesPerRun.*2\.5/);
+    expect(build({ cyclesPerRun: 1 })).not.toThrow();
+  });
+
+  it('evacUnlockFraction musi być skończonym ułamkiem z [0, 1]', () => {
+    expect(build({ evacUnlockFraction: -0.1 })).toThrow(/evacUnlockFraction.*-0\.1/);
+    expect(build({ evacUnlockFraction: 1.5 })).toThrow(/evacUnlockFraction.*1\.5/);
+    expect(build({ evacUnlockFraction: NaN })).toThrow(RangeError);
+    expect(build({ evacUnlockFraction: Infinity })).toThrow(RangeError);
+    // Obie granice INCLUSIVE: 0 = Evac od pierwszego ticka, 1 = dopiero w ostatnim cyklu.
+    expect(build({ evacUnlockFraction: 0 })).not.toThrow();
+    expect(build({ evacUnlockFraction: 1 })).not.toThrow();
+  });
+
+  it('evacEnergyRequired musi być skończony i DODATNI — zero usuwa ładowanie', () => {
+    expect(build({ evacEnergyRequired: 0 })).toThrow(/evacEnergyRequired.*0/);
+    expect(build({ evacEnergyRequired: -1 })).toThrow(RangeError);
+    expect(build({ evacEnergyRequired: NaN })).toThrow(RangeError);
+    expect(build({ evacEnergyRequired: Infinity })).toThrow(RangeError);
+  });
+
+  it('evacChargeRate musi być skończony i DODATNI — zero blokuje zwycięstwo na zawsze', () => {
+    expect(build({ evacChargeRate: 0 })).toThrow(/evacChargeRate.*0/);
+    expect(build({ evacChargeRate: -5 })).toThrow(RangeError);
+    expect(build({ evacChargeRate: NaN })).toThrow(RangeError);
+    expect(build({ evacChargeRate: Infinity })).toThrow(RangeError);
+  });
+
+  it('evacAlarmSeconds musi być skończony i DODATNI — zero usuwa alarm z warunku wygranej', () => {
+    expect(build({ evacAlarmSeconds: 0 })).toThrow(/evacAlarmSeconds.*0/);
+    expect(build({ evacAlarmSeconds: -60 })).toThrow(RangeError);
+    expect(build({ evacAlarmSeconds: NaN })).toThrow(RangeError);
+    expect(build({ evacAlarmSeconds: Infinity })).toThrow(RangeError);
+  });
+
+  it('spawn musi być obiektem SpawnConfig, nie null ani liczbą', () => {
+    expect(build({ spawn: null as never })).toThrow(/spawn/);
+    expect(build({ spawn: undefined as never })).toThrow(/spawn/);
+    expect(build({ spawn: 7 as never })).toThrow(/spawn/);
+  });
+
+  /**
+   * Straż na WYNIKU, nie tylko na wejściach — ten sam idiom, co przy `angle`
+   * w `sunDirection` (light.ts). `rotationPeriod = 1e308` jest skończony i większy od
+   * ticka, więc przechodzi obie straże okresu obrotu, ale iloczyn `(cykl − 1) × 1e308`
+   * przepełnia się do Infinity. Bez tej straży poprawna konfiguracja wstawiałaby
+   * nieskończoność do `SimState`.
+   */
+  it('odrzuca konfigurację, w której sam próg PRZEPEŁNIA się do nieskończoności', () => {
+    expect(build({ rotationPeriod: 1e308 })).toThrow(/evacUnlockTick.*non-finite/);
+  });
+
+  /**
+   * Odwrotny kierunek dowodu: nie „te wartości są odrzucane", tylko „żadna PRZYJĘTA
+   * konfiguracja nie wstawia do stanu nieskończoności ani NaN". Skrajne, ale legalne
+   * kombinacje — najkrótszy dopuszczalny obrót, próg na obu granicach ułamka, alarm
+   * mikroskopijny i ogromny.
+   */
+  it('żadna konfiguracja przechodząca walidację nie daje nieskończoności ani NaN w SimState', () => {
+    const skrajne = [
+      { cyclesPerRun: 1, evacUnlockFraction: 0 },
+      { cyclesPerRun: 1, evacUnlockFraction: 1 },
+      { cyclesPerRun: 1_000_000, evacUnlockFraction: 1 },
+      // Najkrótszy DOPUSZCZALNY obrót, liczony z planety — nie `TICK_SECONDS`, który
+      // przed przeglądem gałęzi był tu podłogą, a symulacji nie dało się przy nim
+      // przeliczyć (patrz `minRotationPeriod` w movement.ts).
+      { rotationPeriod: minRotationPeriod(planet), cyclesPerRun: 1_000_000 },
+      { rotationPeriod: 1e6, evacAlarmSeconds: 1e-6 },
+      { evacAlarmSeconds: 1e6, evacEnergyRequired: 1e-9, evacChargeRate: 1e9 },
+    ];
+    for (const patch of skrajne) {
+      const sim = new Sim(planet, { ...DEFAULT_RUN, ...patch });
+      const opis = JSON.stringify(patch);
+      expect(Number.isFinite(sim.state.evacUnlockTick), `evacUnlockTick dla ${opis}`).toBe(true);
+      expect(Number.isFinite(sim.state.evacAlarmRemaining), `evacAlarmRemaining dla ${opis}`).toBe(true);
+      expect(sim.state.evacUnlockTick, `evacUnlockTick dla ${opis}`).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  /**
+   * Clamp `Math.max(0, …)` przy `evacUnlockTick`: przy `evacUnlockFraction = 0`
+   * cykl odblokowania wychodzi 0, więc `(0 − 1) × rotationPeriod` jest UJEMNE. Ten sam
+   * wzorzec, co podłoga regeneracji ekspozycji w burning.ts — bez clampa do stanu
+   * trafiłby ujemny tick, a `s.tick < -3600` byłoby fałszem „przypadkiem", nie z zasady.
+   */
+  it('clamp trzyma próg na zerze tam, gdzie surowe wyliczenie jest UJEMNE', () => {
+    const sim = new Sim(planet, { ...DEFAULT_RUN, evacUnlockFraction: 0 });
+    const cyklOdblokowania = Math.ceil(DEFAULT_RUN.cyclesPerRun * 0);
+    expect(cyklOdblokowania).toBe(0); // przesłanka: surowo (0 − 1) × 180 / 0,05 = −3600
+    expect(sim.state.evacUnlockTick).toBe(0);
+  });
+});
+
+/**
+ * Pola `SpawnConfig` wpływają do `SimState` tą samą drogą, co `cyclesPerRun`
+ * i `evacAlarmSeconds`: `rate` (z `baseRatePerPentagon` i `growthPerCycle`) trafia
+ * do `pentagons[].spawnAccumulator`, `eruptionInterval` wprost do
+ * `pentagons[].eruptionCooldown`. Wartość zdegenerowana nie wywala się głośno —
+ * `for (k = 0; k < NaN; k++)` to zero iteracji, a `cycle >= NaN` to `false` — więc
+ * headless runner Fazy 3 dostałby ciche śmieci w rozkładach balansowych.
+ */
+describe('RunConfig.spawn — walidacja pól SpawnConfig', () => {
+  const planet = createPlanet({ seed: 1 });
+  const build = (patch: Partial<typeof DEFAULT_SPAWN>) =>
+    () => new Sim(planet, { ...DEFAULT_RUN, spawn: { ...DEFAULT_SPAWN, ...patch } });
+
+  it('baseRatePerPentagon musi być skończony i dodatni', () => {
+    expect(build({ baseRatePerPentagon: 0 })).toThrow(/baseRatePerPentagon.*0/);
+    expect(build({ baseRatePerPentagon: -1 })).toThrow(RangeError);
+    expect(build({ baseRatePerPentagon: NaN })).toThrow(RangeError);
+    expect(build({ baseRatePerPentagon: Infinity })).toThrow(RangeError);
+  });
+
+  it('growthPerCycle musi być skończony i >= 1 — poniżej 1 fale SŁABNĄ z cyklu na cykl', () => {
+    expect(build({ growthPerCycle: 0.9 })).toThrow(/growthPerCycle.*0\.9/);
+    expect(build({ growthPerCycle: 0 })).toThrow(RangeError);
+    expect(build({ growthPerCycle: NaN })).toThrow(RangeError);
+    expect(build({ growthPerCycle: Infinity })).toThrow(RangeError);
+    // Dokładnie 1 legalne: tempo stałe, punkt odniesienia dla headlessa.
+    expect(build({ growthPerCycle: 1 })).not.toThrow();
+  });
+
+  it('eruptionInterval ma podłogę jednego ticka — krótszy erupuje w KAŻDYM ticku', () => {
+    expect(build({ eruptionInterval: 0 })).toThrow(/eruptionInterval/);
+    expect(build({ eruptionInterval: TICK_SECONDS / 2 })).toThrow(/eruptionInterval/);
+    expect(build({ eruptionInterval: -20 })).toThrow(RangeError);
+    expect(build({ eruptionInterval: NaN })).toThrow(RangeError);
+    expect(build({ eruptionInterval: Infinity })).toThrow(RangeError);
+    // Granica inclusive, tak samo jak przy `rotationPeriod`.
+    expect(build({ eruptionInterval: TICK_SECONDS })).not.toThrow();
+  });
+
+  it('eruptionBurstBase musi być skończony i >= 1, ale NIE musi być całkowity', () => {
+    expect(build({ eruptionBurstBase: 0 })).toThrow(/eruptionBurstBase.*0/);
+    expect(build({ eruptionBurstBase: 0.5 })).toThrow(RangeError);
+    expect(build({ eruptionBurstBase: NaN })).toThrow(RangeError);
+    expect(build({ eruptionBurstBase: Infinity })).toThrow(RangeError);
+    // `updateSpawning` zaokrągla dopiero ILOCZYN, więc ułamkowa baza >= 1 jest sensowna.
+    expect(build({ eruptionBurstBase: 4.5 })).not.toThrow();
+  });
+
+  it('eruptionScalePerCap musi być skończony i NIEUJEMNY — zero tylko wyłącza skalowanie', () => {
+    expect(build({ eruptionScalePerCap: -0.1 })).toThrow(/eruptionScalePerCap.*-0\.1/);
+    expect(build({ eruptionScalePerCap: NaN })).toThrow(RangeError);
+    expect(build({ eruptionScalePerCap: Infinity })).toThrow(RangeError);
+    // 0 legalne: erupcje nadal wybuchają, po prostu nie rosną z liczbą capów.
+    expect(build({ eruptionScalePerCap: 0 })).not.toThrow();
+  });
+
+  it('disruptorFromCycle i armorFromCycle muszą być całkowite >= 1', () => {
+    for (const pole of ['disruptorFromCycle', 'armorFromCycle'] as const) {
+      expect(build({ [pole]: 0 }), pole).toThrow(new RegExp(`${pole}.*0`));
+      expect(build({ [pole]: -1 }), pole).toThrow(RangeError);
+      expect(build({ [pole]: 2.5 }), pole).toThrow(RangeError);
+      expect(build({ [pole]: NaN }), pole).toThrow(RangeError);
+      expect(build({ [pole]: Infinity }), pole).toThrow(RangeError);
+      expect(build({ [pole]: 1 }), pole).not.toThrow();
+    }
   });
 });

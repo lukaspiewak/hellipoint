@@ -1,3 +1,4 @@
+import { Rng, STREAM, type RngState } from '../math/rng.js';
 import type { Vec3 } from '../math/vec3.js';
 import type { Planet } from '../world/planet.js';
 
@@ -12,6 +13,29 @@ export type BuildingType =
   | 'GEOTHERMAL_CAP' | 'EVACUATION_MODULE';
 
 export type EnemyType = 'SWARM' | 'ARMOR' | 'DISRUPTOR';
+
+/**
+ * Stan pentagonu, równoległy do `planet.pentagons` (patrz pole `pentagons` niżej) —
+ * NIE indeksowany `cellId`. Populowany przez `updateSpawning` (spawning.ts, Task 4).
+ */
+export interface PentagonState {
+  /** Ułamkowy licznik jednostek do wypuszczenia — spawn bywa wolniejszy niż 1/tick. */
+  spawnAccumulator: number;
+  /** Sekundy do najbliższej erupcji. Używane wyłącznie przez zatkane pentagony. */
+  eruptionCooldown: number;
+  /**
+   * Czy `eruptionCooldown` zostało uzbrojone pełnym `eruptionInterval` od PIERWSZEGO
+   * zatkania. Bez tej flagi startowe `eruptionCooldown = 0` jest nieodróżnialne od
+   * "właśnie odliczyło do zera" — pierwsza erupcja wystrzeliwałaby w TYM SAMYM ticku,
+   * w którym stanął cap, zamiast po pełnym interwale (patrz spawning.ts).
+   * CELOWO nie resetowana, gdy pentagon przestaje być zatkany — odliczanie ZAMRAŻA SIĘ
+   * (jak dla światła, D1), nie zeruje: zegar erupcji należy do pentagonu (ciśnienie w
+   * kominie), nie do capa (pokrywy). Reset dawał darmowy exploit — rozbiórka+odbudowa
+   * capa w kółko odsuwała rosnącą z `capCount` erupcję za płaski koszt (patrz
+   * task-4-fix-report.md, punkt 1).
+   */
+  eruptionArmed: boolean;
+}
 
 export interface Building {
   cellId: number;
@@ -69,7 +93,84 @@ export interface SimState {
   units: Unit[];
   nextUnitId: number;
   phase: Phase;
+  /** Równoległe do planet.pentagons, NIE indeksowane cellId. */
+  pentagons: PentagonState[];
+  /** Zgromadzona energia w Module Ewakuacyjnym. Zerowana przy jego zniszczeniu (§5.6). */
+  evacCharge: number;
+  /**
+   * Sekundy do końca alarmu. -1 = alarm nieaktywny.
+   * Sentinel `-1`, a NIE `Infinity`/`null`: patrz niezmiennik serializowalności wyżej —
+   * `JSON.stringify` zamienia `Infinity` na `null`, a `null` w arytmetyce zachowuje się
+   * jak `0`, więc „alarm nieaktywny" po round-tripie stałoby się „alarm właśnie minął",
+   * czyli natychmiastowym zwycięstwem po wczytaniu zapisu.
+   */
+  evacAlarmRemaining: number;
+  /**
+   * Pierwszy tick, w którym wolno postawić EVACUATION_MODULE (§5.6: „odblokowany
+   * w ostatniej tercji runu"). Liczony RAZ, w konstruktorze `Sim`, z `RunConfig`
+   * (`cyclesPerRun`, `evacUnlockFraction`, `rotationPeriod`) i zapisywany tutaj.
+   *
+   * Dlaczego TICK, a nie numer cyklu: bramkę egzekwuje `canBuild`, a ta zna wyłącznie
+   * `SimState` — nie zna ani `rotationPeriod`, ani `RunConfig`. Przeliczenie na tick
+   * w jednym miejscu, przy konstrukcji, usuwa tę zależność zamiast propagować ją przez
+   * sygnatury `canBuild`/`applyCommand`, na których stoi Faza 5. `evacUnlocked(cycle, cfg)`
+   * w rules.ts zostaje jako forma czytelna dla UI Fazy 2 i jest z tym polem zgodna.
+   *
+   * `createState` daje tu 0 (odblokowane od razu): stan zbudowany bez `Sim` nie zna
+   * konfiguracji, a wartość permisywna zachowuje zachowanie wszystkich pomocników
+   * testowych Fazy 1B, które piszą budynki wprost do stanu.
+   */
+  evacUnlockTick: number;
+  /**
+   * Zliczenia zgonów jednostek, naliczane W MIEJSCU śmierci — `killsBySun` w
+   * `updateBurning` (burning.ts, gałąź ekspozycji), `killsByTurret` w unit-sweeperze
+   * `updateCombat` (combat.ts, `removeDeadUnits`). NIE przybliżenie z liczby jednostek
+   * stojących w świetle: headless (Task 6) najpierw wypróbował dokładnie takie
+   * przybliżenie (`sunShare = min(zgony_w_ticku, jednostki_w_świetle_przed_tickiem)`),
+   * zgodnie z brief-em, i zmierzył jego błąd względem tych dwóch liczników na 300
+   * przebiegach `ScriptedPolicy`/`DEFAULT_RUN` (seeds 0-299): **30,2 % dla słońca,
+   * 34,2 % dla wież** — oba dużo powyżej progu 10% z planu. Kierunek zgodny z
+   * przewidywaniem brief-u (słońce przeszacowane, wieże niedoszacowane, bo jednostka
+   * stojąca w świetle, ale zabita przez wieżę, i tak liczy się jako "w świetle"), plus
+   * efekt NIEPRZEWIDZIANY: przybliżenie liczyło zgony jako `prevUnits - now`, czyli
+   * NETTO zmianę populacji — zgon zamaskowany spawnem w tym samym ticku (częste, fale
+   * spawnują niemal co tick) znikał z sumy całkowicie (zmierzone: 397 zgonów, ~3,8%
+   * brakowało w sumie kontrolnej na pierwszych 150 przebiegach). Stąd liczniki
+   * rzeczywiste, nie przybliżenie — Faza 3 tunuje balans na podstawie tych dwóch liczb.
+   *
+   * Ten sam niezmiennik serializowalności co reszta stanu: proste liczniki `number`,
+   * bez `Infinity`/`NaN` (rosną tylko przez `++`, od 0).
+   */
+  killsBySun: number;
+  /** Patrz doc-comment `killsBySun` wyżej — ten sam pomiar, druga strona podziału. */
+  killsByTurret: number;
+  /**
+   * POZYCJA generatora fal (`STREAM.WAVES`), nie tylko jego seed. Bez niej `SimState`
+   * NIE JEST wznawialną migawką — i to jest zmierzone, nie teoretyczne: round-trip
+   * `sim.state` przez JSON i wczytanie do świeżego `Sim` dawało zgodny `stateHash`
+   * w chwili wczytania, a rozjazd po 1 ticku, bo odtworzony generator startował od
+   * pozycji ZERO i `pickType` losowało inne typy wrogów niż oryginał (widoczne dopiero,
+   * gdy pula ma więcej niż jeden typ — czyli od `disruptorFromCycle`).
+   *
+   * Dokładnie ten tryb awarii opisuje doc-comment `Rng.getState`/`Rng.fromState`
+   * (math/rng.ts) — para istniała, była eksportowana i NIC JEJ NIE WOŁAŁO.
+   *
+   * Kształt zgodny z niezmiennikiem serializowalności wyżej: `{ seed, s: [4 liczby] }`
+   * — zwykły obiekt i zwykła tablica, NIE `Uint32Array` (ten serializuje się jako
+   * `{"0":…}` i round-trip go nie odtwarza). Seed jest częścią migawki, bo `fork()`
+   * zależy wyłącznie od niego.
+   */
+  waveRng: RngState;
 }
+
+/**
+ * Stan startowy strumienia fal dla tej planety. Wyprowadzenie w JEDNYM miejscu, bo ma
+ * DWÓCH konsumentów: `createState` nim inicjuje `waveRng`, a konstruktor `Sim` porównuje
+ * z jego `seed` migawkę, żeby wykryć migawkę z INNEJ planety (`Rng.fork` zależy wyłącznie
+ * od seeda, więc ten `seed` jest niezmienną funkcją `planet.seed` — darmowy odcisk palca).
+ */
+export const waveRngStateFor = (planet: Planet): RngState =>
+  new Rng(planet.seed).fork(STREAM.WAVES).getState();
 
 export function createState(planet: Planet, startingOre: number): SimState {
   return {
@@ -82,5 +183,20 @@ export function createState(planet: Planet, startingOre: number): SimState {
     units: [],
     nextUnitId: 1,
     phase: 'RUNNING',
+    pentagons: planet.pentagons.map(() => ({
+      spawnAccumulator: 0,
+      eruptionCooldown: 0,
+      eruptionArmed: false,
+    })),
+    evacCharge: 0,
+    evacAlarmRemaining: -1,
+    evacUnlockTick: 0,
+    killsBySun: 0,
+    killsByTurret: 0,
+    // Pozycja startowa strumienia fal. Wyprowadzana TUTAJ, z `planet.seed`, a nie
+    // w `Sim`: stan ma być kompletny sam z siebie (pomocniki testowe Fazy 1B budują go
+    // bez `Sim`), a `Sim` ma go tylko WCZYTYWAĆ — inaczej zostają dwa źródła prawdy
+    // o tym, gdzie jest generator, i rozjeżdżają się przy wznowieniu.
+    waveRng: waveRngStateFor(planet),
   };
 }

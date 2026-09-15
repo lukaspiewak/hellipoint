@@ -1,0 +1,8 @@
+{
+  "name": "@heliopolis/headless",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "bench": "tsc -b && node dist/run.js" },
+  "dependencies": { "@heliopolis/sim": "workspace:*" }
+}

@@ -4,6 +4,7 @@ import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS, type SimState } from '../src/sim/state.js';
 import { BUILDINGS } from '../src/sim/defs.js';
 import { stateHash } from '../src/sim/hash.js';
+import { DEFAULT_RUN } from '../src/sim/rules.js';
 import { Sim } from '../src/sim/loop.js';
 import type { Command } from '../src/sim/commands.js';
 
@@ -174,6 +175,41 @@ describe('stateHash', () => {
     variant.phase = 'VICTORY';
     expect(stateHash(variant)).not.toBe(h);
   });
+
+  // `createState` zawsze populuje `pentagons` (jeden wpis na pentagon planety, patrz
+  // `PentagonState` w state.ts, Task 4), więc — analogicznie do budynków/jednostek
+  // wyżej — bez poniższych pętla po pentagonach w hash.ts nigdy by się nie wykonała
+  // w całym pakiecie testów, a regresja w którymkolwiek z jej trzech pól przeszłaby
+  // niezauważona.
+
+  it('pentagon: zmiana `spawnAccumulator` zmienia hash', () => {
+    const h = stateHash(createState(planet, 150));
+    const variant = createState(planet, 150);
+    variant.pentagons[0].spawnAccumulator += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('pentagon: zmiana `eruptionCooldown` zmienia hash', () => {
+    const h = stateHash(createState(planet, 150));
+    const variant = createState(planet, 150);
+    variant.pentagons[0].eruptionCooldown += 1;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('pentagon: zmiana `eruptionArmed` zmienia hash', () => {
+    const h = stateHash(createState(planet, 150));
+    const variant = createState(planet, 150);
+    variant.pentagons[0].eruptionArmed = true;
+    expect(stateHash(variant)).not.toBe(h);
+  });
+
+  it('pentagon: pozycja w tablicy ma znaczenie — ta sama zmiana pod innym indeksem daje inny hash', () => {
+    const a = createState(planet, 150);
+    a.pentagons[0].spawnAccumulator = 0.5;
+    const b = createState(planet, 150);
+    b.pentagons[1].spawnAccumulator = 0.5;
+    expect(stateHash(a)).not.toBe(stateHash(b));
+  });
 });
 
 /**
@@ -223,6 +259,23 @@ function perturb(s: SimState, key: HashedField): SimState {
     case 'oreRemaining': clone.oreRemaining[0] += 1; return clone;
     case 'buildings': clone.buildings[0]!.hp += 1; return clone;
     case 'units': clone.units[0].hp += 1; return clone;
+    case 'pentagons': clone.pentagons[0].spawnAccumulator += 1; return clone;
+    case 'evacCharge': clone.evacCharge += 1; return clone;
+    // Bazowe `-1` (alarm nieaktywny) → `0`, czyli wartość, przy której alarm
+    // JEST aktywny i właśnie dobiegł końca. Perturbacja celowo przekracza granicę
+    // sentinela, a nie tylko zmienia liczbę o oczko w obrębie tej samej semantyki.
+    case 'evacAlarmRemaining': clone.evacAlarmRemaining += 1; return clone;
+    case 'evacUnlockTick': clone.evacUnlockTick += 1; return clone;
+    case 'killsBySun': clone.killsBySun += 1; return clone;
+    case 'killsByTurret': clone.killsByTurret += 1; return clone;
+    // Przestawione SŁOWO ROBOCZE, nie seed: seed jest w migawce po to, żeby `fork()`
+    // dawał te same poddrzewa, ale to `s` niesie POZYCJĘ w strumieniu — czyli dokładnie
+    // to, czego brak psuł wznawianie. Perturbacja musi ruszyć tę połowę, inaczej test
+    // przechodziłby nad haszem, który czyta wyłącznie seed.
+    case 'waveRng': clone.waveRng = {
+      seed: clone.waveRng.seed,
+      s: [clone.waveRng.s[0] + 1, clone.waveRng.s[1], clone.waveRng.s[2], clone.waveRng.s[3]],
+    }; return clone;
   }
 }
 
@@ -261,17 +314,21 @@ describe('kompletność stateHash — każde pole SimState jest albo hashowane, 
  */
 describe('niezmiennik serializowalności (round-trip JSON)', () => {
   it('stateHash(JSON.parse(JSON.stringify(state))) === stateHash(state) po kilkuset tickach ze zbudowanymi budynkami', () => {
-    const sim = new Sim(planet, { rotationPeriod: 180, startingOre: 5000 });
+    const sim = new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 5000 });
 
-    // Residual z przeglądu końcowego Fazy 1B: `Sim` sam z siebie NIGDY nie zasiewa
-    // CORE (patrz `playerBuildable: false` w defs.ts — symulacja zasiewa go
-    // bezpośrednim zapisem do stanu, nigdy przez komendę: `canBuild` odrzuca CORE,
-    // więc `applyCommand` nie jest tu opcją, to celowe), a bez CORE `connectedToCore`
-    // (network.ts) nie łączy NIC. Bez poniższej linii `storedEnergy` zostawał
-    // dokładnie na 0 przez wszystkie 400 ticków, a WSZYSTKIE budynki na
-    // `powered: false` — mimo że komentarz niżej twierdził, że skrypt je zapełnia.
-    // Zasiew wprost do stanu, tym samym wzorcem co w
-    // commands.test.ts/flowfield.test.ts/network.test.ts/power.test.ts.
+    // KOREKTA (przegląd gałęzi, Important #5): poprzednia wersja tego komentarza
+    // twierdziła, że „`Sim` sam z siebie NIGDY nie zasiewa CORE". To już NIEPRAWDA —
+    // konstruktor `Sim` zasiewa CORE na `planet.startCell` bezpośrednim zapisem do
+    // stanu (loop.ts, patrz `this.s.buildings[planet.startCell] = …`), dokładnie tak,
+    // jak robi to linia niżej. Komentarz pochodził z Fazy 1B, gdy `Sim` jeszcze tego
+    // nie robił, i nie został zaktualizowany, gdy 1C to dodała.
+    //
+    // Zapis ZOSTAJE mimo to i jest celowy: jest idempotentny (ten sam typ, to samo
+    // pełne hp, ta sama komórka), a czyni ten test niezależnym od tego, czy zasiew
+    // w konstruktorze kiedykolwiek zniknie — bez CORE `connectedToCore` (network.ts)
+    // nie łączy NIC, `storedEnergy` zostaje na 0 przez wszystkie 400 ticków i round-trip
+    // „przechodzi", nie sprawdzając niczego ciekawego. Ten sam wzorzec zasiewu co
+    // w commands.test.ts/flowfield.test.ts/network.test.ts/power.test.ts.
     sim.state.buildings[planet.startCell] = {
       cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
     };
