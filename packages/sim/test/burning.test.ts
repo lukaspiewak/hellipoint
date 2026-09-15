@@ -73,13 +73,32 @@ describe('updateBurning', () => {
     const peak = s.units[0].exposure;
 
     for (let i = 0; i < 10; i++) updateBurning(s, noLight);
-    expect(s.units[0].exposure).toBeCloseTo(peak - 10 * TICK_SECONDS * SHADOW_RECOVERY_RATE, 6);
+    // Math.max(0, …) po obu stronach: kod klamruje w miejscu, więc oczekiwanie
+    // musi klamrować tak samo, inaczej test pęka przy legalnym przestrojeniu
+    // SHADOW_RECOVERY_RATE [STROJENIE] (Faza 3), nie przy regresji w kodzie —
+    // zmierzone: przy rate ≥ 2,0 (4× dzisiejszej wartości) `peak - 10*TICK*rate`
+    // sam wychodzi ujemny, mimo że kod poprawnie stoi na zerze.
+    expect(s.units[0].exposure).toBeCloseTo(
+      Math.max(0, peak - 10 * TICK_SECONDS * SHADOW_RECOVERY_RATE),
+      6,
+    );
   });
 
   it('regeneracja nie schodzi poniżej zera', () => {
     const s = withCore();
     spawnUnit(s, 'SWARM', 10);
-    for (let i = 0; i < 500; i++) updateBurning(s, noLight);
+    // Ekspozycja startowa MNIEJSZA niż jeden krok regeneracji
+    // (TICK_SECONDS * SHADOW_RECOVERY_RATE) — połowa jednego kroku, liczona ZE
+    // STAŁEJ, nie z literału (SHADOW_RECOVERY_RATE jest [STROJENIE], test ma
+    // zostać poprawny przy każdej dodatniej wartości). Bez tego jeden tick
+    // regeneracji nigdy nie przestrzeliwuje zera z tego konkretnego stanu:
+    // `spawnUnit` daje exposure=0, a `else if (u.exposure > 0)` w ogóle nie
+    // wchodzi w gałąź regeneracji przy zerze — `Math.max(0, …)`, jedyna rzecz,
+    // którą ten test nazywa, nigdy nie była osiągana (zmierzone mutacją:
+    // usunięcie samego Math.max przy tym samym starcie od zera zostawiało
+    // całą suitę zieloną).
+    s.units[0].exposure = (TICK_SECONDS * SHADOW_RECOVERY_RATE) / 2;
+    updateBurning(s, noLight);
     expect(s.units[0].exposure).toBe(0);
   });
 
