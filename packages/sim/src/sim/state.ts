@@ -94,6 +94,16 @@ export interface SimState {
   phase: Phase;
   /** Równoległe do planet.pentagons, NIE indeksowane cellId. */
   pentagons: PentagonState[];
+  /** Zgromadzona energia w Module Ewakuacyjnym. Zerowana przy jego zniszczeniu (§5.6). */
+  evacCharge: number;
+  /**
+   * Sekundy do końca alarmu. -1 = alarm nieaktywny.
+   * Sentinel `-1`, a NIE `Infinity`/`null`: patrz niezmiennik serializowalności wyżej —
+   * `JSON.stringify` zamienia `Infinity` na `null`, a `null` w arytmetyce zachowuje się
+   * jak `0`, więc „alarm nieaktywny" po round-tripie stałoby się „alarm właśnie minął",
+   * czyli natychmiastowym zwycięstwem po wczytaniu zapisu.
+   */
+  evacAlarmRemaining: number;
 }
 
 export function createState(planet: Planet, startingOre: number): SimState {
@@ -112,5 +122,7 @@ export function createState(planet: Planet, startingOre: number): SimState {
       eruptionCooldown: 0,
       eruptionArmed: false,
     })),
+    evacCharge: 0,
+    evacAlarmRemaining: -1,
   };
 }

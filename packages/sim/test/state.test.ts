@@ -4,6 +4,7 @@ import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS, type SimState } from '../src/sim/state.js';
 import { BUILDINGS } from '../src/sim/defs.js';
 import { stateHash } from '../src/sim/hash.js';
+import { DEFAULT_RUN } from '../src/sim/rules.js';
 import { Sim } from '../src/sim/loop.js';
 import type { Command } from '../src/sim/commands.js';
 
@@ -259,6 +260,11 @@ function perturb(s: SimState, key: HashedField): SimState {
     case 'buildings': clone.buildings[0]!.hp += 1; return clone;
     case 'units': clone.units[0].hp += 1; return clone;
     case 'pentagons': clone.pentagons[0].spawnAccumulator += 1; return clone;
+    case 'evacCharge': clone.evacCharge += 1; return clone;
+    // Bazowe `-1` (alarm nieaktywny) → `0`, czyli wartość, przy której alarm
+    // JEST aktywny i właśnie dobiegł końca. Perturbacja celowo przekracza granicę
+    // sentinela, a nie tylko zmienia liczbę o oczko w obrębie tej samej semantyki.
+    case 'evacAlarmRemaining': clone.evacAlarmRemaining += 1; return clone;
   }
 }
 
@@ -297,7 +303,7 @@ describe('kompletność stateHash — każde pole SimState jest albo hashowane, 
  */
 describe('niezmiennik serializowalności (round-trip JSON)', () => {
   it('stateHash(JSON.parse(JSON.stringify(state))) === stateHash(state) po kilkuset tickach ze zbudowanymi budynkami', () => {
-    const sim = new Sim(planet, { rotationPeriod: 180, startingOre: 5000 });
+    const sim = new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 5000 });
 
     // Residual z przeglądu końcowego Fazy 1B: `Sim` sam z siebie NIGDY nie zasiewa
     // CORE (patrz `playerBuildable: false` w defs.ts — symulacja zasiewa go

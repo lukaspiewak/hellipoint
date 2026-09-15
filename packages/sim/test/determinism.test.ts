@@ -4,8 +4,17 @@ import { Sim } from '../src/sim/loop.js';
 import { stateHash } from '../src/sim/hash.js';
 import { TICK_SECONDS } from '../src/sim/state.js';
 import type { Command } from '../src/sim/commands.js';
+import { DEFAULT_RUN } from '../src/sim/rules.js';
 
-const CONFIG = { rotationPeriod: 180, startingOre: 150 };
+/**
+ * Pola `rotationPeriod`/`startingOre` wypisane JAWNIE, mimo że `DEFAULT_RUN` ma dziś
+ * dokładnie te wartości: reszta `DEFAULT_RUN` jest oznaczona `[STROJENIE]` i Faza 3
+ * będzie ją przestawiać headlessem, a te dwie liczby są dobrane pod konkretne asercje
+ * tego pliku (1200 ticków = 60 s przy obrocie 180 s; 150 rudy starcza na skrypt
+ * PYLON+BARRICADE). Bez jawnego nadpisania przestrojenie `DEFAULT_RUN` po cichu
+ * zmieniałoby sens tych testów.
+ */
+const CONFIG = { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 150 };
 
 /**
  * `withCommands = false` daje IDENTYCZNĄ pętlę step() bez żadnej komendy w kolejce —
@@ -123,31 +132,31 @@ describe('drenowanie kolejki komend poza fazą RUNNING', () => {
  * w tym miejscu. Walidacja w konstruktorze chroni WSZYSTKICH konsumentów naraz.
  * `!(x > 0)` NIE łapie Infinity (Infinity > 0 jest prawdziwe) — stąd Number.isFinite.
  */
-describe('SimConfig — walidacja w konstruktorze Sim', () => {
+describe('RunConfig — walidacja w konstruktorze Sim', () => {
   const planet = createPlanet({ seed: 1 });
 
   it('odrzuca rotationPeriod <= 0 lub nieskończony', () => {
-    expect(() => new Sim(planet, { rotationPeriod: 0, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: -180, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: NaN, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: Infinity, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: -Infinity, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 0, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: -180, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: NaN, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: Infinity, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: -Infinity, startingOre: 100 })).toThrow(RangeError);
   });
 
   it('odrzuca startingOre ujemny lub nieskończony', () => {
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -1 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: NaN })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: Infinity })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -Infinity })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: -1 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: NaN })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: Infinity })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: -Infinity })).toThrow(RangeError);
   });
 
   it('akceptuje startingOre = 0 — niezerowa dolna granica byłaby błędem (pole jest NIEUJEMNE, nie dodatnie)', () => {
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: 0 })).not.toThrow();
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 0 })).not.toThrow();
   });
 
   it('komunikat błędu nazywa pole i wartość, a nie tylko ogólnikowo "invalid config"', () => {
-    expect(() => new Sim(planet, { rotationPeriod: -5, startingOre: 100 })).toThrow(/rotationPeriod.*-5/);
-    expect(() => new Sim(planet, { rotationPeriod: 180, startingOre: -5 })).toThrow(/startingOre.*-5/);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: -5, startingOre: 100 })).toThrow(/rotationPeriod.*-5/);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: -5 })).toThrow(/startingOre.*-5/);
   });
 
   /**
@@ -161,12 +170,12 @@ describe('SimConfig — walidacja w konstruktorze Sim', () => {
    * w tym pakiecie nie używa rotationPeriod < 180s poza testami odrzucenia.
    */
   it('odrzuca rotationPeriod krótszy niż jeden tick — pełny obrót Słońca w jednym ticku nie jest symulowalnym cyklem dzień/noc', () => {
-    expect(() => new Sim(planet, { rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: 1e-320, startingOre: 100 })).toThrow(RangeError);
-    expect(() => new Sim(planet, { rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(/rotationPeriod/);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 1e-320, startingOre: 100 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: TICK_SECONDS / 2, startingOre: 100 })).toThrow(/rotationPeriod/);
   });
 
   it('akceptuje rotationPeriod dokładnie równy jednemu tickowi — granica jest inclusive, "krótszy niż" to ostra nierówność', () => {
-    expect(() => new Sim(planet, { rotationPeriod: TICK_SECONDS, startingOre: 100 })).not.toThrow();
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: TICK_SECONDS, startingOre: 100 })).not.toThrow();
   });
 });
