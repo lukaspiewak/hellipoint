@@ -1,0 +1,53 @@
+Pierwszy raport balansu — Heliopolis, headless runner (Task 6, Faza 1C)
+=========================================================================
+
+Wygenerowano: 2026-09-15
+Polecenie:    pnpm --filter @heliopolis/headless bench 1000 0
+Seeds:        0..999 (1000 runów), ScriptedPolicy, DEFAULT_RUN
+Środowisko:   node v22.22.0, pnpm 11.17.0 (patrz wersje.txt w tym katalogu)
+
+Powtarzalność: ten sam proces, ta sama maszyna → identyczne liczby (zweryfikowane
+testem `partia 20 runów na tych samych seedach daje identyczny raport`,
+tools/headless/test/headless.test.ts). Powtarzalność MIĘDZY maszynami/silnikami JS
+NIE jest tu zakładana — `Math.cos`/`Math.sin` w `sunDirection` (packages/sim/src/sim/light.ts)
+są przybliżeniami zależnymi od implementacji; patrz komentarz nad `lightField` tamże.
+
+Ten raport NIE ma być dobry. Ma istnieć, być powtarzalny i wyznaczyć pracę Fazy 3.
+
+-------------------------------------------------------------------------
+runów: 1000
+zwycięstw: 0 (0.0%)
+
+moment porażki [s]  p10=30.6 p50=45.2 p90=117.6
+cykl porażki        p10=1 p50=1 p90=1
+szczyt zabudowy     p10=8 p50=10 p90=32
+wydobyta ruda       p10=0 p50=47.8 p90=144.8
+
+wyczerpanie 1. złoża: 0.0% runów, czas [s] brak danych
+ubite przez słońce: 45.4% · przez wieże: 54.6%
+-------------------------------------------------------------------------
+
+Odczyt (dla Fazy 3, nie ostateczna diagnoza):
+
+- 0% zwycięstw na 1000 seedach. ScriptedPolicy nigdy nie dożywa odblokowania
+  Evac (cykl 7 / tick 21600 przy DEFAULT_RUN) — mediana porażki to cykl 1
+  (p90 wciąż cykl 1), czyli baza pada w pierwszych ~180 s gry.
+- Mediana szczytu zabudowy to 10 budynków, w tym CORE. Polityka priorytetyzuje
+  ekstraktory/energię przed obroną (§ priorytety w policy.ts) i w praktyce prawie
+  nigdy nie dochodzi do wieży: koszt LASER_TURRET (100)/KINETIC_TURRET (50) rzadko
+  jest osiągalny, zanim nadwyżka rudy zostanie wydana na BARRICADE (8) — zmierzone
+  osobno (task-6-report.md): 0 wież na wielu seedach, BARRICADE budowany dziesiątki
+  razy pod rząd.
+- „wyczerpanie 1. złoża": 0,0% na WSZYSTKICH 1000 seedach. Presja wroga kończy run,
+  zanim jakikolwiek ekstraktor zdąży wydobyć swoje ~400 rudy — złoża nigdy nie są
+  wąskim gardłem przy dzisiejszym balansie. (Sama ścieżka detekcji jest realna
+  i przetestowana pod innym, spokojniejszym configiem — patrz test
+  `firstDepletionTick odróżnia…` w headless.test.ts).
+- Zabicia dzielą się niemal po połowie (45,4% słońce / 54,6% wieże) — ale przy
+  medianie 0 wież postawionych w większości runów to w dużej mierze zasługa
+  nielicznych długich przebiegów (do ~10 tys. ticków), w których obrona jednak
+  się rozwija; patrz task-6-report.md dla rozbicia po długości runu.
+
+Te liczby wyznaczają punkt startowy Fazy 3: obecny balans [STROJENIE] (koszty
+budynków, tempo spawnu, progi energii) systematycznie faworyzuje wczesną, szybką
+porażkę nad jakąkolwiek formą obrony wieżowej dla tej klasy polityki.
