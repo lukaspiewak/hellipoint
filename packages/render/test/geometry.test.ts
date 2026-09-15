@@ -17,19 +17,22 @@ function vecAt(arr: Float32Array, vertexIndex: number): Vec3 {
 }
 
 /**
- * Czy wierzchołek pod `vertexIndex` w `positions` odpowiada DOKŁADNIE `expected` — z
- * poprawnym zaokrągleniem float64→float32 (`Math.fround`, dokładnie to co robi zapis do
- * `Float32Array`), więc porównanie jest ścisłe (`===`), nie tolerancyjne. Zamierzenie: żadna
- * tolerancja nie ma szansy zamaskować podmiany na WŁAŚCIWĄ, ale INNĄ komórkę — dwie różne
- * komórki na sferze nie mają współrzędnych bliskich siebie na tyle, żeby jakakolwiek
- * rozsądna tolerancja je pomyliła, ale ścisła równość zamyka to pytanie definitywnie.
+ * Czy trójka pod `vertexIndex` w `arr` (`positions` ALBO `normals` — ten sam układ xyz na
+ * wierzchołek) odpowiada DOKŁADNIE `expected` — z poprawnym zaokrągleniem float64→float32
+ * (`Math.fround`, dokładnie to co robi zapis do `Float32Array`), więc porównanie jest ścisłe
+ * (`===`), nie tolerancyjne. Zamierzenie: żadna tolerancja nie ma szansy zamaskować podmiany
+ * na WŁAŚCIWĄ, ale INNĄ komórkę — dwie różne komórki na sferze nie mają współrzędnych
+ * bliskich siebie na tyle, żeby jakakolwiek rozsądna tolerancja je pomyliła, ale ścisła
+ * równość zamyka to pytanie definitywnie. Dla `normals` to jest jeszcze ważniejsze niż dla
+ * `positions`: normalne DWÓCH SĄSIADUJĄCYCH komórek przy frequency 12 różnią się o kilka
+ * stopni, więc każda tolerancja "z rozsądku" przepuściłaby podmianę na sąsiada.
  */
-function vertexMatches(positions: Float32Array, vertexIndex: number, expected: Vec3): boolean {
+function vertexMatches(arr: Float32Array, vertexIndex: number, expected: Vec3): boolean {
   const o = vertexIndex * 3;
   return (
-    positions[o] === Math.fround(expected.x) &&
-    positions[o + 1] === Math.fround(expected.y) &&
-    positions[o + 2] === Math.fround(expected.z)
+    arr[o] === Math.fround(expected.x) &&
+    arr[o + 1] === Math.fround(expected.y) &&
+    arr[o + 2] === Math.fround(expected.z)
   );
 }
 
@@ -210,16 +213,40 @@ describe('buildPlanetGeometry', () => {
     // sprawdza tożsamość PER KOMÓRKA: nie „czy zakresy się sumują", tylko „czy WŁAŚNIE TA
     // komórka dostała WŁASNE dane". Licznik rozbieżności (nie fail-fast na pierwszej), żeby
     // dało się podać dokładną liczbę przy dowodzie zębów w raporcie.
+    //
+    // NORMALNE, nie tylko pozycje. Przegląd całogałęziowy zmierzył, że test 5 („normalna
+    // wskazuje na zewnątrz") sprawdza WYŁĄCZNIE `dot(n, p) > 0` — warunek spełniony także
+    // przez `cell.center` wpisany jako normalna (długość 100, nie 1) ORAZ przez normalną
+    // SĄSIADA (kilka stopni różnicy na sferze). Obie te mutacje zostawiały 483/483 zielone.
+    // To nie jest hipotetyczne: Three.js wyprowadza `intersection.normal` z atrybutu
+    // `normal` (raycaster Fazy 2C dostałby normalną sąsiada), a pierwszy materiał z
+    // oświetleniem (Faza 2B) cieniowałby każdą komórkę wg cudzej orientacji.
     let mismatches = 0;
+    let normalMismatches = 0;
+    let nonUnitNormals = 0;
     let fiveCornerCells = 0;
+    let checkedVertices = 0;
 
     for (const cell of planet.cells) {
       if (cell.corners.length === 5) fiveCornerCells++;
       const start = geo.cellVertexStart[cell.id];
+      const end = start + geo.cellVertexCount[cell.id];
 
       if (!vertexMatches(geo.positions, start, cell.center)) mismatches++;
       for (let k = 0; k < cell.corners.length; k++) {
         if (!vertexMatches(geo.positions, start + 1 + k, cell.corners[k])) mismatches++;
+      }
+
+      // WSZYSTKIE wierzchołki komórki (środek i każdy narożnik) niosą tę SAMĄ, WŁASNĄ
+      // normalną komórki — to jest dosłownie kontrakt `PlanetGeometry.normals`.
+      for (let v = start; v < end; v++) {
+        if (!vertexMatches(geo.normals, v, cell.normal)) normalMismatches++;
+        const n = vecAt(geo.normals, v);
+        // Jednostkowa — niezależnie od tożsamości. Sama tożsamość z `cell.normal` nie
+        // wystarczy: gdyby `buildDual` zaczęło zwracać normalne nieznormalizowane, render
+        // (Faza 2B) i raycaster (2C) dostałyby wektory o złej długości mimo „zgodności".
+        if (Math.abs(Math.hypot(n.x, n.y, n.z) - 1) > 1e-6) nonUnitNormals++;
+        checkedVertices++;
       }
     }
 
@@ -228,6 +255,30 @@ describe('buildPlanetGeometry', () => {
     // sama tabela mutacji tego nie dowodziła; tu jest to zweryfikowane niezależnie liczbą
     // komórek o dokładnie pięciu rogach, którą `dual.test.ts` już ustalił jako 12).
     expect(fiveCornerCells).toBe(12);
+    // Kontrola pozytywna pętli normalnych: odwiedzone WSZYSTKIE wierzchołki, nie zero
+    // (pusty zakres dałby `normalMismatches === 0` „za darmo", ten sam wzorzec co test 5).
+    expect(checkedVertices).toBe(expectedVertexCount);
     expect(mismatches).toBe(0);
+    expect(normalMismatches).toBe(0);
+    expect(nonUnitNormals).toBe(0);
+  });
+
+  it('10. cellVertexStart ROŚNIE ściśle wraz z id komórki — kolejność, nie tylko pokrycie', () => {
+    // Test 2 SORTUJE zakresy przed sprawdzeniem, więc dowolna PERMUTACJA komórek w buforze
+    // (np. wypełnianie od ostatniej komórki do pierwszej) przechodzi go zielono: zakresy
+    // nadal idealnie kafelkują tablicę, tylko w innej kolejności. Test 9 też przechodzi —
+    // każda komórka dostaje WŁASNE dane, po prostu gdzie indziej. Kolejność jest jednak
+    // kontraktem: `cellVertexStart[i] < cellVertexStart[i+1]` pozwala raycasterowi Fazy 2C
+    // zamienić trafiony indeks wierzchołka na `cellId` wyszukiwaniem binarnym, bez budowy
+    // odwrotnej mapy o rozmiarze liczby wierzchołków. Zmierzone przez przegląd
+    // całogałęziowy: bez tego testu monotoniczność nie jest sprawdzana NIGDZIE.
+    expect(geo.cellVertexStart.length).toBe(planet.cells.length); // nie testuj pustej pętli
+    expect(geo.cellVertexStart[0]).toBe(0);
+    for (let i = 0; i + 1 < geo.cellVertexStart.length; i++) {
+      expect(geo.cellVertexStart[i + 1]).toBeGreaterThan(geo.cellVertexStart[i]);
+      // Ściśle: następny start to dokładnie koniec poprzedniego — bez sortowania, więc
+      // permutacja nie ma jak się przez to prześlizgnąć.
+      expect(geo.cellVertexStart[i + 1]).toBe(geo.cellVertexStart[i] + geo.cellVertexCount[i]);
+    }
   });
 });
