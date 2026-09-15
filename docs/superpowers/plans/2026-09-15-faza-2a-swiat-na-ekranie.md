@@ -104,14 +104,37 @@ Testy do napisania, każdy z wartością wziętą z rzeczywistej planety, nie z 
 2. zakresy komórek **nie zachodzą na siebie i nie zostawiają dziur** — posortowane `start` z `count` pokrywają dokładnie całą tablicę
 3. pentagon ma 5 rogów, heks 6 — liczba trójkątów zgadza się z liczbą rogów
 4. każdy wierzchołek leży na sferze o promieniu planety (z tolerancją zmiennoprzecinkową)
-5. normalna każdej komórki wskazuje **na zewnątrz** — `dot(normal, center) > 0`
+5. normalna każdej komórki wskazuje **na zewnątrz** — sprawdzana na `geo.normals` i `geo.positions`,
+   **nie** na `Cell.normal` i `Cell.center` z symulacji.
+
+   > **To była pułapka w pierwszej wersji tego planu i wykonawca Taska 2 ją zmierzył.**
+   > `Cell.normal ≡ center/radius` z konstrukcji, więc `dot(Cell.normal, Cell.center) > 0` jest
+   > **tautologią wejścia** — zdaniem prawdziwym niezależnie od tego, co funkcja badana zapisze
+   > na wyjściu, i pokrytym już przez `packages/sim/test/planet.test.ts`. Dowiedzione empirycznie:
+   > dosłowna wersja tej asercji, wdrożona jako sonda, **przeszła mimo odwrócenia wszystkich
+   > normalnych na wyjściu**. Asercja ma czytać to, co funkcja wyprodukowała.
 6. kolejność wierzchołków daje trójkąty **zwrócone na zewnątrz** (winding), sprawdzone iloczynem wektorowym wobec normalnej komórki
 7. determinizm: dwa wywołania na tym samym seedzie dają identyczne tablice co do bitu
+8. **kontrola pozytywna:** inna `frequency` daje inne liczby wierzchołków i trójkątów.
+   Ten test istnieje po to, żeby złapać implementację zwracającą puste tablice — i **złapał
+   realny defekt dwóch innych testów z tej listy**: punkty 2 i 5, zapisane naiwnie, degenerują
+   się przy pustych tablicach do pustej pętli, więc ich `expect` nie wykonuje się ani razu.
+   Zakotwicz je w niezależnie policzonej, niezerowej liczbie wierzchołków **przed** pętlą.
 
 - [ ] **Krok 2: Uruchom testy i potwierdź porażkę**
 - [ ] **Krok 3: Zaimplementuj**
 - [ ] **Krok 4: Testy zielone**
-- [ ] **Krok 5: Zmierz i zapisz w komentarzu** liczbę wierzchołków i trójkątów dla `frequency 12` — Faza 4 będzie się o to pytać przy optymalizacji
+- [ ] **Krok 5: Zmierz i zapisz w komentarzu** liczbę wierzchołków i trójkątów dla `frequency 12` — Faza 4 będzie się o to pytać przy optymalizacji.
+
+  Zmierzone przy wykonaniu: **10 082 wierzchołki, 8640 trójkątów** — to 1442 środki plus 8640
+  narożników. Do tego **5760 pozycji powtarza się** między komórkami i **tak ma być**: narożnik
+  siatki dualnej należy geometrycznie do trzech komórek, a każda dostaje własny wierzchołek
+  w tym samym punkcie. Dokładnie dlatego kolory się nie interpolują. Nie „optymalizuj" tego
+  scalaniem — to nie jest marnotrawstwo, to jest mechanizm.
+
+  Kolejność nawijania zmierzona, nie założona: `buildDual` produkuje narożniki już zwrócone
+  na zewnątrz, **0 wyjątków na 8640 par**, więc wachlarz `(center, corners[k], corners[k+1])`
+  nie wymaga odwracania.
 - [ ] **Krok 6: Commit**
 
 ---
