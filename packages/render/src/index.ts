@@ -14,6 +14,7 @@ export {
   LIGHT_BANDS,
   lightBand,
   writeCellColors,
+  writeCellColorsSmooth,
   type Palette,
   type Rgb,
 } from './shading.js';
@@ -32,8 +33,25 @@ export {
 export { createPlanetMesh, type PlanetMesh } from './planetMesh.js';
 export {
   cappedPixelRatio,
+  CLEAR_COLOR,
   createScene,
   MAX_PIXEL_RATIO,
   type PlanetScene,
   type SceneRenderer,
 } from './scene.js';
+export { createRollingWindow, median, percentile, type RollingWindow } from './frameStats.js';
+export {
+  buildGateTrials,
+  findTerminatorPairs,
+  selectSpreadPairs,
+  type GateTrial,
+  type TerminatorPair,
+} from './terminatorPairs.js';
+export {
+  createReadabilityGate,
+  formatGateResultsMarkdown,
+  markerPosition,
+  type GateAnswerRecord,
+  type GateMode,
+  type ReadabilityGate,
+} from './readabilityGate.js';

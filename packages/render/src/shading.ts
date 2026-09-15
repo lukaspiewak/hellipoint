@@ -169,3 +169,66 @@ export function writeCellColors(
     }
   }
 }
+
+/**
+ * KONTROLA POZYTYWNA bramki czytelności (Zadanie 5, harness `readabilityGate.ts`) — odtwarza
+ * CELOWO dokładnie to, co bramka Fazy 0 zmierzyła jako NIECZYTELNE: gładką interpolację
+ * `saturate(dot(normal, sunDir))` między kolorem nocy a kolorem dnia, całkowicie POMIJAJĄC
+ * `LIGHT_BANDS`/`lightBand`. Nigdy używana w normalnym renderze gry — `planetMesh.ts`/`scene.ts`
+ * wołają wyłącznie `writeCellColors` powyżej. Istnieje wyłącznie po to, żeby harness bramki
+ * czytelności miał tryb, w którym granica dzień/noc NAPRAWDĘ znika, żeby człowiek mógł
+ * potwierdzić, że instrument jest w ogóle zdolny wyprodukować odpowiedź "nie widzę" — bez tego
+ * kontrastu piętnaście poprawnych wskazań niczego by nie dowodziło (mogłyby wyjść poprawne,
+ * nawet gdyby harness w ogóle nie umiał pokazać nieczytelnej granicy).
+ *
+ * Interpoluje liniowo, PER KOMÓRKA (nie per wierzchołek — te i tak niosą tę samą wartość
+ * `light[i]`, bo `geometry.ts` daje płaskie normalne, więc nie ma tu żadnej interpolacji PO
+ * WIERZCHOŁKU, którą robiłby GPU między dwoma różnymi wartościami tej samej komórki — to nie
+ * jest ten sam gradient, co discutowany w Fazie 0; TU chodzi wyłącznie o brak progowania
+ * MIĘDZY komórkami), między `palette[0]` ("noc") i `palette[palette.length - 1]` ("dzień")
+ * wg `light[i]` (0..1, już `saturate(dot)` z `lightAt`/`lightField`).
+ *
+ * Te same trzy `RangeError` co `writeCellColors`, z tego samego powodu (te same bufory
+ * własności wywołującego) — poza strażnikiem długości palety: ta funkcja nie zna
+ * `LIGHT_BANDS.length + 1`, bo nie progowanie, tylko sama obecność dwóch końców gradientu,
+ * jest tu wymogiem.
+ */
+export function writeCellColorsSmooth(
+  geo: PlanetGeometry,
+  light: Float32Array,
+  out: Float32Array,
+  palette: Palette = DEFAULT_PALETTE,
+): void {
+  if (out.length !== geo.positions.length) {
+    throw new RangeError(
+      `writeCellColorsSmooth: out.length (${out.length}) must equal geo.positions.length (${geo.positions.length})`,
+    );
+  }
+  if (palette.length < 2) {
+    throw new RangeError(`writeCellColorsSmooth: palette must have at least 2 entries, got ${palette.length}`);
+  }
+  const cellCount = geo.cellVertexStart.length;
+  if (light.length !== cellCount) {
+    throw new RangeError(
+      `writeCellColorsSmooth: light.length (${light.length}) must equal geo.cellVertexStart.length (${cellCount})`,
+    );
+  }
+
+  const night = palette[0];
+  const day = palette[palette.length - 1];
+
+  for (let i = 0; i < cellCount; i++) {
+    const t = light[i];
+    const r = night[0] + (day[0] - night[0]) * t;
+    const g = night[1] + (day[1] - night[1]) * t;
+    const b = night[2] + (day[2] - night[2]) * t;
+    const start = geo.cellVertexStart[i];
+    const end = start + geo.cellVertexCount[i];
+    for (let v = start; v < end; v++) {
+      const o = v * 3;
+      out[o] = r;
+      out[o + 1] = g;
+      out[o + 2] = b;
+    }
+  }
+}

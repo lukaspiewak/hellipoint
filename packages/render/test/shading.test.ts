@@ -6,6 +6,7 @@ import {
   LIGHT_BANDS,
   lightBand,
   writeCellColors,
+  writeCellColorsSmooth,
   type Palette,
   type Rgb,
 } from '../src/shading.js';
@@ -279,5 +280,86 @@ describe('writeCellColors', () => {
     for (let i = 1; i < LIGHT_BANDS.length; i++) {
       expect(LIGHT_BANDS[i]).toBeGreaterThan(LIGHT_BANDS[i - 1]);
     }
+  });
+});
+
+describe('writeCellColorsSmooth — KONTROLA POZYTYWNA bramki czytelności (Zadanie 5)', () => {
+  it('14. dwie komórki z RÓŻNYMI light dostają RÓŻNE, ale BLISKIE kolory na granicy geometrycznej — brak progu, brak skoku', () => {
+    // Fixture syntetyczna (wzorzec testu 11 powyżej): dwie komórki, jeden wierzchołek każda,
+    // `light` tuż pod i tuż nad `dot == 0` — dokładnie tam, gdzie `writeCellColors` (progowane)
+    // robi swój NAJWIĘKSZY skok (pasmo 0 -> pasmo 1), a ten wariant ma zamiast tego dać
+    // kolor niemal identyczny: to JEST "granica niewidoczna", zoperacjonalizowana jako liczba.
+    const geo2: PlanetGeometry = {
+      positions: new Float32Array(2 * 3),
+      normals: new Float32Array(2 * 3),
+      indices: new Uint32Array(0),
+      cellVertexStart: Uint32Array.from([0, 1]),
+      cellVertexCount: Uint32Array.from([1, 1]),
+    };
+    const light2 = Float32Array.from([0.499, 0.501]);
+    const out2 = new Float32Array(geo2.positions.length);
+
+    writeCellColorsSmooth(geo2, light2, out2, DEFAULT_PALETTE);
+    const colorA: Rgb = [out2[0], out2[1], out2[2]];
+    const colorB: Rgb = [out2[3], out2[4], out2[5]];
+
+    // Kontrola pozytywna na sam test: kolory NIE są identyczne (funkcja naprawdę reaguje na
+    // light, nie zwraca stałej) — ale różnica musi być drobna, rzędu różnicy wejścia (0,002),
+    // nie rzędu skoku między pasmami DEFAULT_PALETTE (który dla writeCellColors — patrz test
+    // 6 — wynosi całą odległość między dwoma sąsiednimi kolorami palety).
+    expect(colorA).not.toEqual(colorB);
+    for (let i = 0; i < 3; i++) {
+      expect(Math.abs(colorA[i] - colorB[i])).toBeLessThan(0.01);
+    }
+  });
+
+  it('15. light=0 daje DOKŁADNIE palette[0], light=1 daje DOKŁADNIE palette[ostatni] — końce gradientu są końcami palety', () => {
+    const geo2: PlanetGeometry = {
+      positions: new Float32Array(2 * 3),
+      normals: new Float32Array(2 * 3),
+      indices: new Uint32Array(0),
+      cellVertexStart: Uint32Array.from([0, 1]),
+      cellVertexCount: Uint32Array.from([1, 1]),
+    };
+    const light2 = Float32Array.from([0, 1]);
+    const out2 = new Float32Array(geo2.positions.length);
+
+    writeCellColorsSmooth(geo2, light2, out2, DEFAULT_PALETTE);
+
+    expect([out2[0], out2[1], out2[2]]).toEqual(froundRgb(DEFAULT_PALETTE[0]));
+    expect([out2[3], out2[4], out2[5]]).toEqual(froundRgb(DEFAULT_PALETTE[DEFAULT_PALETTE.length - 1]));
+  });
+
+  it('16. light=0,5 daje DOKŁADNIE punkt środkowy między palette[0] a palette[ostatni] (dowód interpolacji LINIOWEJ, nie np. progowej w przebraniu)', () => {
+    const geo2: PlanetGeometry = {
+      positions: new Float32Array(1 * 3),
+      normals: new Float32Array(1 * 3),
+      indices: new Uint32Array(0),
+      cellVertexStart: Uint32Array.from([0]),
+      cellVertexCount: Uint32Array.from([1]),
+    };
+    const out2 = new Float32Array(3);
+    writeCellColorsSmooth(geo2, Float32Array.from([0.5]), out2, DEFAULT_PALETTE);
+
+    const night = DEFAULT_PALETTE[0];
+    const day = DEFAULT_PALETTE[DEFAULT_PALETTE.length - 1];
+    const expectedMid: Rgb = [(night[0] + day[0]) / 2, (night[1] + day[1]) / 2, (night[2] + day[2]) / 2];
+    for (let i = 0; i < 3; i++) {
+      expect(out2[i]).toBeCloseTo(expectedMid[i], 5);
+    }
+  });
+
+  it('17. rzuca RangeError dla out/light o złej długości — ten sam wzorzec strażników co writeCellColors', () => {
+    const out = new Float32Array(geo.positions.length);
+    expect(() => writeCellColorsSmooth(geo, light, out, DEFAULT_PALETTE)).not.toThrow();
+
+    expect(() => writeCellColorsSmooth(geo, light, new Float32Array(geo.positions.length - 3), DEFAULT_PALETTE)).toThrow(
+      RangeError,
+    );
+    expect(() => writeCellColorsSmooth(geo, light.slice(0, light.length - 1), out, DEFAULT_PALETTE)).toThrow(
+      RangeError,
+    );
+    expect(() => writeCellColorsSmooth(geo, light, out, [])).toThrow(RangeError);
+    expect(() => writeCellColorsSmooth(geo, light, out, [DEFAULT_PALETTE[0]])).toThrow(RangeError);
   });
 });

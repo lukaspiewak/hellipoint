@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Heliopolis — bramka czytelności (Zadanie 5)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        font-family: system-ui, sans-serif;
+      }
+      #gate-canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+      #panel {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        width: min(360px, 42vw);
+        max-height: calc(100vh - 24px);
+        overflow-y: auto;
+        background: rgba(10, 14, 20, 0.85);
+        color: #e8f0ff;
+        border: 1px solid rgba(232, 240, 255, 0.2);
+        border-radius: 8px;
+        padding: 14px 16px;
+        box-sizing: border-box;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      #panel h1 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      #panel h2 {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        opacity: 0.7;
+        margin: 14px 0 4px;
+      }
+      #instructions {
+        opacity: 0.85;
+      }
+      #status {
+        font-weight: 600;
+        margin-top: 4px;
+      }
+      #prompt {
+        margin-top: 8px;
+        padding: 8px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      #tally {
+        margin-top: 8px;
+      }
+      button {
+        font: inherit;
+        cursor: pointer;
+        border: 1px solid rgba(232, 240, 255, 0.3);
+        background: rgba(232, 240, 255, 0.08);
+        color: inherit;
+        border-radius: 6px;
+        padding: 6px 10px;
+        margin-top: 8px;
+        margin-right: 6px;
+      }
+      button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      button:not(:disabled):hover {
+        background: rgba(232, 240, 255, 0.16);
+      }
+      #final {
+        margin-top: 10px;
+      }
+      #export {
+        width: 100%;
+        box-sizing: border-box;
+        height: 220px;
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        background: #05070a;
+        color: #cde;
+        border: 1px solid rgba(232, 240, 255, 0.25);
+        border-radius: 6px;
+        padding: 6px;
+        margin-top: 6px;
+      }
+      #verdict {
+        font-weight: 700;
+        margin-top: 8px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gate-canvas"></canvas>
+    <div id="panel">
+      <h1>Bramka czytelności terminatora — Zadanie 5</h1>
+      <div id="instructions">
+        Piętnaście prób (3 fazy słońca × 5 par). Każda para to dwie SĄSIADUJĄCE komórki, jedna
+        naprawdę oświetlona, druga naprawdę nie — oznaczone dwoma IDENTYCZNYMI, neutralnymi
+        znacznikami na planecie. Kliknij ten, który Twoim zdaniem leży na oświetlonej stronie.
+        Po kliknięciu zobaczysz prawdę (zielony = oświetlona, czerwony = ciemna) i przejdziesz
+        dalej. Możesz swobodnie obracać i przybliżać kamerę (K1) przed odpowiedzią.
+      </div>
+      <h2>Stan</h2>
+      <div id="status"></div>
+      <div id="prompt"></div>
+      <div id="tally"></div>
+      <button id="next-btn" disabled>Dalej →</button>
+      <h2>Kontrola pozytywna</h2>
+      <div style="opacity: 0.85">
+        Jeśli granica jest niewidoczna nawet w cieniowaniu progowanym, to jest realny wynik.
+        Poniższy przycisk pokazuje tę samą planetę BEZ progowania (gładki gradient) — dowód,
+        że ten test w ogóle POTRAFI wyprodukować "nie widzę". Klik w tym trybie się nie liczy.
+      </div>
+      <button id="mode-toggle"></button>
+      <div id="final" hidden>
+        <h2>Koniec</h2>
+        <div id="verdict"></div>
+        <div>Do wklejenia w dokument wyników:</div>
+        <textarea id="export" readonly></textarea>
+      </div>
+    </div>
+    <script type="module" src="/src/gate.ts"></script>
+  </body>
+</html>

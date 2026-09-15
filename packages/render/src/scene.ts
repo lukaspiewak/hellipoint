@@ -39,7 +39,12 @@ export interface PlanetScene {
 // Kolor czyszczenia płótna — [WYGLĄD]. Przeniesiony z Zadania 1 (`index.ts`, które budowało
 // pusty canvas dowodzący, że rura Three.js → `<canvas>` działa); teraz żyje przy
 // PRAWDZIWEJ scenie, którą to zadanie dostarcza.
-const CLEAR_COLOR = 0x0a0e14; // [WYGLĄD]
+//
+// Eksportowane (Zadanie 5): `readabilityGate.ts` buduje WŁASNĄ scenę (znaczniki + tryb
+// kontrolny), równoległą do tej, i celowo czyści płótno TYM SAMYM kolorem — bramka
+// czytelności ma różnić się od normalnego widoku WYŁĄCZNIE tym, co bada (progowanie vs
+// gładkie cieniowanie, znaczniki pary), nigdy przypadkiem także tłem.
+export const CLEAR_COLOR = 0x0a0e14; // [WYGLĄD]
 
 /**
  * Górny limit `devicePixelRatio` faktycznie przekazywany do renderera — [WYGLĄD].
