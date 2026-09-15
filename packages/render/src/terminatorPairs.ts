@@ -24,12 +24,22 @@ export interface TerminatorPair {
  * granica między pasmem 1 i 2.** To jest decyzja, nie przypadek, i jest tu udokumentowana,
  * bo od niej zależy, CO ta bramka w ogóle mierzy:
  *
- * 1. **To jest granica fizyczna, nie tylko wizualna.** `lightAt` (`packages/sim/src/sim/
- *    light.ts`) liczy `saturate(dot(normal, sunDir))` — pasmo 0 to DOKŁADNIE `dot <= 0`,
- *    czyli komórka naprawdę nie dostaje ŻADNEGO światła (nie "mało", tylko `0.0`). Pasma 1 i 2
- *    to dwa różne poziomy TEGO SAMEGO stanu "coś świeci". Kryterium bramki (§8.1, cytowane w
- *    briefie) brzmi "ta świeci, ta nie" — dwuwartościowe z natury, i ta granica jest jego
- *    JEDYNYM dosłownym odpowiednikiem w trzech pasmach `LIGHT_BANDS`.
+ * 1. **To jest granica WIDZIANA — granica pasma, a nie granica `dot <= 0`.** Pasmo 0 to
+ *    `light < LIGHT_BANDS[0]` (dziś 0,05), czyli noc PLUS wąski rąbek świtu, którego
+ *    symulacja nie uznaje za noc. Wcześniejsza wersja tego komentarza mówiła "pasmo 0 to
+ *    DOKŁADNIE `dot <= 0`" — to było NIEPRAWDĄ i zostało zmierzone (spec §4.1): przez 12
+ *    faz słońca w szczelinę `0 < light < 0,05` wpada od 8 do 38 komórek (4,28% tych, które
+ *    symulacja traktuje jako oświetlone). Bramka mierzy więc granicę, którą widzi OKO — i
+ *    to jest właściwa rzecz do mierzenia dla D1, bo D1 mówi o tym, co gracz czyta wzrokiem
+ *    — ale to NIE jest ta sama linia, co granica, po której decyduje symulacja
+ *    (`light[cellId] > 0` w `spawning.ts`, `burning.ts`, `movement.ts`).
+ *
+ *    Wybór granicy pasmowej pozostaje właściwy: kryterium bramki (§8.1, cytowane w briefie)
+ *    brzmi "ta świeci, ta nie" — dwuwartościowe z natury, a pasma 1 i 2 to dwa poziomy TEGO
+ *    SAMEGO stanu "coś świeci". Konsekwencja, którą trzeba znać czytając wynik: w 6 z 15
+ *    zapisanych prób komórka oznaczona jako "ciemna" jest dla symulacji OŚWIETLONA (spec
+ *    §4.1). Bramka nadal bada granicę dnia i nocy tak, jak ją widać — ale nie orzeka o tym,
+ *    gdzie ją stawia symulacja.
  * 2. **To jest granica o mocnym kontraście barwnym, nie o słabym.** Przegląd Zadania 3 zmierzył
  *    odległości barwne palety: noc↔półmrok Δodcienia 155,9° (kontrast WCAG 5,60), noc↔dzień
  *    178,3° (kontrast 16,24) — obie mocno rozdzielone. Półmrok↔dzień rozdziela się tylko Δ22,4°

@@ -137,18 +137,83 @@ Pierwsze dwie granice są mocno rozdzielone barwnie. **Granica terminator↔dzie
 poniżej progu 3:1 przyjmowanego w UI** — to jest różnica czysto estetyczna (kandydatka
 do strojenia w Fazie 4), **nie D1-owa**: D1 i kryterium §8.1 mówią o tym, czy komórka w
 ogóle dostaje światło ("ta świeci, ta nie"), nie o tym, czy dostaje "trochę" czy "dużo".
-Fizycznie: `lightAt` (`packages/sim/src/sim/light.ts`) liczy `saturate(dot)` — pasmo 0
-to DOKŁADNIE `dot ≤ 0`, czyli zero światła; pasma 1 i 2 to dwa poziomy TEGO SAMEGO stanu
-"coś świeci".
 
-**Dlatego harness (`findTerminatorPairs`, `packages/render/src/terminatorPairs.ts`)
-dobiera pary WYŁĄCZNIE na granicy pasmo-0-kontra-reszta (noc kontra półmrok-LUB-dzień),
-nigdy na granicy półmrok↔dzień.** Piętnaście prób bramki testuje więc dokładnie tę
-granicę, o której mówi D1 — nie granicę estetyczną. Konsekwencja dla interpretacji
-werdyktu w §7: **jeśli człowiek zgłosi trudność, ważne jest ZAPISANIE, czy trudność
-dotyczyła "czy to jest w ogóle jasne czy ciemne" (D1-krytyczne, poważny wynik) czy
-raczej "czy to jest już dzień czy jeszcze zmierzch" (estetyczne, nie powinno wpływać na
-werdykt bramki — to pytanie, którego bramka celowo NIE zadaje).**
+> **Skorygowane.** Stało tu zdanie: „pasmo 0 to DOKŁADNIE `dot ≤ 0`, czyli zero światła".
+> To nieprawda. Pasmo 0 to `light < LIGHT_BANDS[0]` (dziś 0,05), czyli noc **plus** wąski
+> rąbek świtu, który symulacja już uznaje za oświetlony. Zmierzone w §4.1 niżej.
+
+**Harness (`findTerminatorPairs`, `packages/render/src/terminatorPairs.ts`) dobiera pary
+WYŁĄCZNIE na granicy pasmo-0-kontra-reszta (noc kontra półmrok-LUB-dzień), nigdy na
+granicy półmrok↔dzień.** Bramka mierzy więc **granicę RENDEROWANEGO pasma — tę, którą
+widzi oko.** To jest właściwa rzecz do mierzenia dla D1, bo D1 mówi dokładnie o tym, co
+gracz czyta wzrokiem, bez UI. Ale **nie jest to ta sama linia, po której decyduje
+symulacja** (`light[cellId] > 0`) — §4.1.
+
+Konsekwencja dla interpretacji werdyktu w §7: **jeśli człowiek zgłosi trudność, ważne
+jest ZAPISANIE, czy trudność dotyczyła "czy to jest w ogóle jasne czy ciemne"
+(D1-krytyczne, poważny wynik) czy raczej "czy to jest już dzień czy jeszcze zmierzch"
+(estetyczne, nie powinno wpływać na werdykt bramki — to pytanie, którego bramka celowo
+NIE zadaje).**
+
+### 4.1 Granica renderowana a granica symulowana — zmierzone, do decyzji właściciela
+
+To nie jest błąd dokumentacji. Renderowana granica dnia i nocy oraz **symulowana**
+granica dnia i nocy to **dwie różne linie**, a między nimi leży pas komórek, w których
+symulacja i obraz mówią co innego:
+
+- **Symulacja** pyta `light[cellId] > 0`, czyli `dot > 0`. Dosłownie tak, trzy razy:
+  `spawning.ts:79` (pentagony tam **nie spawnują**), `burning.ts:37` (jednostki tam
+  **płoną**), `movement.ts:170`. `power.ts` używa wartości ciągłej.
+- **Render** pyta `light ≥ LIGHT_BANDS[0]`, dziś `0,05`.
+- **Szczelina**: komórki z `0 < light < 0,05` — symulacja traktuje je jako **oświetlone**,
+  gracz widzi **noc**.
+
+Zmierzone na `createPlanet({ seed: 20260915 })`, 1442 komórki, dwanaście faz słońca
+równomiernie po pełnym obrocie (`DEFAULT_RUN.rotationPeriod`):
+
+| faza (t/okres) | noc (`light = 0`) | **szczelina** | render-dzień | głębokość szczeliny |
+|---|---|---|---|---|
+| 0/12 | 745 | **8** | 689 | 1 krok komórki |
+| 1/12 | 722 | **29** | 691 | 1 |
+| 2/12 | 722 | **38** | 682 | 1 |
+| 3/12 | 722 | **31** | 689 | 1 |
+| 4/12 | 722 | **38** | 682 | 1 |
+| 5/12 | 722 | **29** | 691 | 1 |
+| 6/12 | 722 | **31** | 689 | 1 |
+| 7/12 | 722 | **29** | 691 | 1 |
+| 8/12 | 722 | **38** | 682 | 1 |
+| 9/12 | 722 | **31** | 689 | 1 |
+| 10/12 | 722 | **38** | 682 | 1 |
+| 11/12 | 722 | **29** | 691 | 1 |
+
+- **Ile komórek: 8 do 38**, średnio 30,8 na fazę. Liczba 8 (cytowana w §7.3.1 i w
+  przeglądzie) to **przypadek szczególny fazy 0/12**, gdzie orientacja siatki geodezyjnej
+  wyjątkowo dobrze trafia w granicę — nie liczba typowa. Udział: **4,28%** wszystkich
+  komórek, które symulacja uznaje za oświetlone.
+- **Jak szeroki pas: 1 krok komórki, w KAŻDEJ z dwunastu faz.** Mierzone jako odległość
+  grafowa (BFS po sąsiedztwie) od najbliższej komórki prawdziwie ciemnej: maksimum 1,
+  średnia dokładnie 1,00, najgrubsze przejście z nocy do renderowanego dnia — 1 komórka.
+  Szczelina jest więc **jedną warstwą komórek** wokół terminatora, nigdy pasem.
+- **Dlaczego tak wąski:** szczelina `dot ∈ (0; 0,05)` obejmuje **2,87°** kąta, a średni
+  krok kątowy do sąsiada przy `frequency 12` wynosi **5,74°** — czyli **0,50 kroku
+  komórki**. Pas jest z natury węższy niż jedna komórka; łapie tylko te, które akurat
+  wpadły w niego środkiem.
+- **Bramka:** w **6 z 15** zapisanych prób (§7.2) komórka oznaczona jako „ciemna" jest dla
+  symulacji **oświetlona**: próby 2 (komórka 191, light 0,0458), 6 (211, 0,0052),
+  7 (264, 0,0400), 11 (3, 0,0146), 13 (1228, 0,0105), 15 (1034, 0,0058). Werdykt PASS
+  pozostaje prawdziwy jako orzeczenie o **granicy widzianej** — człowiek trafił za każdym
+  razem — ale nie jest orzeczeniem o granicy symulowanej.
+
+**Znaczenie dla rozgrywki, nie dla testów.** W pasie do 38 komórek gracz widzi noc, a
+symulacja liczy dzień: pentagony tam nie spawnują, jednostki tam płoną, panele tam
+produkują (choć poniżej 5% mocy szczytowej, więc energetycznie to szum — inaczej niż
+spawnowanie i palenie, które są zero-jedynkowe).
+
+**`LIGHT_BANDS` NIE zostało zmienione** — to stała `[WYGLĄD]`, a decyzja należy do
+właściciela projektu. Kierunek jest jednak jednoznaczny: im niższy pierwszy próg, tym
+bliżej obie linie. Próg `0,05` daje szczelinę 0,50 kroku komórki; przy progu `0` obie
+linie pokrywałyby się dokładnie, kosztem tego, że komórka o `light = 0,001` dostałaby
+barwę półmroku.
 
 ---
 
@@ -170,6 +235,12 @@ Kod: `packages/render/src/terminatorPairs.ts` (dobór par, czyste funkcje),
   (§4). Zmierzone (nie zgadywane) liczby genuinie znalezionych par na tych trzech
   fazach: **142, 143, 143** — więcej niż potrzeba (5), więc `selectSpreadPairs` (dobór
   równomiernie rozłożonych indeksów, deterministyczny) zawsze ma z czego wybierać.
+- **Co dokładnie znaczy tu "ciemna".** Pasmo 0 to `light < LIGHT_BANDS[0]` = 0,05, czyli
+  **komórka renderowana jako noc** — nie „komórka, której symulacja nie oświetla".
+  Zmierzone (§4.1): w **6 z 15** prób komórka oznaczona jako ciemna ma `light > 0`, więc
+  symulacja traktuje ją jako oświetloną. Bramka bada granicę, którą WIDZI OKO, i to jest
+  właściwa rzecz dla D1 — ale czytając wynik trzeba wiedzieć, że to nie jest orzeczenie o
+  granicy `dot ≤ 0`.
 - Ten sam plan prób (te same 15 par, w tej samej kolejności) wychodzi za KAŻDYM
   uruchomieniem `gate.html` — dobór jest deterministyczny, nie losowy. Zamierzone:
   powtórna sesja człowieka (jak sesja 2 w Fazie 0) patrzy na te same pary, nie na nowy,
@@ -385,6 +456,35 @@ skopiowane z `#export`, nie przepisane ręcznie.)
 
 Wklejone dosłownie z `gate.html`, wariant progowania, przez właściciela projektu.
 
+**Warunki, pod którymi ta tabela obowiązuje** — bez nich nie da się jej powtórzyć ani
+porównać z drugą sesją:
+
+| parametr | wartość w tym przebiegu |
+|---|---|
+| `seed` planety | `20260915` |
+| `frequency` | domyślne (12) → 1442 komórki |
+| `LIGHT_BANDS` | **`[0,05; 0,4]`** |
+| fazy słońca | `t/T ∈ {0; 1/3; 2/3}`, `T = DEFAULT_RUN.rotationPeriod = 180 s` |
+| par na fazę | 5 |
+
+**Pierwszy próg jest tu parametrem krytycznym, nie szczegółem.** Plan prób jest
+deterministyczny, ale wyprowadzony z `LIGHT_BANDS[0]` — zmiana progu zmienia zarówno to,
+które pary w ogóle są graniczne, jak i to, które z nich wybierze `selectSpreadPairs`.
+Zmierzone, ile z piętnastu par tej tabeli zostałoby w nowym planie:
+
+| `LIGHT_BANDS[0]` | par z tej tabeli w nowym planie | par tej tabeli nadal granicznych |
+|---|---|---|
+| **0,05** (ten przebieg) | 15/15 | 15/15 |
+| 0,055 | 12/15 | — |
+| 0,06 | **10/15** | 13/15 |
+| 0,07 | 6/15 | — |
+| 0,04 | 6/15 | 13/15 |
+| 0,03 | 6/15 | 13/15 |
+
+Wniosek dla drugiej sesji człowieka (§5.1): **jeśli `LIGHT_BANDS` zmieni się przed nią,
+to nie jest ta sama bramka** i tabel nie wolno porównywać wiersz po wierszu. Próg trzeba
+sprawdzić PRZED uruchomieniem i zapisać obok nowej tabeli.
+
 | # | Faza | Komórka jasna | Komórka ciemna | Kliknięto | Wynik |
 |---|---|---|---|---|---|
 | 1 | 1 | 468 | 12 | 468 | OK |
@@ -429,7 +529,14 @@ jest poniżej progu przyjmowanego w interfejsach i **świadomie nie był przedmi
 Właściciel projektu, przełączywszy kontrolę pozytywną, ocenił że **15/15 byłoby osiągalne także
 w trybie gładkim**. Zmierzone i potwierdzone — ocena jest trafna, a przyrząd wadliwy.
 
-Odległości barw między sąsiadami przez terminator, seed 33, `sunDirection(0, 180)`:
+Odległości barw między sąsiadami przez terminator, `sunDirection(0, 180)`:
+
+> **Etykieta skorygowana.** Te pomiary były podpisane „seed 33", co sugerowało, że zależą
+> od seeda. Nie zależą — zmierzone na seedach 20260915, 33, 1 i 999999: `positions`,
+> `normals` i `lightField` wychodzą **bit w bit identyczne** na każdym z nich. Seed
+> steruje wyłącznie `Cell.oreCapacity` i wyborem `startCell` (np. 1156 kontra 488), a
+> geometria zależy tylko od `frequency`. Liczby poniżej są poprawne i obowiązują dla
+> KAŻDEGO seeda przy `frequency 12`; podpis był mylący, nie pomiar.
 
 | para | światło jaśniejszej | progowane | gładkie |
 |---|---|---|---|
@@ -460,6 +567,12 @@ jej nie bada wizualnie.
 bo światło 0,0458 nie przekracza pierwszego progu 0,05 i obie komórki lądują w tym samym paśmie.
 Osiem komórek na 1442 wpada w tę szczelinę. Czyli **progowanie potrafi ukryć granicę, której
 gładkie cieniowanie by nie ukryło** — argument za niskim pierwszym progiem, nie przeciw niemu.
+
+> **Rozwinięte i zmierzone w §4.1.** Liczba „osiem" dotyczy WYŁĄCZNIE fazy `sunDirection(0, 180)`,
+> gdzie orientacja siatki geodezyjnej wyjątkowo dobrze trafia w granicę. Przez dwanaście faz
+> pełnego obrotu szczelina obejmuje **8 do 38 komórek** (średnio 30,8; 4,28% komórek, które
+> symulacja uznaje za oświetlone), a jej grubość to **1 krok komórki w każdej fazie**.
+> W 6 z 15 prób §7.2 komórka oznaczona jako „ciemna" jest dla symulacji oświetlona.
 
 ### 7.3.2 Zakres, w jakim werdykt PASS nadal obowiązuje
 
