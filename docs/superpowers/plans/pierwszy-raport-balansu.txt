@@ -1,7 +1,8 @@
 Pierwszy raport balansu — Heliopolis, headless runner (Task 6, Faza 1C)
 =========================================================================
 
-Wygenerowano: 2026-09-15 (runda poprawek 2: ogólna rezerwa rudy w ScriptedPolicy)
+Wygenerowano: 2026-09-15 (przegląd gałęzi, Important #3: raport rozróżnia teraz
+              „przegrał" od „skończył się budżet ticków")
 Polecenie:    pnpm --filter @heliopolis/headless bench 1000 0
 Seeds:        0..999 (1000 runów), ScriptedPolicy, DEFAULT_RUN
 Środowisko:   node v22.22.0, pnpm 11.17.0 (patrz wersje.txt w tym katalogu)
@@ -18,9 +19,24 @@ Ta wersja zastępuje poprzednią (runda poprawek 1: "wieża przed barykadą" —
 łatka na jedną gałąź, niewystarczająca, patrz niżej). Wcześniejsze liczby zachowane
 w task-6-report.md jako punkt odniesienia.
 
+CO ZMIENIŁO SIĘ WZGLĘDEM POPRZEDNIEJ WERSJI TEGO PLIKU: wyłącznie FORMAT. Wszystkie
+rozkłady są identyczne co do ostatniej cyfry — przegląd gałęzi nie ruszył ani jednej
+liczby balansowej. Doszło rozbicie na trzy kubełki (zwycięstwa / porażki / obcięte)
+i ostrzeżenie na górze raportu, gdy jakikolwiek run został OBCIĘTY limitem ticków.
+
+Dlaczego to ma znaczenie akurat dla tego pliku: `Phase` ma trzy wartości, a poprzedni
+`formatReport` obsługiwał dwie — runy wciąż w fazie RUNNING nie były nigdzie policzone.
+Zmierzone na pięciu runach obciętych na ticku 500: raport drukował „runów: 5 /
+zwycięstw: 0 (0.0%)" i „moment porażki: brak danych", nie mówiąc ani słowa o tym, że
+ŻADEN run się nie skończył. Ten raport (1000 runów) był sensowny wyłącznie dlatego,
+że wszystkie 1000 naprawdę doszło do DEFEAT — czego do dziś nic nie potwierdzało.
+Linia „porażek: 1000 (100.0%)" niżej jest tym potwierdzeniem, a nie ozdobnikiem.
+
 -------------------------------------------------------------------------
 runów: 1000
-zwycięstw: 0 (0.0%)
+  zwycięstw: 0 (0.0%)
+  porażek:   1000 (100.0%)
+  obciętych: 0 (0.0%)
 
 moment porażki [s]  p10=31.1 p50=51.6 p90=119.4
 cykl porażki        p10=1 p50=1 p90=1

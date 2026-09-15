@@ -147,8 +147,64 @@ describe('formatReport', () => {
     const text = formatReport(
       Array.from({ length: 5 }, (_, i) => simulateRun(i, DEFAULT_RUN, 50_000)),
     );
-    for (const key of ['zwycięstw', 'porażki', 'wyczerpanie', 'słońce', 'wieże']) {
+    // `porażek`/`obciętych` doszły w przeglądzie gałęzi: §8.3 mówi o ROZKŁADACH, a te
+    // są czytelne tylko wtedy, gdy wiadomo, ile runów w ogóle się skończyło.
+    for (const key of ['zwycięstw', 'porażek', 'obciętych', 'porażki', 'wyczerpanie', 'słońce', 'wieże']) {
       expect(text).toContain(key);
     }
   });
 });
+
+/**
+ * PRZEGLĄD GAŁĘZI, Important #3. `Phase` ma trzy wartości, `formatReport` obsługiwał
+ * dwie: runy wciąż `RUNNING` (obcięte limitem ticków) nie były nigdzie policzone.
+ * Zmierzone przed poprawką: pięć runów, z których ŻADEN się nie skończył, drukowało
+ * `runów: 5 / zwycięstw: 0 (0.0%)` i „moment porażki: brak danych" — czytelnik nie miał
+ * skąd wiedzieć, że zero runów w ogóle dobiegło końca. Raport z 1000 runów był sensowny
+ * WYŁĄCZNIE dlatego, że wszystkie naprawdę przegrały, czego nic nie asercjowało.
+ */
+describe('formatReport — rozróżnienie „przegrał" od „skończył się budżet ticków"', () => {
+  it('partia obcięta jest oznaczona jako obcięta, w miejscu nie do przeoczenia', () => {
+    // 500 ticków: zmierzone, wszystkie te seedy są wtedy jeszcze w fazie RUNNING.
+    const cut = Array.from({ length: 5 }, (_, i) => simulateRun(i, DEFAULT_RUN, 500));
+    expect(cut.every((r) => r.phase === 'RUNNING')).toBe(true); // przesłanka testu
+
+    const text = formatReport(cut);
+    const first = text.split('\n')[0];
+
+    // Ostrzeżenie w PIERWSZEJ linii, nie schowane w środku tabeli.
+    expect(first).toContain('UWAGA');
+    expect(first).toContain('NIE ZAKOŃCZYŁO SIĘ');
+    expect(text).toContain('obciętych: 5 (100.0%)');
+    expect(text).toContain('porażek:   0 (0.0%)');
+  });
+
+  it('partia zakończona NIE jest oznaczana jako obcięta, a rozbicie się zgadza', () => {
+    const done = Array.from({ length: 5 }, (_, i) => simulateRun(i, DEFAULT_RUN, 50_000));
+    expect(done.every((r) => r.phase === 'DEFEAT')).toBe(true); // przesłanka testu
+
+    const text = formatReport(done);
+    expect(text).not.toContain('UWAGA');
+    expect(text.split('\n')[0]).toBe('runów: 5');
+    expect(text).toContain('porażek:   5 (100.0%)');
+    expect(text).toContain('obciętych: 0 (0.0%)');
+    expect(text).toContain('zwycięstw: 0 (0.0%)');
+  });
+
+  /**
+   * Trzy kubełki muszą sumować się do całości — inaczej „obciętych: 0" mogłoby znaczyć
+   * „nie umiem ich policzyć" zamiast „nie było żadnego". Partia mieszana składana
+   * z dwóch przebiegów tych samych seedów: jednego do końca, drugiego uciętego.
+   */
+  it('zwycięstwa + porażki + obcięte sumują się do liczby runów, także w partii mieszanej', () => {
+    const mixed = [
+      ...Array.from({ length: 3 }, (_, i) => simulateRun(i, DEFAULT_RUN, 50_000)),
+      ...Array.from({ length: 2 }, (_, i) => simulateRun(i, DEFAULT_RUN, 500)),
+    ];
+    const text = formatReport(mixed);
+    expect(text).toContain('UWAGA');
+    expect(text).toContain('runów: 5');
+    expect(text).toContain('porażek:   3 (60.0%)');
+    expect(text).toContain('obciętych: 2 (40.0%)');
+  });
+}, 30_000);
