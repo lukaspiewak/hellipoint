@@ -54,6 +54,18 @@ export class Sim {
     this.s = createState(planet, config.startingOre);
     this.waveRng = new Rng(planet.seed).fork(STREAM.WAVES);
 
+    // §5.6: Evac odblokowany dopiero w ostatniej tercji runu. Próg liczony TUTAJ, bo tu
+    // — i tylko tu — konfiguracja jest znana, a zapisywany do stanu jako TICK, bo
+    // egzekwuje go `canBuild`, która widzi wyłącznie `SimState` (patrz doc-comment
+    // `evacUnlockTick` w state.ts). Cykl N zaczyna się po (N-1) pełnych obrotach, stąd
+    // `unlockCycle - 1`. `Math.max(0, …)` na wypadek `evacUnlockFraction <= 0`, gdzie
+    // `unlockCycle` wychodzi 0 i iloczyn byłby ujemny.
+    const unlockCycle = Math.ceil(config.cyclesPerRun * config.evacUnlockFraction);
+    this.s.evacUnlockTick = Math.max(
+      0,
+      Math.ceil(((unlockCycle - 1) * config.rotationPeriod) / TICK_SECONDS),
+    );
+
     const n = planet.cells.length;
     this.motion = {
       termSpeedCells: terminatorSpeedCells(n, config.rotationPeriod),

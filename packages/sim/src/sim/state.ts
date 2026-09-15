@@ -104,6 +104,22 @@ export interface SimState {
    * czyli natychmiastowym zwycięstwem po wczytaniu zapisu.
    */
   evacAlarmRemaining: number;
+  /**
+   * Pierwszy tick, w którym wolno postawić EVACUATION_MODULE (§5.6: „odblokowany
+   * w ostatniej tercji runu"). Liczony RAZ, w konstruktorze `Sim`, z `RunConfig`
+   * (`cyclesPerRun`, `evacUnlockFraction`, `rotationPeriod`) i zapisywany tutaj.
+   *
+   * Dlaczego TICK, a nie numer cyklu: bramkę egzekwuje `canBuild`, a ta zna wyłącznie
+   * `SimState` — nie zna ani `rotationPeriod`, ani `RunConfig`. Przeliczenie na tick
+   * w jednym miejscu, przy konstrukcji, usuwa tę zależność zamiast propagować ją przez
+   * sygnatury `canBuild`/`applyCommand`, na których stoi Faza 5. `evacUnlocked(cycle, cfg)`
+   * w rules.ts zostaje jako forma czytelna dla UI Fazy 2 i jest z tym polem zgodna.
+   *
+   * `createState` daje tu 0 (odblokowane od razu): stan zbudowany bez `Sim` nie zna
+   * konfiguracji, a wartość permisywna zachowuje zachowanie wszystkich pomocników
+   * testowych Fazy 1B, które piszą budynki wprost do stanu.
+   */
+  evacUnlockTick: number;
 }
 
 export function createState(planet: Planet, startingOre: number): SimState {
@@ -124,5 +140,6 @@ export function createState(planet: Planet, startingOre: number): SimState {
     })),
     evacCharge: 0,
     evacAlarmRemaining: -1,
+    evacUnlockTick: 0,
   };
 }

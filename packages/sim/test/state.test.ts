@@ -265,6 +265,7 @@ function perturb(s: SimState, key: HashedField): SimState {
     // JEST aktywny i właśnie dobiegł końca. Perturbacja celowo przekracza granicę
     // sentinela, a nie tylko zmienia liczbę o oczko w obrębie tej samej semantyki.
     case 'evacAlarmRemaining': clone.evacAlarmRemaining += 1; return clone;
+    case 'evacUnlockTick': clone.evacUnlockTick += 1; return clone;
   }
 }
 

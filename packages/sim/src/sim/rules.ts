@@ -25,6 +25,26 @@ export const DEFAULT_RUN: RunConfig = {
   spawn: DEFAULT_SPAWN,
 };
 
+/**
+ * Tolerancja na błąd akumulacji zmiennoprzecinkowej `evacAlarmRemaining -= TICK_SECONDS`.
+ * NIE jest to liczba balansowa (stąd brak `[STROJENIE]`) — to ten sam problem i ta sama
+ * decyzja, co `EXPOSURE_EPSILON` w burning.ts, tylko odchylenie idzie w drugą stronę:
+ * tam `+=` ląduje tuż PONIŻEJ progu, tutaj `-=` zatrzymuje się tuż NAD zerem.
+ *
+ * Zmierzone: `0,05` nie ma dokładnej reprezentacji binarnej, więc odjęcie go 1200 razy
+ * od 60 zostawia **1,2706086183200682e-12** zamiast zera — bez tolerancji odliczanie
+ * potrzebuje 1201 ticków, a alarm trwa 60,05 s zamiast 60 s. Reszta nie jest monotoniczna
+ * ani zawsze dodatnia (dla 30 s wychodzi −2,92e-13, czyli tam problem nie występuje);
+ * przeskanowane co sekundę w zakresie 1–600 s, najgorsza DODATNIA reszta to
+ * **5,135961100855013e-12** (dla 128 s).
+ *
+ * Stąd 1e-9: margines nad zmierzonym najgorszym przypadkiem **~195×**, a jednocześnie
+ * 5×10⁷ razy mniej niż jeden tick (0,05 s), więc nie jest w stanie skrócić alarmu
+ * o cały krok. Ten sam rząd wielkości, co `EXPOSURE_EPSILON` (1e-9) i `theta < 1e-9`
+ * w `slerpToward` (movement.ts) — pakiet ma jedną skalę dla tej klasy błędu.
+ */
+const ALARM_EPSILON = 1e-9;
+
 /** Cykle numerowane od 1. */
 export const currentCycle = (elapsed: number, rotationPeriod: number): number =>
   Math.floor(elapsed / rotationPeriod) + 1;
@@ -52,7 +72,7 @@ export function updateRules(s: SimState, cfg: RunConfig): void {
 
   if (s.evacAlarmRemaining >= 0) {
     s.evacAlarmRemaining -= TICK_SECONDS;
-    if (s.evacAlarmRemaining <= 0) s.phase = 'VICTORY';
+    if (s.evacAlarmRemaining <= ALARM_EPSILON) s.phase = 'VICTORY';
     return;
   }
 

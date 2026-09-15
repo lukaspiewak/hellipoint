@@ -125,3 +125,58 @@ describe('applyCommand', () => {
     expect(s.ore).toBe(100);
   });
 });
+
+/**
+ * §5.6: Moduł Ewakuacyjny odblokowuje się dopiero w ostatniej tercji runu. Przed rundą
+ * poprawek reguła istniała WYŁĄCZNIE jako funkcja `evacUnlocked` w rules.ts, której nic
+ * nie wołało — `canBuild` przyjmował Evac w cyklu 1 (patrz task-5-report.md, defekt #2).
+ * Próg jest liczony raz, w konstruktorze `Sim`, i leży w stanie jako TICK, więc `canBuild`
+ * może go sprawdzić, nie znając ani `rotationPeriod`, ani `RunConfig`.
+ */
+describe('bramka ewakuacji w canBuild (§5.6)', () => {
+  it('odmawia postawienia EVACUATION_MODULE przed progiem, z powodem EVAC_LOCKED', () => {
+    const s = createState(planet, 100000);
+    s.evacUnlockTick = 21600;
+    s.tick = 0;
+    expect(canBuild(s, plainHex, 'EVACUATION_MODULE')).toEqual({ ok: false, reason: 'EVAC_LOCKED' });
+  });
+
+  /**
+   * Granica przypięta co do ticka, nie w wygodnym środku: OSTATNI tick przed progiem
+   * odmawia, PIERWSZY tick progu przyjmuje. Bez obu połówek `>=` przechodzi tak samo
+   * jak `>` (albo jak stała odmowa).
+   */
+  it('granica jest ostra: tick przed progiem odmawia, tick progu przyjmuje', () => {
+    const s = createState(planet, 100000);
+    s.evacUnlockTick = 21600;
+
+    s.tick = 21599;
+    expect(canBuild(s, plainHex, 'EVACUATION_MODULE')).toEqual({ ok: false, reason: 'EVAC_LOCKED' });
+
+    s.tick = 21600;
+    expect(canBuild(s, plainHex, 'EVACUATION_MODULE')).toEqual({ ok: true });
+  });
+
+  it('bramka dotyczy WYŁĄCZNIE Evaca — inne budynki wolno stawiać od pierwszego ticka', () => {
+    const s = createState(planet, 100000);
+    s.evacUnlockTick = 21600;
+    s.tick = 0;
+    expect(canBuild(s, plainHex, 'PYLON')).toEqual({ ok: true });
+    expect(canBuild(s, anyPentagon, 'GEOTHERMAL_CAP')).toEqual({ ok: true });
+    expect(canBuild(s, anyOreCell, 'EXTRACTOR')).toEqual({ ok: true });
+  });
+
+  it('applyCommand po cichu ignoruje BUILD Evaca przed progiem — komórka zostaje pusta', () => {
+    const s = createState(planet, 100000);
+    s.evacUnlockTick = 21600;
+    s.tick = 21599;
+    applyCommand(s, { kind: 'BUILD', cellId: plainHex, type: 'EVACUATION_MODULE' });
+    expect(s.buildings[plainHex]).toBeNull();
+    expect(s.ore).toBe(100000); // ruda NIE pobrana za odrzuconą komendę
+
+    s.tick = 21600;
+    applyCommand(s, { kind: 'BUILD', cellId: plainHex, type: 'EVACUATION_MODULE' });
+    expect(s.buildings[plainHex]).toMatchObject({ type: 'EVACUATION_MODULE' });
+    expect(s.ore).toBe(100000 - BUILDINGS.EVACUATION_MODULE.costOre);
+  });
+});

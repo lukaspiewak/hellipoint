@@ -226,7 +226,9 @@ describe('updateRules', () => {
     expect(s.evacAlarmRemaining).toBeGreaterThan(0);
     expect(s.phase).toBe('RUNNING');
 
-    const ticks = Math.ceil(cfg.evacAlarmSeconds / TICK_SECONDS) + 1;
+    // Bez `+ 1`: po naprawie ALARM_EPSILON w rules.ts odliczanie mieści się w nominalnej
+    // liczbie ticków. Zapas maskowałby regresję wydłużającą alarm o krok.
+    const ticks = Math.ceil(cfg.evacAlarmSeconds / TICK_SECONDS);
     for (let i = 0; i < ticks; i++) updateRules(s, cfg);
     expect(s.phase).toBe('VICTORY');
   });
@@ -237,14 +239,14 @@ describe('updateRules', () => {
    * natychmiast, po jednym ticku albo po połowie czasu. Ten MIERZY długość alarmu
    * w tickach i przypina ją obustronnie.
    *
-   * Zmierzone: 1201 ticków, nie 1200. `evacAlarmRemaining -= 0.05` powtórzone 1200 razy
-   * od 60 zostawia 1,2706086183200682e-12 zamiast zera — 0,05 nie ma dokładnej
-   * reprezentacji binarnej — więc odliczanie potrzebuje jeszcze jednego kroku i alarm
-   * trwa faktycznie 60,05 s zamiast 60 s. To dokładnie ten rodzaj błędu, który
-   * `burning.ts` tłumi stałą `EXPOSURE_EPSILON` (tam odchylenie idzie w drugą stronę:
-   * `+=` ląduje tuż PONIŻEJ progu); `rules.ts` odpowiednika nie ma — patrz raport Taska 5.
-   * Tolerancja jednego ticka w GÓRĘ i zera w DÓŁ: alarmowi wolno przeciągnąć o krok,
-   * ale nie wolno skończyć się za wcześnie, bo to skracałoby okno na kontrę przeciwnika.
+   * Przed naprawą było ich 1201, nie 1200: `evacAlarmRemaining -= 0.05` powtórzone 1200
+   * razy od 60 zostawia 1,2706086183200682e-12 zamiast zera, bo 0,05 nie ma dokładnej
+   * reprezentacji binarnej — alarm trwał 60,05 s zamiast 60 s. Domknięte stałą
+   * `ALARM_EPSILON` w rules.ts, odpowiednikiem `EXPOSURE_EPSILON` z burning.ts.
+   *
+   * Asercja jest teraz DOKŁADNA (`toBe`), nie tolerancyjna: każdy tick w którąkolwiek
+   * stronę to błąd. Sprawdzone dla czterech długości alarmu, w tym najgorszej zmierzonej
+   * w zakresie 1–600 s (128 s, reszta 5,14e-12) — wszystkie trafiają w nominał co do ticka.
    */
   it('alarm odlicza pełne evacAlarmSeconds mierzone w tickach, nie kończy się wcześniej', () => {
     const { s } = withPoweredEvac();
@@ -260,10 +262,33 @@ describe('updateRules', () => {
       ticks++;
     }
 
-    const nominal = cfg.evacAlarmSeconds / TICK_SECONDS;
     expect(s.phase).toBe('VICTORY');
-    expect(ticks).toBeGreaterThanOrEqual(nominal);
-    expect(ticks).toBeLessThanOrEqual(nominal + 1);
+    expect(ticks).toBe(cfg.evacAlarmSeconds / TICK_SECONDS);
+    expect(ticks).toBe(1200);
+  });
+
+  /**
+   * Tolerancja ma działać dla KAŻDEJ długości alarmu, nie tylko dla domyślnych 60 s —
+   * reszta akumulacji nie jest ani monotoniczna, ani zawsze dodatnia. 128 s to najgorszy
+   * DODATNI przypadek zmierzony w zakresie 1–600 s (reszta 5,135961100855013e-12);
+   * 30 s to przypadek, w którym reszta wychodzi UJEMNA (−2,92e-13) i problemu nigdy
+   * nie było — oba muszą trafiać w nominał co do ticka.
+   */
+  it('odliczanie trafia w nominał co do ticka także poza domyślnymi 60 s', () => {
+    for (const seconds of [5, 30, 128, 300]) {
+      const local = { ...cfg, evacAlarmSeconds: seconds };
+      const { s } = withPoweredEvac();
+      s.evacCharge = local.evacEnergyRequired;
+      updateRules(s, local);
+
+      let ticks = 0;
+      while (s.phase === 'RUNNING' && ticks < 20_000) {
+        updateRules(s, local);
+        ticks++;
+      }
+      expect(s.phase, `alarm ${seconds}s nie zakończył się`).toBe('VICTORY');
+      expect(ticks, `alarm ${seconds}s trwał ${ticks} ticków`).toBe(Math.round(seconds / TICK_SECONDS));
+    }
   });
 
   it('zniszczony Evac zeruje ładunek, ale NIE kończy runu (§5.6)', () => {

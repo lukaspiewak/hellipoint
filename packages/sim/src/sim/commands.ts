@@ -21,6 +21,17 @@ export function canBuild(s: SimState, cellId: number, type: BuildingType): Build
   // tylko TĘ SAMĄ komórkę przed drugim CORE, nie planetę przed setnym).
   if (!def.playerBuildable) return { ok: false, reason: 'NOT_PLAYER_BUILDABLE' };
 
+  // §5.6: Moduł Ewakuacyjny odblokowuje się dopiero w ostatniej tercji runu. Próg jest
+  // policzony raz, w konstruktorze `Sim`, i leży w stanie jako TICK — `canBuild` nie zna
+  // ani `rotationPeriod`, ani `RunConfig`, a `SimState` niesie `tick`, więc porównanie
+  // jest tu możliwe bez zmiany sygnatury (którą Faza 5 dziedziczy). Sprawdzane obok
+  // `playerBuildable`, bo to również fakt o TYPIE budynku, niezależny od komórki i rudy.
+  // Bez tej klauzuli reguła ze specu istniała wyłącznie jako funkcja `evacUnlocked`
+  // w rules.ts, której nic nie wołało — patrz task-5-report.md, defekt #2.
+  if (type === 'EVACUATION_MODULE' && s.tick < s.evacUnlockTick) {
+    return { ok: false, reason: 'EVAC_LOCKED' };
+  }
+
   const typeOk =
     def.allowedCells === 'ANY' ||
     (def.allowedCells === 'HEXAGON' && cell.cellType === 'HEXAGON') ||

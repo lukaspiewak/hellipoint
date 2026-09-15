@@ -13,6 +13,7 @@ export function stateHash(s: SimState): string {
   h.float(s.storedEnergy);
   h.float(s.evacCharge);
   h.float(s.evacAlarmRemaining);
+  h.int(s.evacUnlockTick);
   h.str(s.phase);
   h.int(s.nextUnitId);
 
