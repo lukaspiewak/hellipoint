@@ -103,6 +103,12 @@ function turretsAttackUnits(s: SimState): void {
 }
 
 function removeDeadUnits(s: SimState): void {
+  // Nalicza rudę za KAŻDĄ jednostkę z hp<=0, nie tylko za te, które walka sama
+  // zabiła — bezpieczne wyłącznie dlatego, że walka jest dziś PIERWSZYM systemem
+  // zabijającym jednostki w ticku (§ kolejność systemów, global-constraints.md);
+  // gdyby kiedyś powstał system zabijający jednostki PRZED walką, ten zamiatacz
+  // naliczyłby rudę też za jego ofiary — dokładnie błąd naprawiony w tej samej
+  // rundzie w `updateBurning` (burning.ts), patrz task-3-fix-report.md.
   if (!s.units.some((u) => u.hp <= 0)) return;
   const survivors = [];
   for (const u of s.units) {

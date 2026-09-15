@@ -7,7 +7,7 @@ import { SHADOW_RECOVERY_RATE, updateBurning } from '../src/sim/burning.js';
 import { lightField, sunDirection } from '../src/sim/light.js';
 import { cellSpacing, terminatorSpeedCells } from '../src/world/scale.js';
 import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
-import { dot } from '../src/math/vec3.js';
+import { dot, normalize } from '../src/math/vec3.js';
 
 const planet = createPlanet({ seed: 71 });
 const N = planet.cells.length;
@@ -66,6 +66,27 @@ describe('updateBurning', () => {
     expect(s.ore).toBeCloseTo(before + ENEMIES.SWARM.oreReward, 6);
   });
 
+  it('nalicza rudę wyłącznie za jednostki, które SAMO zabiło — nie za już martwe z zewnątrz', () => {
+    const s = withCore();
+    spawnUnit(s, 'SWARM', 10); // umrze OD SPALANIA w tym samym wywołaniu
+    spawnUnit(s, 'ARMOR', 11); // "obcy trup": hp=0 z zewnątrz (np. walka), NIE od spalania
+    s.units[0].exposure = ENEMIES.SWARM.burnTime; // += TICK_SECONDS w środku przebije próg
+    s.units[1].hp = 0;
+    // ARMOR w pełnym świetle też nabija ekspozycję w tym wywołaniu (0 → 0,05),
+    // ale burnTime=8 jest o wiele rzędów wielkości dalej — jego WŁASNA gałąź
+    // śmierci nie odpala się w ogóle, więc jedyne źródło jego hp<=0 jest
+    // zewnętrzne, tak jak ma być w tym scenariuszu.
+    const before = s.ore;
+
+    updateBurning(s, fullLight);
+
+    expect(s.units).toHaveLength(0); // obie usunięte — jedna umarła tu, druga była już martwa
+    // TYLKO nagroda SWARM-a (2), NIGDY nagroda ARMOR-a (10) za trupa, którego
+    // spalanie nie zabiło. Sprzed poprawki: before+12 (2+10, zamiatacz naliczał
+    // za KAŻDĄ jednostkę z hp<=0, patrz task-3-fix-report.md, runda 2).
+    expect(s.ore).toBeCloseTo(before + ENEMIES.SWARM.oreReward, 6);
+  });
+
   it('powrót do cienia regeneruje ekspozycję', () => {
     const s = withCore();
     spawnUnit(s, 'SWARM', 10);
@@ -117,24 +138,62 @@ describe('updateBurning', () => {
     spawnUnit(s, 'ARMOR', shallow);
     const fields = buildAllFlowFields(s);
 
-    // Zmierzone (raport Task 3): ARMOR ginie dokładnie na ticku 165 — tylko 5 ticków
-    // (0,25 s) później niż czysty budżet spalania w miejscu (160 ticków = burnTime/TICK_SECONDS),
-    // czyli ucieczka realnie kupuje jej prawie nic, zgodnie z niezmiennikiem N3.
-    // Budżet burnTime×4/TICK_SECONDS z brief-u (640) ma ~3,9× zapasu ponad tę potrzebę —
-    // zmierzone, że regresja spowalniająca akumulację ekspozycji o połowę (bug: `* 0.5`
-    // przy `u.exposure += TICK_SECONDS`) przesuwa śmierć na tick 376, WCIĄŻ w budżecie 640,
-    // czyli oryginalny budżet nie łapie 2×-wolniejszego spalania. 250 (~1,5× zmierzonej
-    // potrzeby, wciąż z zapasem na przyszłe retuningi [STROJENIE] ARMOR-a w Fazie 3) łapie
-    // każdą regresję wolniejszą niż ~1,5× — w tym powyższą.
+    // Samo "umarła w ogóle" (jedyna asercja tego testu w Rundzie 1) NIE dowodzi
+    // PRZYCZYNY: zmierzone (Runda 2) — jednostka ZAMROŻONA (bez wołania w ogóle
+    // updateMovement) ginie na ticku 160, realnie uciekająca na 165. `toHaveLength(0)`
+    // przechodzi identycznie w obu przypadkach; nie odróżnia "zginęła, bo nie
+    // mogła uciec" od "zginęła, bo nikt nawet nie próbował". Śledzimy więc
+    // pozycję i wyrównanie ze słońcem, żeby to rozdzielić.
+    const startPos = s.units[0].pos;
+    let lastPos = startPos;
+    let prevAlign = dot(normalize(startPos), sun0);
+    let everRetreated = false;
+    let deathTick = -1;
+
     const maxTicks = 250;
     for (let t = 0; t < maxTicks && s.units.length > 0; t++) {
       const sun = sunDirection(t * TICK_SECONDS, T);
       const light = lightField(planet, sun);
       updateMovement(s, fields, light, sun, ctx);
       updateBurning(s, light);
+
+      if (s.units.length > 0) {
+        lastPos = s.units[0].pos;
+        // Malejące wyrównanie z BIEŻĄCYM słońcem = realnie oddala się od punktu
+        // podsłonecznego. Punkt, który się NIE rusza, w tym miejscu planety i w
+        // tym oknie czasu tylko coraz bardziej się oświetla wraz z obrotem
+        // terminatora (zmierzone: zamrożona jednostka ma `align` rosnące, nigdy
+        // malejące) — więc samo `align` w dowolną stronę nie dowodzi niczego,
+        // TYLKO spadek dowodzi ruchu przeciw temu naturalnemu wzrostowi.
+        const align = dot(normalize(lastPos), sun);
+        if (align < prevAlign) everRetreated = true;
+        prevAlign = align;
+      } else {
+        deathTick = t + 1;
+      }
     }
 
     expect(s.units).toHaveLength(0);
+
+    // (1) Treść niezmiennika N3 dla v < v_term, wyrażona liczbą, nie tylko
+    // "umarła kiedyś w rozsądnym czasie": ucieczka kupuje ARMOR-owi PRAWIE NIC.
+    // Zmierzone: zamrożona ginie dokładnie na ARMOR_BURN_TICKS (czysty budżet
+    // spalania w miejscu, 160 = burnTime/TICK_SECONDS), realna z ucieczką na 165
+    // — zysk to 5 ticków. Okno [ARMOR_BURN_TICKS, ARMOR_BURN_TICKS + 15] przypina
+    // to z marginesem 3× zmierzonego zysku (nie z budżetu pętli 250, który
+    // dopuszczał zysk do 90 ticków i przepuszczał 2×-wolniejsze spalanie —
+    // Runda 1 tego zadania). Dolna granica jest fizycznym dołem: ekspozycja
+    // rośnie najwyżej o TICK_SECONDS na tick, więc szybciej niż w miejscu umrzeć
+    // się nie da, niezależnie od ruchu.
+    const ARMOR_BURN_TICKS = Math.ceil(ENEMIES.ARMOR.burnTime / TICK_SECONDS);
+    expect(deathTick).toBeGreaterThanOrEqual(ARMOR_BURN_TICKS);
+    expect(deathTick).toBeLessThanOrEqual(ARMOR_BURN_TICKS + 15);
+
+    // (2) Naprawdę PRÓBOWAŁA uciekać, a nie zamarzła: pozycja zmieniła się
+    // względem startu, i przez część runu realnie oddalała się od punktu
+    // podsłonecznego (patrz komentarz przy `align` wyżej).
+    expect(dot(normalize(lastPos), normalize(startPos))).toBeLessThan(1 - 1e-9);
+    expect(everRetreated).toBe(true);
   });
 
   it('SWARM (speedFactor > 1) z tej samej pozycji UCIEKA', () => {
