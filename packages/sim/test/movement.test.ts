@@ -114,13 +114,22 @@ describe('updateMovement', () => {
 
     // ARMOR, nie SWARM: SWARM ma targetPriority NEAREST_BUILDING, więc sam
     // pierścień barykad staje się celem pola przepływu (zmierzone: distance=0,
-    // next=-1 na KAŻDEJ komórce pierścienia). Bez sprawdzenia `s.buildings[next]`
-    // w movement.ts SWARM zatrzymałby się i tak — bo next<0 na samym pierścieniu —
-    // więc ten test w ogóle nie ćwiczyłby strażnika, który nazywa (zmierzone:
-    // usunięcie `s.buildings[next] !== null` zostawiało całą suitę zieloną).
-    // ARMOR ma targetPriority CORE: jedynym celem jest sam CORE, pierścień jest
-    // WYŁĄCZNIE przeszkodą na drodze do niego, nigdy celem samym w sobie —
-    // strażnik jest jedyną rzeczą, która ARMOR-a zatrzymuje.
+    // next=-1 na KAŻDEJ komórce pierścienia). ARMOR ma targetPriority CORE:
+    // jedynym celem jest sam CORE, pierścień jest WYŁĄCZNIE przeszkodą na drodze
+    // do niego, nigdy celem samym w sobie.
+    //
+    // KOREKTA (przegląd gałęzi, Important #4). Poprzednia wersja tego komentarza
+    // twierdziła, że wczesny strażnik `s.buildings[next] !== null` „jest jedyną
+    // rzeczą, która ARMOR-a zatrzymuje". Zmierzone: NIEPRAWDA, odkąd istnieje
+    // kontrola ogonowa (`candidate !== u.cellId && s.buildings[candidate] !== null`).
+    // Z wyciętym wczesnym strażnikiem ARMOR i tak NIE WCHODZI w barykadę — kontrola
+    // ogonowa go nie wpuszcza — a asercje TEGO testu (cellId, next, distance)
+    // pozostają spełnione: zmierzone, 313/313 testów zielonych przy wyciętym
+    // strażniku. Różnica jest w POZYCJI, nie w komórce: bez strażnika jednostka
+    // ślizga się dalej we WŁASNEJ komórce ku murowi (0,77 jednostki świata głębiej,
+    // stateHash po 2000 tickach na seedzie 33: 7eb20bf3 -> 4f429b58). Każdą z dwóch
+    // połówek pary przypina teraz osobny test niżej ("dwie połówki blokowania
+    // zabudowy").
     const outside = atSteps(3);
     spawnUnit(s, 'ARMOR', outside);
     const fields = buildAllFlowFields(s);
@@ -234,6 +243,113 @@ describe('updateMovement', () => {
     // po 222 tickach, a ablacja siada na CORE i zostaje na 0,4973 również po 600.
     // 300 ticków to 222 plus zapas.
     expect(light[s.units[0].cellId]).toBe(0);
+  });
+
+  /**
+   * PRZEGLĄD GAŁĘZI, Important #4. `updateMovement` blokuje wejście na zabudowaną
+   * komórkę w DWÓCH miejscach i robią one RÓŻNE rzeczy:
+   *
+   *   • wczesny strażnik w gałęzi pola przepływu — `next < 0 || s.buildings[next] !== null`
+   *     — zatrzymuje marsz do CELU: jednostka, której następny krok prowadzi w mur,
+   *     nie rusza się WCALE w tym ticku;
+   *   • kontrola ogonowa — `candidate !== u.cellId && s.buildings[candidate] !== null` —
+   *     blokuje WEJŚCIE do zabudowanej komórki niezależnie od gałęzi (także w ucieczce
+   *     przed słońcem, D3), a jej pierwszy człon celowo wyłącza ją dla komórki WŁASNEJ.
+   *
+   * Wcześniejsza runda przeglądu zmutowała CAŁĄ kontrolę ogonową i przypięła ją jednym
+   * testem — ale KAŻDA POŁÓWKA z osobna przeżywała mutację: 313/313 zielonych w obu
+   * przypadkach. Poniższe dwa testy przypinają każdą osobno.
+   */
+  describe('dwie połówki blokowania zabudowy — każda przypięta osobno', () => {
+    /** Najmocniej oświetlona komórka pod `sunDir` (ta sama heurystyka, co w testach wyżej). */
+    function litCell(): number {
+      for (let i = 0; i < N; i++) {
+        if (dot(planet.cells[i].normal, sunDir) > 0.8) return i;
+      }
+      throw new Error('brak oświetlonej komórki');
+    }
+
+    function sunlight(): Float32Array {
+      const light = new Float32Array(N);
+      for (let i = 0; i < N; i++) light[i] = Math.max(0, dot(planet.cells[i].normal, sunDir));
+      return light;
+    }
+
+    /**
+     * Człon `candidate !== u.cellId` kontroli ogonowej. Bez niego jednostka, POD KTÓRĄ
+     * gracz postawi budynek, zamarza NA ZAWSZE: dopóki nie przekroczy granicy własnej
+     * komórki, `candidate === u.cellId`, a ta komórka jest zabudowana — więc każdy tick
+     * kończy się `continue`, jednostka nigdy nie ruszy i nigdy z tego nie wyjdzie.
+     * Zmierzone: dziś schodzi w ticku 12; z wyciętym członem NIGDY (sprawdzone do 2000).
+     */
+    it('jednostka, pod którą postawiono budynek, SCHODZI z niego zamiast zamarzać na zawsze', () => {
+      const s = withCore();
+      const lit = litCell();
+      spawnUnit(s, 'SWARM', lit);
+      // Budynek stawiany POD jednostką — `canBuild` patrzy na `buildings`, nie na `units`,
+      // więc to jest w pełni legalny ruch gracza, nie hack testu.
+      applyCommand(s, { kind: 'BUILD', cellId: lit, type: 'BARRICADE' });
+      expect(s.buildings[lit]?.type).toBe('BARRICADE');
+
+      const light = sunlight();
+      const fields = buildAllFlowFields(s);
+      expect(light[lit]).toBeGreaterThan(0); // przesłanka: to gałąź UCIECZKI
+
+      let leftAt = -1;
+      for (let i = 0; i < 2000 && leftAt < 0; i++) {
+        updateMovement(s, fields, light, sunDir, ctx);
+        if (s.units[0].cellId !== lit) leftAt = i;
+      }
+
+      // Zmierzone: tick 12. Budżet 2000 to ~166× — asercja jest o „schodzi", nie o „szybko".
+      expect(leftAt, 'jednostka nigdy nie zeszła z zabudowanej komórki').toBeGreaterThanOrEqual(0);
+      expect(s.buildings[s.units[0].cellId]).toBeNull();
+    });
+
+    /**
+     * Wczesny strażnik `s.buildings[next] !== null` w gałęzi pola przepływu. Kontrola
+     * ogonowa NIE zastępuje go: ona blokuje WEJŚCIE w mur, on blokuje sam RUCH ku
+     * murowi. Bez niego jednostka nadal nie wchodzi w barykadę, ale dosuwa się do jej
+     * granicy wewnątrz własnej komórki (zmierzone: 0,77 jednostki świata głębiej,
+     * inny stateHash po 2000 tickach) — czyli inna pozycja, inny hash, inny zasięg
+     * walki, a cały dotychczasowy zestaw testów tego nie widział.
+     *
+     * Asercja jest więc o POZYCJI, nie o `cellId`: w ticku, w którym `next` jednostki
+     * po raz pierwszy jest zabudowany, jednostka musi stanąć CO DO BITU i już się nie
+     * ruszyć.
+     */
+    it('jednostka, której next jest zabudowany, zamiera CO DO BITU — nie dosuwa się do muru we własnej komórce', () => {
+      const s = withCore();
+      const ring = planet.cells[planet.startCell].neighbors;
+      for (const n of ring) applyCommand(s, { kind: 'BUILD', cellId: n, type: 'BARRICADE' });
+      spawnUnit(s, 'ARMOR', atSteps(3));
+      const fields = buildAllFlowFields(s);
+
+      // Krok po kroku aż do ticku, w którym wczesny strażnik po raz PIERWSZY ma prawo
+      // zadziałać: własny `next` jednostki wskazuje na zabudowaną komórkę.
+      let blockedAt = -1;
+      for (let i = 0; i < 2000 && blockedAt < 0; i++) {
+        const next = fields.ARMOR.next[s.units[0].cellId];
+        if (next >= 0 && s.buildings[next] !== null) { blockedAt = i; break; }
+        updateMovement(s, fields, dark, sunDir, ctx);
+      }
+      expect(blockedAt, 'jednostka nigdy nie dotarła pod mur').toBeGreaterThanOrEqual(0);
+      expect(dark[s.units[0].cellId]).toBe(0); // przesłanka: to gałąź POLA PRZEPŁYWU, nie ucieczki
+
+      const frozen = { ...s.units[0].pos };
+      const cell = s.units[0].cellId;
+
+      // Pierwszy tick po zablokowaniu jest tym, który rozróżnia: ze strażnikiem pozycja
+      // nie drgnie, bez niego jednostka rusza ku murowi natychmiast.
+      updateMovement(s, fields, dark, sunDir, ctx);
+      expect(s.units[0].pos).toEqual(frozen);
+
+      // I zostaje zamrożona — nie chodzi o jeden tick, tylko o stan ustalony.
+      for (let i = 0; i < 200; i++) updateMovement(s, fields, dark, sunDir, ctx);
+      expect(s.units[0].pos).toEqual(frozen);
+      expect(s.units[0].cellId).toBe(cell);
+      expect(s.buildings[cell]).toBeNull(); // stoi PRZED murem, nie w nim
+    });
   });
 
   it('jest deterministyczny', () => {
