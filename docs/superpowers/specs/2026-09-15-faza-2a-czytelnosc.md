@@ -276,7 +276,33 @@ Uruchomiłem `pnpm --filter @heliopolis/client dev` i przeszedłem cały interfe
   wklejenia — z prawdziwymi identyfikatorami komórek prawdziwej planety.
 - Zero błędów w konsoli przeglądarki przez całą sesję.
 
-### 6.3 Załącznik: mój własny, niemiarodajny przebieg mechaniczny (NIE werdykt)
+### 6.3 Mutacje — dowód, że kluczowe testy NAPRAWDĘ łapią regresję, nie tylko przechodzą
+
+Ostrzeżenie z briefu ("instrumenty pomiarowe w tym projekcie dały fałszywy odczyt pięć
+razy") dotyczy TEŻ testów, które piszę — samo "61 testów, wszystkie zielone" niczego nie
+dowodzi bez sprawdzenia, że te testy faktycznie by zawiodły, gdyby kod był zły. Cztery
+mutacje wykonane w źródle (nie w kopii), uruchomione, zaobserwowany czerwony wynik,
+przywrócone — dokładnie ten wzorzec co przeglądy Zadań 3–4:
+
+| # | Mutacja | Plik | Złapana przez | Wynik |
+|---|---|---|---|---|
+| M1 | `correct: clickedLit` → `correct: !clickedLit` (odwrócony scoring) | `readabilityGate.ts` | testy 8, 9, 17 | 3 testy czerwone |
+| M2 | `if (selfLit === neighborLit) continue` → `!==` (para bierze DWIE komórki z TEJ SAMEJ strony granicy zamiast dwóch różnych) | `terminatorPairs.ts` | testy 2, 4, 5 (`terminatorPairs.test.ts`), 14 (`buildGateTrials`) | 4 testy czerwone |
+| M3 | usunięcie `camera.object.updateMatrixWorld(true)` / `threeScene.updateMatrixWorld(true)` (dokładnie ta poprawka, którą wykazała probe w Node przed napisaniem kodu — §6.1) | `readabilityGate.ts` | testy 8, 9, 10, 12, 16, 17, 18 | 7 testów czerwonych |
+| M4 | `selectSpreadPairs`: `pairs[floor(i·len/count)]` → `pairs[i]` (pierwsze `count` z brzegu zamiast rozłożonych) | `terminatorPairs.ts` | test 6 | 1 test czerwony |
+
+Jedno spostrzeżenie warte zapisania, nie oczywiste z góry: **M2 (błędna SEMANTYKA pary —
+"jasna"/"ciemna" komórka są w rzeczywistości po tej samej stronie) nie złapał ŻADEN test
+w `readabilityGate.test.ts`.** Te testy sprawdzają wyłącznie, czy klik trafiający we
+znacznik NA POZYCJI `litCellId` poprawnie ROZPOZNAJE, że to `litCellId` (mechanizm
+klik→identyfikacja) — nie sprawdzają NIEZALEŻNIE, czy `litCellId` jest naprawdę
+oświetlona wg `lightField` (semantyka). Te dwie warstwy ochrony są rozłączne i obie
+potrzebne: `terminatorPairs.test.ts` (semantyka par) + `readabilityGate.test.ts`
+(mechanizm kliku) razem zamykają lukę, którą żaden z osobna by nie złapał. Wszystkie
+cztery mutacje przywrócone; `git diff` po całej sesji mutacji wychodzi pusty (`git
+status` czyste) — żadna nie została przypadkiem zostawiona w kodzie.
+
+### 6.4 Załącznik: mój własny, niemiarodajny przebieg mechaniczny (NIE werdykt)
 
 Podczas weryfikacji klikałem przez wszystkie piętnaście prób, żeby dowieść, że ekran
 końcowy działa — **bez starannej, uważnej oceny każdej pary** (klikałem głównie po to,
