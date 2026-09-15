@@ -411,11 +411,45 @@ Szacunki dla **jednej osoby na pełny etat**; do przeliczenia po ustaleniu skła
 | ~~Q3~~ | ~~Pobór energii przez wieże~~ → **ROZSTRZYGNIĘTE: stały**, niezależny od strzelania (`power.ts`). Pobór zależny od strzelania czyni sieć energetyczną nieistotną w spokoju i wywraca ją dopiero w środku ataku, gdy gracz nie ma już czym zareagować. Stały pobór czyni z rozbudowy obrony realną decyzję energetyczną. **Potwierdzone pomiarem w Fazie 1C:** 4 lasery → run 10 224 ticki, 3 → 9275, **2 → 13 323** — czwarta wieża realnie osłabia obronę, bo popyt ponad podaż trzyma brownout włączony na stałe. Kompromis istnieje i jest mierzalny | 1 ✅ |
 | ~~Q4~~ | ~~Efekt EMP~~ → **ROZSTRZYGNIĘTE: wyłączenie budynków** w promieniu na czas trwania (`powered = false`), nie drenaż magazynu (`combat.ts`). Drenaż jest dla gracza niewidoczny — liczba w pasku spada i nic tego nie tłumaczy. Wyłączenie robi widoczną dziurę w obronie, którą fala natychmiast wykorzystuje. **Efekt uboczny zmierzony w Fazie 1C:** DISRUPTOR celuje w `ENERGY_INFRASTRUCTURE`, więc łańcuchy pylonów do dalekich pentagonów są pułapką — zjadł wszystkie 7 między cyklem 2 a 3, odłączając capy | 1 ✅ |
 | Q5 | Wszystkie wartości **[STROJENIE]** | 1–3 |
-|  | *Punkt wyjścia z Fazy 1C:* pierwszy raport balansu (1000 runów, `docs/superpowers/plans/pierwszy-raport-balansu.txt`) daje **0 zwycięstw**, mediana porażki w cyklu 1. Gra **nie** jest nieprzechodzalna — kolejka `WINNING_OPENING` w `fullrun.test.ts` dochodzi do zwycięstwa na ticku 24 133 przy tym samym `DEFAULT_RUN`. Różnica to trzy rzeczy naraz: wieże przed ekonomią, **zero ekstraktorów i pylonów** (życie ze stałych 10/s CORE-a i nagród za zabójstwa) oraz cała obrona w 4 krokach od CORE. Skoro optymalne otwarcie brzmi „nie buduj ekonomii", **wczesna ekonomia jest pułapką** — to jest pierwszy konkret dla Fazy 3 | |
 | Q6 | Skład puli ulepszeń roguelite | 3 |
 | Q7 | Kierunek artystyczny i docelowa rozdzielczość | 4 |
 | Q8 | Zaćmienia: telegrafowane i rzadkie-ale-duże, czy całkowicie usunięte | 4 |
 | Q9 | Charakter warstwy międzyplanetarnej: asynchroniczna czy live | po 5 |
+
+### 11.1 Punkt wyjścia dla Q5 — co zmierzyła Faza 1C
+
+Pierwszy raport balansu (1000 runów, `docs/superpowers/plans/pierwszy-raport-balansu.txt`) daje **0 zwycięstw**, mediana porażki w cyklu 1 po ~52 s. Gra **nie jest nieprzechodzalna**: kolejka `WINNING_OPENING` w `fullrun.test.ts` dochodzi do zwycięstwa na ticku 24 133 przy tym samym `DEFAULT_RUN`. Poniższe wnioski pochodzą z przemiatań headlessem przeciwko tej kolejce.
+
+**Otwarcie jest na ostrzu noża i dopuszcza dokładnie jedną linię.** Zmierzony przebieg zakupów zwycięskiego otwarcia (seed 33):
+
+| tick | sekunda | zakup | ruda tuż przed |
+|---|---|---|---|
+| 1 | 0 | `LASER_TURRET` | 150 |
+| 732 | 37 | `LASER_TURRET` | 100 |
+| 936 | 47 | `SOLAR_PANEL` | 26 |
+| 1210 | 61 | `SOLAR_PANEL` | 25 |
+| 1644 | 82 | `BATTERY` | 40 |
+
+Przez pierwsze sto sekund gracz **nigdy nie ma więcej niż kilka rudy ponad cenę następnego zakupu**. `startingOre: 150` kupuje jedną wieżę i zostawia 50; na drugą trzeba czekać 36 s, a pierwsza fala dociera do bazy w 40.–50. sekundzie. Każde odchylenie — barykada (8), pylon (15), ekstraktor (30) — kosztuje drugą wieżę, a ta nie jest opcjonalna. **To tłumaczy cztery niezależne porażki zmierzone w Fazie 1C**: bot wydający na barykady, ten sam bot po poprawce wydający na pylony, oraz dwie kolejki testowe wydające na ekstraktory. Wszystkie zginęły tym samym mechanizmem.
+
+**Ruda nie finansuje ewakuacji, tylko wojnę na wyczerpanie.** Zwycięski run ma dochód **18 350 rudy** przy szczycie stanu **2345** — różnica idzie na 2280 odbudów barykad po 8. Stąd:
+
+- **Cena modułu ewakuacyjnego nie jest bramką.** Podniesienie z 300 na 1200 przesuwa zwycięstwo o 281 ticków. Przy takim dochodzie 300 to zaokrąglenie, nie próg.
+- **Stopa nagród za zabicie jest prawdziwym suwakiem**, z progiem między 0,25× a 0,1×. Poniżej progu run umiera, bo nie stać go na **mur**, nie na moduł.
+
+| mnożnik nagród | wynik (seed 33) | dochód rudy | szczyt rudy |
+|---|---|---|---|
+| 1× | zwycięstwo, tick 24 133, cykl 7 | 18 350 | 2345 |
+| 0,5× | zwycięstwo, tick 24 338, cykl 7 | 10 197 | 958 |
+| **0,25×** | **zwycięstwo, tick 31 614, cykl 9** | 11 489 | 733 |
+| 0,1× | porażka, cykl 8 | 3 301 | 100 |
+| 0× | porażka, cykl 3 | 0 | 50 |
+
+**Ekstraktory mają znaczenie dokładnie wtedy, gdy nagrody nie pokrywają odbudowy muru.** Przy 600 rudy startowej i nagrodach 0,25× ta sama kolejka **bez wydobycia przegrywa (tick 24 706), a z trzema ekstraktorami wygrywa (tick 24 814)** — jedyna zmierzona konfiguracja, w której wydobycie rozstrzyga run. Przy 1× ekstraktory są obojętne (24 152 wobec 24 153).
+
+**Rekomendacja dla Fazy 3:** obciąć nagrody za zabicie do ~0,25× i podnieść `startingOre`. Trzy skutki naraz — runy dłuższe i rozstrzygane na styk zamiast z zapasem, otwarcie dopuszczające wybory zamiast jednej linii, oraz ekonomia wydobywcza przestająca być dekoracją.
+
+> **Zastrzeżenie metodyczne.** Liczby z tabel stopy nagród i otwarcia pochodzą z **niezmienionej** kolejki `WINNING_OPENING` i są wiążące. Tabela ekstraktorów używała **słabszej, doraźnej polityki** (przegrywa przy 150 rudy tam, gdzie `WINNING_OPENING` wygrywa), więc **progi bezwzględne z niej nie są wiążące** — nośne jest wyłącznie porównanie w obrębie jednego wiersza, gdzie jedyną różnicą są trzy ekstraktory. Ile naprawdę potrzeba rudy startowej, zależy od jakości gracza i wymaga pomiaru na polityce co najmniej tak dobrej jak `WINNING_OPENING`.
 
 ---
 
