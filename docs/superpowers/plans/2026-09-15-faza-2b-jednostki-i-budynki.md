@@ -56,6 +56,11 @@ Dwa warianty, oba tanie. Zaimplementuj **ten, który lepiej uzasadnisz**, i zapi
 
 Bramka jest bezwartościowa, jeśli nie umie wyprodukować odpowiedzi „nie widzę". Nowa kontrola musi odtwarzać **rzeczywisty tryb awarii z Fazy 0**: kolor **interpolowany po powierzchni**, czyli geometria ze współdzielonymi wierzchołkami albo kolor liczony per wierzchołek z pozycji, a nie per komórka.
 
+> **Kontrola potrzebuje WŁASNYCH komórek — przeoczone w pierwszej wersji tego planu.**
+> Bramka i kontrola muszą mieć **rozłączne plany prób**. Kontrola pytająca o komórki już
+> pokazane w przebiegu ocenianym mierzy **pamięć, nie czytelność** — czyli traci zdolność
+> oblania dokładnie tam, gdzie leży cała jej wartość.
+
 **To nie jest to samo co `writeCellColorsSmooth` z 2A** — tamta zmienia mapowanie palety, zostawiając komórki płaskimi, i dlatego nie potrafi oblać. Zbuduj wariant geometrii ze współdzielonymi wierzchołkami wyłącznie na potrzeby tej kontroli; nie musi być wydajny ani ładny, ma **rozmazywać**.
 
 Dowód, że kontrola działa: **przejdź sam kilka prób w trybie kontrolnym i zaraportuj, czy potrafiłeś odpowiedzieć.** Jeśli potrafiłeś — kontrola nadal nie odtwarza awarii i trzeba ją poprawić, a nie zaraportować jako gotową.
@@ -65,6 +70,16 @@ Dowód, że kontrola działa: **przejdź sam kilka prób w trybie kontrolnym i z
 **Rozstrzygnięte, nie do ponownej dyskusji; uzasadnienie zapisuję, żeby nikt tego nie cofnął bez powodu.** Zmierzone w 2A: przy progu 0,05 granica renderowana i **symulowana** rozjeżdżają się o 8–38 komórek (średnio 30,8), zawsze o **dokładnie jeden krok grafu**. Dla energii to szum poniżej 5 %, ale **spawn i spalanie są binarne** — więc istnieje jednokomórkowy pierścień, w którym **gracz widzi noc, a jednostki się palą i pentagony nie spawnują**.
 
 Próg zerowy sprawia, że pasmo nocy znaczy dokładnie `light === 0`, czyli **dokładnie to samo, co symulacja**. Granica staje się pełnym skokiem palety na linii fizycznej — czytelniejsza, nie mniej.
+
+> **UWAGA: „obniż próg do zera" dosłownie daje SKUTEK ODWROTNY. Wykonawca to zmierzył.**
+> `lightBand` porównywał **nieostro** (`light >= próg`), więc próg zerowy czyni pasmo nocy
+> **pustym** — cała noc wpada do półmroku i powstaje planeta bez nocy. Właściwą zmianą jest
+> **porównanie ostre** (`light > próg`), bo wtedy zgodność z predykatem symulacji `light > 0`
+> jest **algebraiczna, a nie skutkiem szczęśliwie dobranej liczby**.
+>
+> Obejście przez „zostaw `>=` i daj próg mikroskopijnie dodatni" **nie działa i też jest
+> zmierzone**: najmniejsze dodatnie `light` na tej planecie przez dwanaście faz wynosi
+> **6,3·10⁻¹⁸**, więc nawet 10⁻⁷ zostawiłoby komórki po złej stronie.
 
 Zmierz i zaraportuj po zmianie: rozkład komórek po pasmach i **liczbę komórek rozjeżdżających się między renderem a symulacją** (powinna wynieść zero przy każdej fazie słońca — jeśli nie wynosi, coś jest nie tak i zgłoś to zamiast zaokrąglać).
 
