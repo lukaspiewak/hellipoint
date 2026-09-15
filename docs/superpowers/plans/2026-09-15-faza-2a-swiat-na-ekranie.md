@@ -366,6 +366,33 @@ a jednostki się palą i pentagony nie spawnują. Próg zerowy usuwa to bez resz
 pełnym skokiem palety dokładnie na linii fizycznej. Kosztem jest unieważnienie piętnastu par
 z zapisanego przebiegu — stąd zmiana należy tutaj, gdzie bramka i tak jest przerabiana.
 
+### 2B — druga rzecz do rozstrzygnięcia: teren nie ma ŻADNEJ struktury wewnątrz pasma
+
+**Znalezione przez kontrolera przy własnym przeklikaniu aplikacji**, po tym jak wcześniej
+błędnie uznał, że nie ma dostępu do przeglądarki.
+
+Przy przybliżeniu dzienna strona planety jest **jednolitą kremową płaszczyzną bez jednej
+linii**. Żadnych krawędzi komórek, żadnego reliefu, żadnych punktów odniesienia. Wynika to
+wprost z dwóch świadomych decyzji Fazy 2A, z których każda z osobna jest słuszna: materiał
+nie ma modelu oświetlenia (`MeshBasicMaterial`, żeby silnik nie rozmywał pasm), a wszystkie
+komórki jednego pasma dostają **dokładnie ten sam kolor**. Razem dają teren, na którym
+nie widać siatki.
+
+Dla Fazy 2A to nie jest wada — jej zadaniem był terminator i został dowieziony. **Dla Fazy 2B
+to jest wymaganie**, i to niebłahe:
+
+- jednostki i budynki staną na płaszczyźnie bez odniesień, więc **ocena ich wzajemnego położenia
+  będzie trudna**;
+- gracz **nie widzi siatki, na której buduje** — a w tower defense rozmieszczenie jest główną
+  decyzją, więc niewidoczna krata uderza w rdzeń rozgrywki;
+- przy obrocie nad jednolitym obszarem **nie ma czucia ruchu ani skali**.
+
+Rozwiązanie jest otwarte i **nie wolno go wybrać kosztem czytelności terminatora** — to jest
+ograniczenie, nie sugestia. Warianty warte zmierzenia: cienkie obrysy komórek; subtelne
+zróżnicowanie w obrębie pasma, które **nie przekracza granicy pasma**; albo poleganie na samych
+budynkach jako punktach odniesienia (podejrzewam, że niewystarczające, ale to da się sprawdzić
+tanio, bo 2B i tak je dodaje).
+
 ### 2B — Jednostki i budynki na ekranie
 
 Instancing dla jednostek (setki naraz, trzy typy, `THREE.InstancedMesh`), budynki jako
