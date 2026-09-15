@@ -185,6 +185,17 @@ describe('updateBurning', () => {
     // Runda 1 tego zadania). Dolna granica jest fizycznym dołem: ekspozycja
     // rośnie najwyżej o TICK_SECONDS na tick, więc szybciej niż w miejscu umrzeć
     // się nie da, niezależnie od ruchu.
+    //
+    // ZAKRES WAŻNOŚCI OKNA, zmierzony przemiataniem [STROJENIE] speedFactor ARMOR-a:
+    //   0,85 → 165   0,90 → 172   0,95 → 274   1,00 → 352   1,05 → przeżywa budżet
+    // Margines 15 pokrywa 0,85 i 0,90. Przy 0,95 tick śmierci wyskakuje na 274 i ten
+    // test oblewa — NIE z powodu regresji, tylko dlatego, że im bliżej v_term, tym
+    // więcej ucieczka realnie kupuje, czyli zmienia się sama wielkość, którą mierzymy.
+    // Jeśli Faza 3 przestroi ARMOR-a powyżej ~0,9, przelicz margines z nowego pomiaru
+    // zamiast go poszerzać na oko: szerokie okno to dokładnie ten defekt, który Runda 1
+    // tego zadania usuwała (budżet 250 dopuszczał zysk 90 ticków i przepuszczał
+    // 2×-wolniejsze spalanie). Powyżej 1,0 jednostka przestaje ginąć i właściwym
+    // testem staje się ten dla SWARM-a, nie ten.
     const ARMOR_BURN_TICKS = Math.ceil(ENEMIES.ARMOR.burnTime / TICK_SECONDS);
     expect(deathTick).toBeGreaterThanOrEqual(ARMOR_BURN_TICKS);
     expect(deathTick).toBeLessThanOrEqual(ARMOR_BURN_TICKS + 15);
