@@ -11,7 +11,7 @@ export type Rgb = readonly [r: number, g: number, b: number];
  * zwraca, ile progów dana wartość `light` przekroczyła (lub im dorównała) — więc
  * `LIGHT_BANDS.length` progów daje `LIGHT_BANDS.length + 1` pasm (patrz `Palette`).
  *
- * TO JEST ZADANIE, W KTÓRYM ROZSTRZYGA SIĘ D1 (spec §4.1; bramka Fazy 0,
+ * TO JEST ZADANIE, W KTÓRYM ROZSTRZYGA SIĘ D1 (spec §3 — decyzje strukturalne; bramka Fazy 0,
  * `docs/superpowers/specs/2026-09-14-faza-0-wyniki.md`, wiersz "terminator musi być
  * czytelny jako GRANICA, nie jako gradient"): zmierzone na działającym prototypie, że
  * gładkie `saturate(dot(normal, sunDir))` interpolowane po kuli daje terminator KOMPLETNIE
