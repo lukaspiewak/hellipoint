@@ -53,7 +53,7 @@ sceny spike'a.
 |---|---|
 | Budżet `writeCellColors` (1442 komórki × 1000 wywołań, mediana < 1 ms) | **PASS, zmierzone** — §2 |
 | Budżet całej klatki renderu (cel: ≤ 8 ms) | **PASS, zmierzone, z ogromnym zapasem** — §3 |
-| Bramka czytelności terminatora (§8.1 specu, piętnaście osądów) | **CZEKA NA CZŁOWIEKA** — §7. Harness zbudowany, przetestowany automatycznie (61 nowych testów) i zweryfikowany na żywym renderze przeze mnie (§6) — ale **werdykt PASS/FAIL nie jest mój do wydania** |
+| Bramka czytelności terminatora (§8.1 specu, piętnaście osądów) | **PASS — 15/15** (§7.3), orzeczone przez właściciela projektu. Harness zbudowany, przetestowany automatycznie (61 nowych testów) i zweryfikowany na żywym renderze przeze mnie (§6) — ale **werdykt PASS/FAIL nie jest mój do wydania** |
 
 ---
 
@@ -367,32 +367,52 @@ skopiowane z `#export`, nie przepisane ręcznie.)
 
 ### 7.2 Surowa tabela piętnastu prób (do wklejenia z `gate.html`)
 
-*(pusta, celowo — żadna liczba nie została zmyślona; wklej tu dosłowną zawartość pola
-`#export` po ukończeniu piętnastu prób)*
+Wklejone dosłownie z `gate.html`, wariant progowania, przez właściciela projektu.
 
 | # | Faza | Komórka jasna | Komórka ciemna | Kliknięto | Wynik |
 |---|---|---|---|---|---|
-| 1 | | | | | |
-| 2 | | | | | |
-| 3 | | | | | |
-| 4 | | | | | |
-| 5 | | | | | |
-| 6 | | | | | |
-| 7 | | | | | |
-| 8 | | | | | |
-| 9 | | | | | |
-| 10 | | | | | |
-| 11 | | | | | |
-| 12 | | | | | |
-| 13 | | | | | |
-| 14 | | | | | |
-| 15 | | | | | |
+| 1 | 1 | 468 | 12 | 468 | OK |
+| 2 | 1 | 201 | 191 | 201 | OK |
+| 3 | 1 | 1174 | 472 | 1174 | OK |
+| 4 | 1 | 1365 | 692 | 1365 | OK |
+| 5 | 1 | 921 | 922 | 921 | OK |
+| 6 | 2 | 94 | 211 | 94 | OK |
+| 7 | 2 | 253 | 264 | 253 | OK |
+| 8 | 2 | 419 | 409 | 419 | OK |
+| 9 | 2 | 785 | 784 | 785 | OK |
+| 10 | 2 | 895 | 884 | 895 | OK |
+| 11 | 3 | 2 | 3 | 2 | OK |
+| 12 | 3 | 219 | 96 | 219 | OK |
+| 13 | 3 | 550 | 1228 | 550 | OK |
+| 14 | 3 | 876 | 875 | 876 | OK |
+| 15 | 3 | 1045 | 1034 | 1045 | OK |
 
 ### 7.3 Werdykt
 
-# CZEKA NA CZŁOWIEKA
+# PASS — 15/15
 
-*(PASS / FAIL — wpisz po ukończeniu §7.2. PASS wymaga 15/15.)*
+Orzeczony przez właściciela projektu po przejściu wszystkich piętnastu prób w wariancie
+progowania. Komplet trafień: pięć par w każdej z trzech faz słońca, bez ani jednej pomyłki.
+
+**Co to znaczy, a czego nie znaczy.**
+
+Znaczy: **D1 ma pokrycie w działającym renderze**, nie tylko w specyfikacji. Filar całego
+projektu brzmi „gracz czyta granicę światła wzrokiem, bez UI" — i po raz pierwszy w historii
+tego projektu zostało to sprawdzone na czymś, co naprawdę rysuje piksele, w wymuszonym wyborze
+dwóch alternatyw, bez nakładki prawdy i bez najeżdżania kursorem. Faza 0 zmierzyła, że gładkie
+cieniowanie czyni terminator **niewidocznym**; ta bramka mierzy, że progowane czyni go
+jednoznacznym.
+
+Nie znaczy: że paleta jest docelowa ani że wygląda ładnie. Bramka bada JEDNĄ granicę —
+noc kontra strona oświetlona (§4) — bo to ona niesie D1. Rozróżnienie półmroku od dnia jest
+estetyczne i zostaje otwarte dla Fazy 4; policzony kontrast tej pary (Δodcienia 22,4°, WCAG 2,90)
+jest poniżej progu przyjmowanego w interfejsach i **świadomie nie był przedmiotem tej bramki**.
+
+**Czułość przyrządu potwierdzona niezależnie.** Wykonawca Zadania 5 przełączył kontrolę pozytywną
+na żywym renderze i zaobserwował zniknięcie granicy w gradiencie (§6.2), a test 13 dowodzi, że
+kliknięcia w tym trybie nie są zliczane. Przyrząd potrafi więc wydać werdykt „nie", co nadaje
+temu „tak" znaczenie — w projekcie, w którym narzędzia pomiarowe pięciokrotnie zwróciły fałszywe
+odczyty, nie jest to formalność.
 
 ### 7.4 Jeśli werdykt jest inny niż PASS — co zapisać
 
