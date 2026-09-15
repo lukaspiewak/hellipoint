@@ -342,3 +342,119 @@ describe('updateSpawning', () => {
     expect(at(400.05)).toBe(100);
   });
 });
+
+/**
+ * Straże na WIELKOŚCIACH POCHODNYCH. Walidacja pól `SpawnConfig` w konstruktorze `Sim`
+ * sprawdza każde pole z osobna — i to NIE WYSTARCZA, bo `rate` i `burst` przepełniają się
+ * przy składnikach, z których każdy przechodzi walidację. Ta sama rodzina co `angle`
+ * w `sunDirection` przy `rotationPeriod = 1e-320`: wartość wewnątrz dziedziny, której
+ * POCHODNA już w niej nie jest.
+ *
+ * Konsekwencja nie jest kosmetyczna. Zmierzone z kontrolą pozytywną (pełny `Sim`,
+ * `growthPerCycle = 1e200`, obie wartości przechodzą walidację pól): `rate` staje się
+ * `Infinity` na cyklu 3, `spawnAccumulator` dziedziczy nieskończoność, a pętla
+ * `while (spawnAccumulator >= 1)` wypuszcza jednostki bez końca — proces padł po 18 s
+ * z `FATAL ERROR: JavaScript heap out of memory` przy 4 GB. Bez tych straży to nie są
+ * ciche śmieci w danych, tylko zawieszenie headlessa Fazy 3.
+ */
+describe('updateSpawning — straże na wielkościach pochodnych', () => {
+  it('rzuca, gdy tempo spawnu przekracza rozbieg, zamiast zapętlić się bez końca', () => {
+    const s = fresh();
+    const rng = new Rng(1).fork(STREAM.WAVES);
+    const cfg = { ...DEFAULT_SPAWN, growthPerCycle: 1e200 };
+
+    // Cykl 1: tempo = baseRate (mnożnik do potęgi 0). Straż nie może być nadgorliwa.
+    expect(() => updateSpawning(s, allDark, rng, 1, cfg)).not.toThrow();
+    // Cykl 2: 0,25 × 1e200 = 2,5e199/s, czyli 1,25e198 jednostek na tick. Wartość
+    // SKOŃCZONA — sama `Number.isFinite` by ją przepuściła, a pętla i tak by nie wróciła.
+    expect(() => updateSpawning(s, allDark, rng, 2, cfg)).toThrow(/spawn rate released/);
+    expect(() => updateSpawning(s, allDark, rng, 2, cfg)).toThrow(/more than the planet has cells/);
+    // Cykl 3: 0,25 × (1e200)² = Infinity — druga połowa tej samej straży.
+    expect(() => updateSpawning(s, allDark, rng, 3, cfg)).toThrow(/spawn rate released Infinity/);
+  });
+
+  /**
+   * Granica jest STRUKTURALNA (liczba komórek planety), więc musi być przypięta z obu
+   * stron — inaczej straż mogłaby zostać zaostrzona do dowolnej małej liczby i nikt by
+   * tego nie zauważył. Tempo tuż PONIŻEJ granicy ma przechodzić, tuż POWYŻEJ oblewać.
+   */
+  it('granica rozbiegu to dokładnie liczba komórek planety — nie mniej, nie więcej', () => {
+    const perTickLimit = planet.cells.length;
+    const rng = new Rng(1).fork(STREAM.WAVES);
+    // cycle = 1, więc rate = baseRatePerPentagon, a na tick idzie rate × 0,05.
+    const podGranica = { ...DEFAULT_SPAWN, growthPerCycle: 1, baseRatePerPentagon: perTickLimit / 0.05 };
+    const nadGranica = { ...DEFAULT_SPAWN, growthPerCycle: 1, baseRatePerPentagon: (perTickLimit + 1) / 0.05 };
+
+    expect(() => updateSpawning(fresh(), allDark, rng, 1, podGranica)).not.toThrow();
+    expect(() => updateSpawning(fresh(), allDark, rng, 1, nadGranica)).toThrow(/spawn rate released/);
+  });
+
+  it('rzuca, gdy siła erupcji przekracza rozbieg', () => {
+    const s = fresh();
+    // Wszystkie 12 pentagonów zatkane, żeby `capCount` był maksymalny.
+    for (const cellId of planet.pentagons) {
+      s.buildings[cellId] = {
+        cellId, type: 'GEOTHERMAL_CAP', hp: BUILDINGS.GEOTHERMAL_CAP.hp, powered: false,
+      };
+    }
+    const rng = new Rng(1).fork(STREAM.WAVES);
+    const cfg = { ...DEFAULT_SPAWN, eruptionBurstBase: 1e300, eruptionScalePerCap: 1e300 };
+
+    // Erupcja odpala dopiero po pełnym interwale (uzbrojenie w pierwszym ticku), więc
+    // przepełnienie ujawnia się dopiero wtedy — asercja MUSI przejść przez odliczanie.
+    const ticks = Math.round(cfg.eruptionInterval / 0.05) + 2;
+    expect(() => {
+      for (let i = 0; i < ticks; i++) updateSpawning(s, allDark, rng, 1, cfg);
+    }).toThrow(/eruption burst released/);
+  });
+
+  /**
+   * Odwrotny kierunek dowodu, jak przy `RunConfig`: nie „te wartości są odrzucane", tylko
+   * „żadne pole `SimState` zasilane z `spawn` nie przyjmuje NaN ani nieskończoności przy
+   * konfiguracji, która walidację PRZESZŁA". Skrajne ARYTMETYCZNIE, ale umiarkowane
+   * OBJĘTOŚCIOWO — i to rozróżnienie jest zmierzone, nie ostrożnościowe: pierwsza wersja
+   * tego testu zawierała `eruptionBurstBase: 1000` przy `eruptionScalePerCap: 100`, co daje
+   * `burst = 501 000` jednostek na erupcję i **wywróciło workera vitesta z SIGABRT**
+   * (brak pamięci). Straż skończoności NIE ogranicza objętości — patrz raport, punkt
+   * o residuum.
+   *
+   * 450 ticków na konfigurację to minimum, przy którym zdąży wybuchnąć jedna erupcja
+   * (`eruptionInterval` = 20 s = 400 ticków) — bez tego asercja niepustości niżej
+   * oblewałaby dla konfiguracji o znikomym tempie ciągłym.
+   */
+  it('żadna konfiguracja spawnu przechodząca walidację nie daje NaN ani nieskończoności w SimState', () => {
+    const skrajne = [
+      { ...DEFAULT_SPAWN },
+      { ...DEFAULT_SPAWN, growthPerCycle: 1, baseRatePerPentagon: 1e-9 },
+      { ...DEFAULT_SPAWN, growthPerCycle: 1.5, baseRatePerPentagon: 1e-300 },
+      { ...DEFAULT_SPAWN, eruptionInterval: 0.05, eruptionBurstBase: 1, eruptionScalePerCap: 0 },
+      { ...DEFAULT_SPAWN, eruptionBurstBase: 4.5, eruptionScalePerCap: 1e-9 },
+      { ...DEFAULT_SPAWN, growthPerCycle: 1.35, baseRatePerPentagon: 1 },
+    ];
+    for (const cfg of skrajne) {
+      const s = fresh();
+      for (const cellId of planet.pentagons.slice(0, 3)) {
+        s.buildings[cellId] = {
+          cellId, type: 'GEOTHERMAL_CAP', hp: BUILDINGS.GEOTHERMAL_CAP.hp, powered: false,
+        };
+      }
+      const rng = new Rng(3).fork(STREAM.WAVES);
+      const opis = JSON.stringify(cfg);
+      for (let cycle = 1; cycle <= 9; cycle++) {
+        for (let i = 0; i < 50; i++) updateSpawning(s, allDark, rng, cycle, cfg);
+      }
+      for (const p of s.pentagons) {
+        expect(Number.isFinite(p.spawnAccumulator), `spawnAccumulator dla ${opis}`).toBe(true);
+        expect(Number.isFinite(p.eruptionCooldown), `eruptionCooldown dla ${opis}`).toBe(true);
+      }
+      expect(Number.isFinite(s.nextUnitId), `nextUnitId dla ${opis}`).toBe(true);
+      for (const u of s.units) {
+        expect(Number.isFinite(u.exposure), `exposure jednostki dla ${opis}`).toBe(true);
+        expect(Number.isFinite(u.hp), `hp jednostki dla ${opis}`).toBe(true);
+      }
+      // Strażnik na własną niepustość: gdyby żadna jednostka nie powstała, powyższe
+      // asercje przechodziłyby nad stanem, którego spawn w ogóle nie dotknął.
+      expect(s.units.length, `żadna jednostka nie powstała dla ${opis}`).toBeGreaterThan(0);
+    }
+  });
+});

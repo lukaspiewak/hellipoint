@@ -93,6 +93,60 @@ export class Sim {
     if (typeof config.spawn !== 'object' || config.spawn === null) {
       throw new RangeError(`RunConfig.spawn must be a SpawnConfig object, got ${config.spawn}`);
     }
+    // Pola `SpawnConfig`. Ta sama droga do `SimState`, co dwa pola wyżej: `rate` z dwóch
+    // pierwszych wpływa do `pentagons[].spawnAccumulator`, `eruptionInterval` wprost do
+    // `pentagons[].eruptionCooldown`. Wartość zdegenerowana NIE wywala się głośno —
+    // `for (k = 0; k < NaN; k++)` to zero iteracji, a `cycle >= NaN` to `false`, więc typ
+    // wroga po prostu nigdy się nie pojawia. Faza 3 buduje te konfiguracje programowo dla
+    // tysięcy runów i dostałaby ciche śmieci w rozkładach, na których opiera strojenie.
+    const spawn = config.spawn;
+    if (!Number.isFinite(spawn.baseRatePerPentagon) || spawn.baseRatePerPentagon <= 0) {
+      throw new RangeError(
+        `RunConfig.spawn.baseRatePerPentagon must be finite and positive, got ${spawn.baseRatePerPentagon}`,
+      );
+    }
+    // `>= 1`, nie „dodatni": mnożnik poniżej 1 znaczyłby, że fale SŁABNĄ z każdym cyklem,
+    // co odwraca model narastającego ciśnienia z §5.3. Dokładnie 1 jest legalne — daje
+    // tempo stałe, użyteczne jako punkt odniesienia w headlessie Fazy 3.
+    if (!Number.isFinite(spawn.growthPerCycle) || spawn.growthPerCycle < 1) {
+      throw new RangeError(
+        `RunConfig.spawn.growthPerCycle must be finite and at least 1, got ${spawn.growthPerCycle}`,
+      );
+    }
+    // Podłoga jednego ticka, tym samym rozumowaniem co `rotationPeriod` wyżej. Interwał
+    // krótszy niż tick znaczy erupcję w KAŻDYM ticku, a `eruptionCooldown` ucieka w minus
+    // bez ograniczenia, bo `-= TICK_SECONDS` przeważa nad `+= eruptionInterval`.
+    // Zmierzone dla interwału 0,01 s: po 200 tys. ticków cooldown wynosi −8000.
+    if (!Number.isFinite(spawn.eruptionInterval) || spawn.eruptionInterval < TICK_SECONDS) {
+      throw new RangeError(
+        `RunConfig.spawn.eruptionInterval must be at least one tick (${TICK_SECONDS}s), got ${spawn.eruptionInterval} — a shorter interval erupts every tick and drives eruptionCooldown negative without bound`,
+      );
+    }
+    // `>= 1`: erupcja ma wypuścić co najmniej jedną jednostkę. NIE wymagamy całkowitości —
+    // `updateSpawning` i tak zaokrągla dopiero ILOCZYN (`eruptionBurstBase × skala`), więc
+    // ułamkowa baza jest sensownym pokrętłem strojenia, a nie błędem konfiguracji.
+    if (!Number.isFinite(spawn.eruptionBurstBase) || spawn.eruptionBurstBase < 1) {
+      throw new RangeError(
+        `RunConfig.spawn.eruptionBurstBase must be finite and at least 1, got ${spawn.eruptionBurstBase}`,
+      );
+    }
+    // `>= 0`, w odróżnieniu od pól ewakuacji: zero NIE usuwa tu mechaniki, tylko jej
+    // skalowanie — erupcje nadal wybuchają, po prostu nie rosną z liczbą capów. Ujemny
+    // odwracałby §5.3 (capowanie ZMNIEJSZałoby erupcje) i mógłby dać ujemny `burst`.
+    if (!Number.isFinite(spawn.eruptionScalePerCap) || spawn.eruptionScalePerCap < 0) {
+      throw new RangeError(
+        `RunConfig.spawn.eruptionScalePerCap must be finite and non-negative, got ${spawn.eruptionScalePerCap}`,
+      );
+    }
+    // Progi cyklu: całkowite >= 1, bo `cycle` jest całkowity i numerowany od 1. `isInteger`
+    // odcina przy okazji NaN/Infinity, których `cycle >= x` nie odróżniłoby od „nigdy".
+    for (const pole of ['disruptorFromCycle', 'armorFromCycle'] as const) {
+      if (!Number.isInteger(spawn[pole]) || spawn[pole] < 1) {
+        throw new RangeError(
+          `RunConfig.spawn.${pole} must be an integer >= 1, got ${spawn[pole]}`,
+        );
+      }
+    }
 
     this.config = config;
     this.s = createState(planet, config.startingOre);

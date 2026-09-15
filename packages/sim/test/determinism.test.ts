@@ -5,6 +5,7 @@ import { stateHash } from '../src/sim/hash.js';
 import { TICK_SECONDS } from '../src/sim/state.js';
 import type { Command } from '../src/sim/commands.js';
 import { DEFAULT_RUN } from '../src/sim/rules.js';
+import { DEFAULT_SPAWN } from '../src/sim/spawning.js';
 
 /**
  * Pola `rotationPeriod`/`startingOre` wypisane JAWNIE, mimo że `DEFAULT_RUN` ma dziś
@@ -287,5 +288,73 @@ describe('RunConfig — walidacja pozostałych sześciu pól', () => {
     const cyklOdblokowania = Math.ceil(DEFAULT_RUN.cyclesPerRun * 0);
     expect(cyklOdblokowania).toBe(0); // przesłanka: surowo (0 − 1) × 180 / 0,05 = −3600
     expect(sim.state.evacUnlockTick).toBe(0);
+  });
+});
+
+/**
+ * Pola `SpawnConfig` wpływają do `SimState` tą samą drogą, co `cyclesPerRun`
+ * i `evacAlarmSeconds`: `rate` (z `baseRatePerPentagon` i `growthPerCycle`) trafia
+ * do `pentagons[].spawnAccumulator`, `eruptionInterval` wprost do
+ * `pentagons[].eruptionCooldown`. Wartość zdegenerowana nie wywala się głośno —
+ * `for (k = 0; k < NaN; k++)` to zero iteracji, a `cycle >= NaN` to `false` — więc
+ * headless runner Fazy 3 dostałby ciche śmieci w rozkładach balansowych.
+ */
+describe('RunConfig.spawn — walidacja pól SpawnConfig', () => {
+  const planet = createPlanet({ seed: 1 });
+  const build = (patch: Partial<typeof DEFAULT_SPAWN>) =>
+    () => new Sim(planet, { ...DEFAULT_RUN, spawn: { ...DEFAULT_SPAWN, ...patch } });
+
+  it('baseRatePerPentagon musi być skończony i dodatni', () => {
+    expect(build({ baseRatePerPentagon: 0 })).toThrow(/baseRatePerPentagon.*0/);
+    expect(build({ baseRatePerPentagon: -1 })).toThrow(RangeError);
+    expect(build({ baseRatePerPentagon: NaN })).toThrow(RangeError);
+    expect(build({ baseRatePerPentagon: Infinity })).toThrow(RangeError);
+  });
+
+  it('growthPerCycle musi być skończony i >= 1 — poniżej 1 fale SŁABNĄ z cyklu na cykl', () => {
+    expect(build({ growthPerCycle: 0.9 })).toThrow(/growthPerCycle.*0\.9/);
+    expect(build({ growthPerCycle: 0 })).toThrow(RangeError);
+    expect(build({ growthPerCycle: NaN })).toThrow(RangeError);
+    expect(build({ growthPerCycle: Infinity })).toThrow(RangeError);
+    // Dokładnie 1 legalne: tempo stałe, punkt odniesienia dla headlessa.
+    expect(build({ growthPerCycle: 1 })).not.toThrow();
+  });
+
+  it('eruptionInterval ma podłogę jednego ticka — krótszy erupuje w KAŻDYM ticku', () => {
+    expect(build({ eruptionInterval: 0 })).toThrow(/eruptionInterval/);
+    expect(build({ eruptionInterval: TICK_SECONDS / 2 })).toThrow(/eruptionInterval/);
+    expect(build({ eruptionInterval: -20 })).toThrow(RangeError);
+    expect(build({ eruptionInterval: NaN })).toThrow(RangeError);
+    expect(build({ eruptionInterval: Infinity })).toThrow(RangeError);
+    // Granica inclusive, tak samo jak przy `rotationPeriod`.
+    expect(build({ eruptionInterval: TICK_SECONDS })).not.toThrow();
+  });
+
+  it('eruptionBurstBase musi być skończony i >= 1, ale NIE musi być całkowity', () => {
+    expect(build({ eruptionBurstBase: 0 })).toThrow(/eruptionBurstBase.*0/);
+    expect(build({ eruptionBurstBase: 0.5 })).toThrow(RangeError);
+    expect(build({ eruptionBurstBase: NaN })).toThrow(RangeError);
+    expect(build({ eruptionBurstBase: Infinity })).toThrow(RangeError);
+    // `updateSpawning` zaokrągla dopiero ILOCZYN, więc ułamkowa baza >= 1 jest sensowna.
+    expect(build({ eruptionBurstBase: 4.5 })).not.toThrow();
+  });
+
+  it('eruptionScalePerCap musi być skończony i NIEUJEMNY — zero tylko wyłącza skalowanie', () => {
+    expect(build({ eruptionScalePerCap: -0.1 })).toThrow(/eruptionScalePerCap.*-0\.1/);
+    expect(build({ eruptionScalePerCap: NaN })).toThrow(RangeError);
+    expect(build({ eruptionScalePerCap: Infinity })).toThrow(RangeError);
+    // 0 legalne: erupcje nadal wybuchają, po prostu nie rosną z liczbą capów.
+    expect(build({ eruptionScalePerCap: 0 })).not.toThrow();
+  });
+
+  it('disruptorFromCycle i armorFromCycle muszą być całkowite >= 1', () => {
+    for (const pole of ['disruptorFromCycle', 'armorFromCycle'] as const) {
+      expect(build({ [pole]: 0 }), pole).toThrow(new RegExp(`${pole}.*0`));
+      expect(build({ [pole]: -1 }), pole).toThrow(RangeError);
+      expect(build({ [pole]: 2.5 }), pole).toThrow(RangeError);
+      expect(build({ [pole]: NaN }), pole).toThrow(RangeError);
+      expect(build({ [pole]: Infinity }), pole).toThrow(RangeError);
+      expect(build({ [pole]: 1 }), pole).not.toThrow();
+    }
   });
 });

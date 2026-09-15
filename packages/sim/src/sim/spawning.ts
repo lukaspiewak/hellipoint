@@ -64,6 +64,11 @@ export function updateSpawning(
 ): void {
   const capCount = countCaps(s);
   const rate = cfg.baseRatePerPentagon * Math.pow(cfg.growthPerCycle, cycle - 1);
+  assertReleasable(s, rate * TICK_SECONDS, 'spawn rate', {
+    cycle,
+    baseRatePerPentagon: cfg.baseRatePerPentagon,
+    growthPerCycle: cfg.growthPerCycle,
+  });
 
   for (let i = 0; i < s.planet.pentagons.length; i++) {
     const cellId = s.planet.pentagons[i];
@@ -91,6 +96,11 @@ export function updateSpawning(
         const burst = Math.round(
           cfg.eruptionBurstBase * (1 + cfg.eruptionScalePerCap * (capCount - 1)),
         );
+        assertReleasable(s, burst, 'eruption burst', {
+          eruptionBurstBase: cfg.eruptionBurstBase,
+          eruptionScalePerCap: cfg.eruptionScalePerCap,
+          capCount,
+        });
         for (let k = 0; k < burst; k++) {
           spawnUnit(s, pickType(rng, cycle, cfg), cellId);
         }
@@ -113,6 +123,45 @@ export function updateSpawning(
       spawnUnit(s, pickType(rng, cycle, cfg), cellId);
     }
   }
+}
+
+/**
+ * STRAŻ NA WIELKOŚCI POCHODNEJ — `rate` i `burst` wyliczają się ze składników, z których
+ * KAŻDY Z OSOBNA przechodzi walidację w konstruktorze `Sim`. Ta sama rodzina, co `angle`
+ * w `sunDirection` przy `rotationPeriod = 1e-320` (light.ts) i `angleStep`
+ * w `updateMovement`: wartość wewnątrz dziedziny, której pochodna już w niej nie jest.
+ *
+ * **Skończoność NIE WYSTARCZY, i to jest zmierzone.** `growthPerCycle = 1e200`
+ * (skończony, dodatni, ≥ 1 — przechodzi walidację pól) daje na cyklu 2 tempo
+ * `2,5e199`/s, czyli `1,25e198` jednostek na tick z jednego pentagonu. To jest wartość
+ * SKOŃCZONA, więc straż `Number.isFinite` by ją przepuściła — a pętla wypuszczająca
+ * i tak nie ma szans się skończyć. Kontrola pozytywna na pełnym `Sim`: proces padł po
+ * 18 s z `FATAL ERROR: JavaScript heap out of memory` przy 4 GB; pierwsza wersja tego
+ * testu wywróciła workera vitesta z SIGABRT.
+ *
+ * Górna granica jest **STRUKTURALNA, nie balansowa** (stąd brak `[STROJENIE]`): jeden
+ * komin nie może w jednym ticku wypuścić więcej jednostek, niż planeta ma komórek —
+ * powyżej tego nie jest to już wielkość rozgrywkowa, tylko rozbieg. Dobrana tak samo,
+ * jak granica w `updateMovement`: z niezmiennika struktury, nie z tabeli strojenia.
+ * Przy domyślnym `growthPerCycle = 1,35` granica zostaje przekroczona dopiero
+ * w okolicach cyklu 40 (≈ 2 godziny gry przy obrocie 180 s), więc normalnej rozgrywki
+ * nie dotyka.
+ */
+function assertReleasable(
+  s: SimState,
+  perTick: number,
+  co: string,
+  kontekst: Record<string, number>,
+): void {
+  const limit = s.planet.cells.length;
+  if (Number.isFinite(perTick) && perTick <= limit) return;
+  const opis = Object.entries(kontekst).map(([k, v]) => `${k}=${v}`).join(', ');
+  throw new RangeError(
+    `updateSpawning: ${co} released ${perTick} units from a single vent in one tick — more than the planet has cells (${limit}). ${opis}. ` +
+      'A value this large (or non-finite) makes the release loop effectively non-terminating, ' +
+      'so it is rejected here rather than exhausting memory. Lower baseRatePerPentagon/growthPerCycle ' +
+      'or eruptionBurstBase/eruptionScalePerCap in SpawnConfig.',
+  );
 }
 
 function countCaps(s: SimState): number {
