@@ -268,6 +268,14 @@ function perturb(s: SimState, key: HashedField): SimState {
     case 'evacUnlockTick': clone.evacUnlockTick += 1; return clone;
     case 'killsBySun': clone.killsBySun += 1; return clone;
     case 'killsByTurret': clone.killsByTurret += 1; return clone;
+    // Przestawione SŁOWO ROBOCZE, nie seed: seed jest w migawce po to, żeby `fork()`
+    // dawał te same poddrzewa, ale to `s` niesie POZYCJĘ w strumieniu — czyli dokładnie
+    // to, czego brak psuł wznawianie. Perturbacja musi ruszyć tę połowę, inaczej test
+    // przechodziłby nad haszem, który czyta wyłącznie seed.
+    case 'waveRng': clone.waveRng = {
+      seed: clone.waveRng.seed,
+      s: [clone.waveRng.s[0] + 1, clone.waveRng.s[1], clone.waveRng.s[2], clone.waveRng.s[3]],
+    }; return clone;
   }
 }
 

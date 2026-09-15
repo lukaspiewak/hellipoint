@@ -1,4 +1,4 @@
-import { Rng, STREAM } from '../math/rng.js';
+import { Rng } from '../math/rng.js';
 import type { Planet } from '../world/planet.js';
 import { updateBurning } from './burning.js';
 import { updateCombat } from './combat.js';
@@ -20,7 +20,15 @@ import { updateSpawning } from './spawning.js';
 import { createState, TICK_SECONDS, type SimState } from './state.js';
 
 /** [STROJENIE] Co ile ticków przeliczane są pola przepływu. 4 ticki = 5 Hz (§4.5). */
-const FLOWFIELD_INTERVAL_TICKS = 4;
+export const FLOWFIELD_INTERVAL_TICKS = 4;
+
+/**
+ * Czy z migawki `SimState` zrobionej w tym ticku da się wznowić przebieg CO DO BITU.
+ * Eksportowane, bo zapis/resynchronizacja Fazy 5 musi umieć wybrać moment migawki —
+ * uzasadnienie granicy: patrz straż w konstruktorze `Sim` niżej.
+ */
+export const isResumableTick = (tick: number): boolean =>
+  Number.isInteger(tick) && tick >= 0 && tick % FLOWFIELD_INTERVAL_TICKS === 0;
 
 export class Sim {
   readonly config: RunConfig;
@@ -28,9 +36,14 @@ export class Sim {
   private readonly pending: Command[] = [];
   private readonly motion: MotionContext;
   private readonly waveRng: Rng;
-  private fields = null as ReturnType<typeof buildAllFlowFields> | null;
+  private fields: ReturnType<typeof buildAllFlowFields>;
 
-  constructor(planet: Planet, config: RunConfig) {
+  /**
+   * `snapshot` — wznowienie z zapisanego `SimState` (Faza 5: wczytanie gry,
+   * resynchronizacja klienta). Podany stan jest PRZEJMOWANY (płytka kopia z podmienioną
+   * `planet`, bo planetę odtwarza się z seeda, nie z zapisu), nie kopiowany głęboko.
+   */
+  constructor(planet: Planet, config: RunConfig, snapshot?: SimState) {
     // `!(x > 0)` NIE łapie Infinity (Infinity > 0 jest prawdziwe) — stąd Number.isFinite.
     // Walidacja tu, a nie w scale.ts, chroni WSZYSTKICH konsumentów rotationPeriod naraz:
     // terminatorSpeedWorld/terminatorSpeedCells/terminatorCrossingTime dzielą przez nie
@@ -168,8 +181,32 @@ export class Sim {
     }
 
     this.config = config;
-    this.s = createState(planet, config.startingOre);
-    this.waveRng = new Rng(planet.seed).fork(STREAM.WAVES);
+    // Migawka MUSI trafić w granicę przeliczania pól przepływu. Pola są czystą funkcją
+    // `buildings`, ale NIE leżą w `SimState` (niosą `Infinity` — patrz niezmiennik
+    // serializowalności w state.ts), więc `Sim` wznowiony w ticku T odbudowuje je
+    // z `buildings@T`, podczas gdy oryginał używał w tym ticku pola zbudowanego
+    // w ticku 4⌊T/4⌋. Zmierzone: wznowienie poza granicą rozjeżdża hash po 1 ticku
+    // (15 z 241 przemiecionych ticków zapisu; te, w których zabudowa zmieniła się
+    // w oknie), a NA granicy jest identyczne co do bitu przez 400+ ticków.
+    // Odrzucane GŁOŚNO tutaj, zamiast cicho rozjeżdżać się później.
+    if (snapshot !== undefined && !isResumableTick(snapshot.tick)) {
+      throw new RangeError(
+        `SimState snapshot at tick ${snapshot.tick} cannot be resumed bit-identically: flow fields ` +
+          `are rebuilt every ${FLOWFIELD_INTERVAL_TICKS} ticks and that cache is NOT part of SimState, ` +
+          `so a snapshot taken off the boundary resumes with a differently-phased cache. Take the ` +
+          `snapshot at a tick where tick % ${FLOWFIELD_INTERVAL_TICKS} === 0 (see isResumableTick).`,
+      );
+    }
+    // Płytka kopia z podmienioną planetą: planetę odtwarza się z seeda (`createPlanet`
+    // jest deterministyczne), nie z zapisu — po round-tripie JSON byłaby i tak zwykłym
+    // obiektem danych, a tak `Sim` i wołający patrzą na TĘ SAMĄ instancję.
+    this.s = snapshot === undefined
+      ? createState(planet, config.startingOre)
+      : { ...snapshot, planet };
+    // Pozycja, nie seed: `Rng.fromState` kontynuuje sekwencję dokładnie tam, gdzie
+    // migawka ją zostawiła. Dla świeżego stanu `createState` wstawił pozycję startową,
+    // więc ta sama linia obsługuje oba przypadki bez rozgałęzienia.
+    this.waveRng = Rng.fromState(this.s.waveRng);
 
     // §5.6: Evac odblokowany dopiero w ostatniej tercji runu. Próg liczony TUTAJ, bo tu
     // — i tylko tu — konfiguracja jest znana, a zapisywany do stanu jako TICK, bo
@@ -202,9 +239,22 @@ export class Sim {
     // a `CELL_OCCUPIED` chroni tylko TĘ SAMĄ komórkę przed drugim CORE, nie planetę przed
     // setnym. Przy warunku przegranej `!buildings.some(b => b?.type === 'CORE')` (§5.6)
     // dawałoby to darmową nieśmiertelność. Ten sam zapis stosują pomocniki testowe Fazy 1B.
-    this.s.buildings[planet.startCell] = {
-      cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
-    };
+    //
+    // WYŁĄCZNIE dla świeżego runu: wznowienie z migawki dostaje zabudowę z zapisu, a tam
+    // CORE mógł już zostać zniszczony (warunek przegranej §5.6) albo mieć nadgryzione hp.
+    // Zasiew na wznowieniu wskrzeszałby go z pełnym hp przy KAŻDYM wczytaniu.
+    if (snapshot === undefined) {
+      this.s.buildings[planet.startCell] = {
+        cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+      };
+    }
+
+    // Pola przepływu zbudowane od razu, żeby `fields` nie było nullowalne: harmonogram
+    // w `step()` jest wtedy funkcją SAMEGO `tick` (patrz komentarz tamże), a nie „tick
+    // albo brak cache'u". Dla świeżego `Sim` (tick 0) i dla wznowienia na granicy
+    // pierwszy `step()` i tak przelicza je ponownie — ta wartość jest kosztem jednej
+    // Dijkstry na konstrukcję i ceną za usunięcie gałęzi, która psuła wznawialność.
+    this.fields = buildAllFlowFields(this.s);
   }
 
   get state(): SimState { return this.s; }
@@ -269,10 +319,12 @@ export class Sim {
     updateEconomy(this.s);
 
     // 5. Pola przepływu — przeliczane rzadziej niż co tick, zabudowa zmienia się wolno (§4.5).
-    // Lokalna `const`, nie `this.fields` z `!`: zawężenie typu z tego `if` nie przenosi się
-    // na pole klasy w kolejnych wywołaniach, a `!` uciszyłoby kompilator zamiast rozwiązać
-    // problem.
-    if (this.fields === null || this.s.tick % FLOWFIELD_INTERVAL_TICKS === 0) {
+    // Harmonogram jest funkcją SAMEGO `tick` — poprzedni warunek miał jeszcze człon
+    // `this.fields === null ||` i to właśnie on psuł wznawialność: `Sim` wczytany w ticku
+    // T poza granicą przeliczał pola W TYM ticku, podczas gdy oryginał używał wtedy pola
+    // zbudowanego w 4⌊T/4⌋ (zmierzone: rozjazd hasza po 1 ticku). Cache jest teraz
+    // przygotowany w konstruktorze, a granicę migawki egzekwuje `isResumableTick`.
+    if (this.s.tick % FLOWFIELD_INTERVAL_TICKS === 0) {
       this.fields = buildAllFlowFields(this.s);
     }
     const fields = this.fields;
@@ -289,6 +341,10 @@ export class Sim {
 
     // 9. Fale i spawn.
     updateSpawning(this.s, light, this.waveRng, this.cycle, this.config.spawn);
+    // Pozycja generatora wraca do stanu w KAŻDYM ticku, nie „przy zapisie": migawką jest
+    // samo `SimState` (`sim.state` bywa serializowane przez wołającego w dowolnej chwili),
+    // więc nie ma innego momentu, w którym dałoby się ją jeszcze dopisać.
+    this.s.waveRng = this.waveRng.getState();
 
     // 10. Warunki końca — ostatnie, żeby widziały świat po wszystkich zmianach ticka.
     updateRules(this.s, this.config);

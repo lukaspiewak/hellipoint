@@ -43,4 +43,4 @@ export { DEFAULT_SPAWN, updateSpawning } from './sim/spawning.js';
 export type { SpawnConfig } from './sim/spawning.js';
 export { DEFAULT_RUN, currentCycle, evacUnlocked, updateRules } from './sim/rules.js';
 export type { RunConfig } from './sim/rules.js';
-export { Sim } from './sim/loop.js';
+export { FLOWFIELD_INTERVAL_TICKS, isResumableTick, Sim } from './sim/loop.js';

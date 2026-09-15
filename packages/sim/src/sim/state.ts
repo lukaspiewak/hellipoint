@@ -1,3 +1,4 @@
+import { Rng, STREAM, type RngState } from '../math/rng.js';
 import type { Vec3 } from '../math/vec3.js';
 import type { Planet } from '../world/planet.js';
 
@@ -143,6 +144,23 @@ export interface SimState {
   killsBySun: number;
   /** Patrz doc-comment `killsBySun` wyżej — ten sam pomiar, druga strona podziału. */
   killsByTurret: number;
+  /**
+   * POZYCJA generatora fal (`STREAM.WAVES`), nie tylko jego seed. Bez niej `SimState`
+   * NIE JEST wznawialną migawką — i to jest zmierzone, nie teoretyczne: round-trip
+   * `sim.state` przez JSON i wczytanie do świeżego `Sim` dawało zgodny `stateHash`
+   * w chwili wczytania, a rozjazd po 1 ticku, bo odtworzony generator startował od
+   * pozycji ZERO i `pickType` losowało inne typy wrogów niż oryginał (widoczne dopiero,
+   * gdy pula ma więcej niż jeden typ — czyli od `disruptorFromCycle`).
+   *
+   * Dokładnie ten tryb awarii opisuje doc-comment `Rng.getState`/`Rng.fromState`
+   * (math/rng.ts) — para istniała, była eksportowana i NIC JEJ NIE WOŁAŁO.
+   *
+   * Kształt zgodny z niezmiennikiem serializowalności wyżej: `{ seed, s: [4 liczby] }`
+   * — zwykły obiekt i zwykła tablica, NIE `Uint32Array` (ten serializuje się jako
+   * `{"0":…}` i round-trip go nie odtwarza). Seed jest częścią migawki, bo `fork()`
+   * zależy wyłącznie od niego.
+   */
+  waveRng: RngState;
 }
 
 export function createState(planet: Planet, startingOre: number): SimState {
@@ -166,5 +184,10 @@ export function createState(planet: Planet, startingOre: number): SimState {
     evacUnlockTick: 0,
     killsBySun: 0,
     killsByTurret: 0,
+    // Pozycja startowa strumienia fal. Wyprowadzana TUTAJ, z `planet.seed`, a nie
+    // w `Sim`: stan ma być kompletny sam z siebie (pomocniki testowe Fazy 1B budują go
+    // bez `Sim`), a `Sim` ma go tylko WCZYTYWAĆ — inaczej zostają dwa źródła prawdy
+    // o tym, gdzie jest generator, i rozjeżdżają się przy wznowieniu.
+    waveRng: new Rng(planet.seed).fork(STREAM.WAVES).getState(),
   };
 }
