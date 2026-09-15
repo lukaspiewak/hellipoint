@@ -109,11 +109,21 @@ function removeDeadUnits(s: SimState): void {
   // gdyby kiedyś powstał system zabijający jednostki PRZED walką, ten zamiatacz
   // naliczyłby rudę też za jego ofiary — dokładnie błąd naprawiony w tej samej
   // rundzie w `updateBurning` (burning.ts), patrz task-3-fix-report.md.
+  //
+  // Tym samym argumentem `s.killsByTurret++` tutaj jest poprawne: jedyna funkcja w tym
+  // pliku, która odejmuje `hp` jednostkom, to `turretsAttackUnits` — `unitsAttackBuildings`
+  // atakuje WYŁĄCZNIE budynki. Więc każda jednostka zamieciona tutaj zginęła od wieży,
+  // nigdy od czegokolwiek innego (patrz doc-comment `killsBySun` w state.ts — headless
+  // Task 6 mierzył błąd przybliżenia opartego na "jednostkach w świetle" i zastąpił je
+  // tymi licznikami po zmierzeniu błędu 30-38%).
   if (!s.units.some((u) => u.hp <= 0)) return;
   const survivors = [];
   for (const u of s.units) {
     if (u.hp > 0) survivors.push(u);
-    else s.ore += ENEMIES[u.type].oreReward;
+    else {
+      s.ore += ENEMIES[u.type].oreReward;
+      s.killsByTurret++;
+    }
   }
   s.units = survivors;
 }

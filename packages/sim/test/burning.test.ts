@@ -87,6 +87,23 @@ describe('updateBurning', () => {
     expect(s.ore).toBeCloseTo(before + ENEMIES.SWARM.oreReward, 6);
   });
 
+  it('killsBySun liczy WYŁĄCZNIE zgon od ekspozycji — ten sam scenariusz "obcego trupa"', () => {
+    // Ten sam rozdzielacz co test wyżej (ruda), na drugim liczniku: headless (Task 6)
+    // tunuje balans na killsBySun/killsByTurret zamiast na przybliżeniu z liczby
+    // jednostek w świetle (zmierzony błąd: 30-38%, patrz doc-comment `killsBySun`
+    // w state.ts) — muszą więc realnie rozróżniać źródło zgonu, nie tylko naliczać rudę.
+    const s = withCore();
+    spawnUnit(s, 'SWARM', 10); // umrze OD SPALANIA w tym wywołaniu
+    spawnUnit(s, 'ARMOR', 11); // "obcy trup": hp=0 z zewnątrz, NIE od spalania
+    s.units[0].exposure = ENEMIES.SWARM.burnTime;
+    s.units[1].hp = 0;
+
+    updateBurning(s, fullLight);
+
+    expect(s.killsBySun).toBe(1); // TYLKO SWARM — ARMOR był już martwy z zewnątrz
+    expect(s.killsByTurret).toBe(0); // updateBurning nigdy nie rusza tego licznika
+  });
+
   it('powrót do cienia regeneruje ekspozycję', () => {
     const s = withCore();
     spawnUnit(s, 'SWARM', 10);

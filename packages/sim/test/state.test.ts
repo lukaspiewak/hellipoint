@@ -266,6 +266,8 @@ function perturb(s: SimState, key: HashedField): SimState {
     // sentinela, a nie tylko zmienia liczbę o oczko w obrębie tej samej semantyki.
     case 'evacAlarmRemaining': clone.evacAlarmRemaining += 1; return clone;
     case 'evacUnlockTick': clone.evacUnlockTick += 1; return clone;
+    case 'killsBySun': clone.killsBySun += 1; return clone;
+    case 'killsByTurret': clone.killsByTurret += 1; return clone;
   }
 }
 

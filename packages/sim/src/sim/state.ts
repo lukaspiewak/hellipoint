@@ -120,6 +120,29 @@ export interface SimState {
    * testowych Fazy 1B, które piszą budynki wprost do stanu.
    */
   evacUnlockTick: number;
+  /**
+   * Zliczenia zgonów jednostek, naliczane W MIEJSCU śmierci — `killsBySun` w
+   * `updateBurning` (burning.ts, gałąź ekspozycji), `killsByTurret` w unit-sweeperze
+   * `updateCombat` (combat.ts, `removeDeadUnits`). NIE przybliżenie z liczby jednostek
+   * stojących w świetle: headless (Task 6) najpierw wypróbował dokładnie takie
+   * przybliżenie (`sunShare = min(zgony_w_ticku, jednostki_w_świetle_przed_tickiem)`),
+   * zgodnie z brief-em, i zmierzył jego błąd względem tych dwóch liczników na 300
+   * przebiegach `ScriptedPolicy`/`DEFAULT_RUN` (seeds 0-299): **30,2 % dla słońca,
+   * 34,2 % dla wież** — oba dużo powyżej progu 10% z planu. Kierunek zgodny z
+   * przewidywaniem brief-u (słońce przeszacowane, wieże niedoszacowane, bo jednostka
+   * stojąca w świetle, ale zabita przez wieżę, i tak liczy się jako "w świetle"), plus
+   * efekt NIEPRZEWIDZIANY: przybliżenie liczyło zgony jako `prevUnits - now`, czyli
+   * NETTO zmianę populacji — zgon zamaskowany spawnem w tym samym ticku (częste, fale
+   * spawnują niemal co tick) znikał z sumy całkowicie (zmierzone: 397 zgonów, ~3,8%
+   * brakowało w sumie kontrolnej na pierwszych 150 przebiegach). Stąd liczniki
+   * rzeczywiste, nie przybliżenie — Faza 3 tunuje balans na podstawie tych dwóch liczb.
+   *
+   * Ten sam niezmiennik serializowalności co reszta stanu: proste liczniki `number`,
+   * bez `Infinity`/`NaN` (rosną tylko przez `++`, od 0).
+   */
+  killsBySun: number;
+  /** Patrz doc-comment `killsBySun` wyżej — ten sam pomiar, druga strona podziału. */
+  killsByTurret: number;
 }
 
 export function createState(planet: Planet, startingOre: number): SimState {
@@ -141,5 +164,7 @@ export function createState(planet: Planet, startingOre: number): SimState {
     evacCharge: 0,
     evacAlarmRemaining: -1,
     evacUnlockTick: 0,
+    killsBySun: 0,
+    killsByTurret: 0,
   };
 }

@@ -45,7 +45,10 @@ export function updateBurning(s: SimState, light: Float32Array): void {
         // kolejności systemów (walka biegnie przed spalaniem i zabiera swoich
         // zabitych PRZED wywołaniem updateBurning), założeniu nigdzie w tym pliku
         // nie zapisanemu ani nie sprawdzonemu. Patrz task-3-fix-report.md, runda 2.
+        // Tym samym argumentem `s.killsBySun++` tutaj (a nie w zamiataczu niżej) liczy
+        // WYŁĄCZNIE zgony od ekspozycji — patrz doc-comment `killsBySun` w state.ts.
         s.ore += ENEMIES[u.type].oreReward;
+        s.killsBySun++;
         anyDead = true;
       }
     } else if (u.exposure > 0) {

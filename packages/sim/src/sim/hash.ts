@@ -14,6 +14,8 @@ export function stateHash(s: SimState): string {
   h.float(s.evacCharge);
   h.float(s.evacAlarmRemaining);
   h.int(s.evacUnlockTick);
+  h.float(s.killsBySun);
+  h.float(s.killsByTurret);
   h.str(s.phase);
   h.int(s.nextUnitId);
 

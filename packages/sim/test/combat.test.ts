@@ -216,4 +216,17 @@ describe('walka: wieże kontra jednostki', () => {
     expect(s.units).toHaveLength(0);
     expect(s.ore).toBeCloseTo(oreBefore + killed * ENEMIES.SWARM.oreReward, 6);
   });
+
+  it('zabita przez wieżę jednostka liczy się w killsByTurret, NIE w killsBySun', () => {
+    // Headless (Task 6) tunuje balans na tych dwóch licznikach zamiast na przybliżeniu
+    // z liczby jednostek w świetle (zmierzony błąd przybliżenia: 30-38%, patrz
+    // doc-comment `killsBySun` w state.ts) — muszą więc realnie rozróżniać źródło zgonu.
+    const { s } = turretAndUnit('LASER_TURRET', 1);
+    for (const u of s.units) u.hp = 0.01;
+    const killed = s.units.length;
+
+    updateCombat(s, buildAllFlowFields(s));
+    expect(s.killsByTurret).toBe(killed);
+    expect(s.killsBySun).toBe(0);
+  });
 });
