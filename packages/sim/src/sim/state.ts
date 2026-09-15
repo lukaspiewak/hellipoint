@@ -23,12 +23,15 @@ export interface PentagonState {
   /** Sekundy do najbliższej erupcji. Używane wyłącznie przez zatkane pentagony. */
   eruptionCooldown: number;
   /**
-   * Czy `eruptionCooldown` zostało uzbrojone pełnym `eruptionInterval` od (po)nownego
+   * Czy `eruptionCooldown` zostało uzbrojone pełnym `eruptionInterval` od PIERWSZEGO
    * zatkania. Bez tej flagi startowe `eruptionCooldown = 0` jest nieodróżnialne od
    * "właśnie odliczyło do zera" — pierwsza erupcja wystrzeliwałaby w TYM SAMYM ticku,
    * w którym stanął cap, zamiast po pełnym interwale (patrz spawning.ts).
-   * Resetowana na `false`, gdy pentagon przestaje być zatkany, żeby ponowne zacapowanie
-   * liczyło interwał od nowa, a nie kontynuowało stare odliczenie.
+   * CELOWO nie resetowana, gdy pentagon przestaje być zatkany — odliczanie ZAMRAŻA SIĘ
+   * (jak dla światła, D1), nie zeruje: zegar erupcji należy do pentagonu (ciśnienie w
+   * kominie), nie do capa (pokrywy). Reset dawał darmowy exploit — rozbiórka+odbudowa
+   * capa w kółko odsuwała rosnącą z `capCount` erupcję za płaski koszt (patrz
+   * task-4-fix-report.md, punkt 1).
    */
   eruptionArmed: boolean;
 }

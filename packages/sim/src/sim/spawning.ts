@@ -43,6 +43,17 @@ export const DEFAULT_SPAWN: SpawnConfig = {
  * strumienia" w krótkim oknie poniżej interwału — patrz task-4-report.md). `eruptionArmed`
  * zapewnia, że pierwsze uzbrojenie liczników PO (po)nownym zatkaniu ustawia pełny
  * interwał zamiast fałszywie "przeterminowanego" zera.
+ *
+ * ZEGAR ERUPCJI NALEŻY DO PENTAGONU, NIE DO CAPA (rozstrzygnięcie z przeglądu Taska 4,
+ * patrz task-4-fix-report.md, punkt 1): `eruptionCooldown`/`eruptionArmed` ZAMRAŻAJĄ SIĘ,
+ * gdy pentagon przestaje być zatkany — nie zerują się. Dwa niezależne wyzwalacze
+ * zamrożenia (światło — strażnik D1 na górze pętli; brak capa — gałąź niżej) realizują
+ * TĘ SAMĄ zasadę: ciśnienie siedzi w kominie (pentagonie), nie w pokrywie (capie), więc
+ * zdjęcie pokrywy go nie upuszcza. Wcześniejsza wersja zerowała `eruptionArmed` przy
+ * odkapowaniu — dawało to darmowy exploit: rozbiórka+odbudowa capa (płaski koszt ok. 38
+ * rudy — 75 kosztu minus 37 zwrotu z DEMOLISH) w nieskończoność odsuwała rosnącą z
+ * `capCount` erupcję, więc capowanie wszystkich 12 STAWAŁO SIĘ strategią wygrywającą
+ * zamiast dowodem na to, że nią nie jest (cały sens §5.3).
  */
 export function updateSpawning(
   s: SimState,
@@ -87,11 +98,15 @@ export function updateSpawning(
       continue;
     }
 
-    // Odkapowany (albo nigdy nie zakapowany) pentagon zapomina odliczanie erupcji —
-    // ponowne zacapowanie w przyszłości ma liczyć pełny interwał od nowa, nie
-    // kontynuować stare, zamrożone odliczenie.
-    ps.eruptionArmed = false;
-
+    // Odkapowany (albo nigdy nie zakapowany) pentagon NIE dotyka eruptionCooldown/
+    // eruptionArmed — odliczanie (jeśli już uzbrojone) po prostu ZAMRAŻA SIĘ, tak samo
+    // jak robi to D1 dla światła (patrz strażnik na górze pętli). Zegar erupcji należy
+    // do PENTAGONU (ciśnienie w kominie), nie do capa (pokrywy): zdjęcie pokrywy nie
+    // zeruje ciśnienia, więc rozbiórka+odbudowa capa nie kupuje graczowi ani sekundy —
+    // usuwa to realny exploit (poprzednia wersja z `eruptionArmed = false` tutaj
+    // resetowała odliczanie do pełnego interwału przy KAŻDYM cyklu rozbiórka-odbudowa,
+    // za płaski koszt ~38 rudy/cykl, tłumiąc rosnącą z capCount erupcję za darmo —
+    // patrz task-4-fix-report.md, punkt 1).
     ps.spawnAccumulator += rate * TICK_SECONDS;
     while (ps.spawnAccumulator >= 1) {
       ps.spawnAccumulator -= 1;
