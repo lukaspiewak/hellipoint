@@ -1,65 +1,50 @@
 import type { Cell, Planet, Vec3 } from '@heliopolis/sim';
-import { lightField } from '@heliopolis/sim';
-import { lightBand } from './shading.js';
+import { lightField, Rng } from '@heliopolis/sim';
 
 /**
- * Para komórek SĄSIADUJĄCYCH (patrz `findTerminatorPairs`), jedna po każdej stronie granicy
- * D1-krytycznej — patrz uzasadnienie doboru granicy przy `findTerminatorPairs` niżej. Same
- * identyfikatory komórek, zero Three.js: `readabilityGate.ts` zamienia je na pozycje w
- * świecie dopiero przy budowie znaczników.
+ * Próbkowanie granicy dnia i nocy na potrzeby bramki czytelności.
+ *
+ * **Prawda o tym, która komórka jest oświetlona, bierze się TU I WSZĘDZIE z predykatu
+ * SYMULACJI — `light[cellId] > 0`** (tego samego, którym rozstrzygają `spawning.ts`,
+ * `burning.ts` i `movement.ts`), nie z pasma renderu. Do Fazy 2A było odwrotnie: bramka
+ * pytała o `lightBand(light) >= 1`, czyli o granicę WIDZIANĄ, która przy progu 0,05 leżała
+ * o jeden krok grafu od granicy, po której decyduje symulacja (spec Fazy 2A, §4.1: w 6 z 15
+ * prób komórka opisana jako „ciemna" była dla symulacji oświetlona). Po obniżeniu
+ * `LIGHT_BANDS[0]` do zera obie granice pokrywają się DOKŁADNIE — ale zapisanie tu predykatu
+ * symulacji, a nie renderu, jest tym, co czyni bramkę zdolną WYKRYĆ ich ponowne rozejście:
+ * gdyby ktoś podniósł pierwszy próg, komórki oznaczone jako „jasne" wciąż byłyby tymi, które
+ * pali słońce, a render przestałby je tak malować — i człowiek by na tym poległ, zamiast
+ * dostać cicho zgodny, bezużyteczny wynik.
  */
+
+/** Para komórek SĄSIADUJĄCYCH, jedna oświetlona (`light > 0`), druga nie. */
 export interface TerminatorPair {
   readonly litCellId: number;
   readonly darkCellId: number;
 }
 
 /**
- * Znajduje WSZYSTKIE pary sąsiadujących komórek, które granica D1 stawia po dwóch stronach —
- * jedna faktycznie oświetlona, druga faktycznie nie — z PRAWDZIWEGO `light` (np. z
- * `lightField(planet, sunDirection(...))`), nie z liczb wpisanych ręcznie. To jest most
- * między symulacją a harnessem bramki czytelności (Zadanie 5, Krok 4 briefu): "użyj
- * prawdziwego lightField, żeby znaleźć prawdziwe pary sąsiadów".
+ * Wszystkie pary sąsiadów, których granica dnia/nocy stawia po dwóch stronach — z
+ * PRAWDZIWEGO `light` (np. z `lightField(planet, sunDirection(...))`), nie z liczb wpisanych
+ * ręcznie.
  *
- * **Wybór granicy: `lightBand(light) === 0` (noc) kontra `>= 1` (półmrok LUB dzień) — NIE
- * granica między pasmem 1 i 2.** To jest decyzja, nie przypadek, i jest tu udokumentowana,
- * bo od niej zależy, CO ta bramka w ogóle mierzy:
+ * Nie napędza już samej bramki (ta pyta o POJEDYNCZE komórki — patrz `buildGateTrials`), ale
+ * zostaje jako przyrząd pomiarowy: „o ile różni się kolor po dwóch stronach granicy" jest
+ * wielkością, którą mierzymy w `shading.test.ts` i raportujemy w dokumencie wyników, i
+ * potrzebuje dokładnie takiej listy par.
  *
- * 1. **To jest granica WIDZIANA — granica pasma, a nie granica `dot <= 0`.** Pasmo 0 to
- *    `light < LIGHT_BANDS[0]` (dziś 0,05), czyli noc PLUS wąski rąbek świtu, którego
- *    symulacja nie uznaje za noc. Wcześniejsza wersja tego komentarza mówiła "pasmo 0 to
- *    DOKŁADNIE `dot <= 0`" — to było NIEPRAWDĄ i zostało zmierzone (spec §4.1): przez 12
- *    faz słońca w szczelinę `0 < light < 0,05` wpada od 8 do 38 komórek (4,28% tych, które
- *    symulacja traktuje jako oświetlone). Bramka mierzy więc granicę, którą widzi OKO — i
- *    to jest właściwa rzecz do mierzenia dla D1, bo D1 mówi o tym, co gracz czyta wzrokiem
- *    — ale to NIE jest ta sama linia, co granica, po której decyduje symulacja
- *    (`light[cellId] > 0` w `spawning.ts`, `burning.ts`, `movement.ts`).
- *
- *    Wybór granicy pasmowej pozostaje właściwy: kryterium bramki (§8.1, cytowane w briefie)
- *    brzmi "ta świeci, ta nie" — dwuwartościowe z natury, a pasma 1 i 2 to dwa poziomy TEGO
- *    SAMEGO stanu "coś świeci". Konsekwencja, którą trzeba znać czytając wynik: w 6 z 15
- *    zapisanych prób komórka oznaczona jako "ciemna" jest dla symulacji OŚWIETLONA (spec
- *    §4.1). Bramka nadal bada granicę dnia i nocy tak, jak ją widać — ale nie orzeka o tym,
- *    gdzie ją stawia symulacja.
- * 2. **To jest granica o mocnym kontraście barwnym, nie o słabym.** Przegląd Zadania 3 zmierzył
- *    odległości barwne palety: noc↔półmrok Δodcienia 155,9° (kontrast WCAG 5,60), noc↔dzień
- *    178,3° (kontrast 16,24) — obie mocno rozdzielone. Półmrok↔dzień rozdziela się tylko Δ22,4°
- *    i kontrastem 2,90, PONIŻEJ progu 3:1 z UI — to granica czysto estetyczna (Faza 4), nie
- *    D1-owa. Dobierając granicę noc/(półmrok LUB dzień), ten harness bada WYŁĄCZNIE granicę,
- *    o której mówi D1 — nigdy przypadkiem nie testuje granicy estetycznej półmrok↔dzień.
- *
- * Każda nieskierowana krawędź sąsiedztwa liczona DOKŁADNIE RAZ: pętla po `cell.neighbors`
- * pomija sąsiadów o mniejszym `id` (już odwiedzeni z ich własnej strony) — bezpieczne, bo
- * sąsiedztwo w `@heliopolis/sim` jest symetryczne (zweryfikowane w Fazie 0, §6: "asymetryczne
- * krawędzie sąsiedztwa: 0").
+ * Każda nieskierowana krawędź liczona DOKŁADNIE RAZ: pętla pomija sąsiadów o mniejszym `id`
+ * (już odwiedzonych z ich strony) — bezpieczne, bo sąsiedztwo w `@heliopolis/sim` jest
+ * symetryczne (zweryfikowane w Fazie 0, §6: „asymetryczne krawędzie sąsiedztwa: 0").
  */
 export function findTerminatorPairs(cells: readonly Cell[], light: Float32Array): TerminatorPair[] {
   const pairs: TerminatorPair[] = [];
   for (const cell of cells) {
-    const selfLit = lightBand(light[cell.id]) >= 1;
+    const selfLit = light[cell.id] > 0;
     for (const neighborId of cell.neighbors) {
       if (neighborId <= cell.id) continue; // każda krawędź nieskierowana raz, od mniejszego id
-      const neighborLit = lightBand(light[neighborId]) >= 1;
-      if (selfLit === neighborLit) continue; // obie strony po tej samej stronie granicy — nie terminator
+      const neighborLit = light[neighborId] > 0;
+      if (selfLit === neighborLit) continue;
       pairs.push(
         selfLit ? { litCellId: cell.id, darkCellId: neighborId } : { litCellId: neighborId, darkCellId: cell.id },
       );
@@ -69,57 +54,180 @@ export function findTerminatorPairs(cells: readonly Cell[], light: Float32Array)
 }
 
 /**
- * Wybiera `count` par ROZŁOŻONYCH równomiernie po tablicy `pairs` (indeksy
- * `floor(i·len/count)`), nie pierwsze `count` z brzegu ani losowe. `findTerminatorPairs`
- * odwiedza komórki w kolejności ich `id`, która w tej geometrii jest z grubsza (nie ściśle)
- * przestrzennie spójna lokalnie — równe rozstawienie indeksów w wyniku daje próbki z różnych
- * fragmentów pierścienia terminatora zamiast piętnastu par stłoczonych w jednym jego
- * zakątku. Deterministyczne (ten sam `pairs` i `count` dają zawsze te same pary) — bramka
- * czytelności ma być odtwarzalna dla drugiej sesji człowieka, nie za każdym razem inna.
+ * Komórki PRZYLEGAJĄCE do granicy dnia i nocy, rozdzielone na stronę oświetloną i ciemną:
+ * komórka trafia tu wtedy i tylko wtedy, gdy ma co najmniej jednego sąsiada po DRUGIEJ
+ * stronie granicy (odległość 1 w grafie).
  *
- * @throws {RangeError} gdy `count` nie jest dodatnią liczbą całkowitą, albo gdy `pairs` ma
- *   mniej elementów niż `count` — cichy zwrot krótszej niż zamówiona listy oznaczałby, że
- *   bramka "PASS wymaga kompletu piętnastu" mogłaby po cichu dostać mniej niż piętnaście prób.
+ * To jest zbiór, z którego bramka losuje (deterministycznie — patrz `selectSpread`) swoje
+ * pytania, i wybór „dokładnie odległość 1" jest jej najważniejszym parametrem. Uzasadnienie:
+ * pytanie „po której stronie granicy leży ta komórka" jest TRYWIALNE dla komórki daleko od
+ * granicy (środek dnia jest jasny w każdym trybie cieniowania, łącznie z kontrolą pozytywną)
+ * i rozstrzygające tylko tuż przy niej. Komórki przy granicy to zarazem DOKŁADNIE te, o które
+ * spór między renderem a symulacją toczył się w Fazie 2A — jednokomórkowy pierścień, w którym
+ * gracz widział noc, a jednostki się paliły.
+ *
+ * Obie listy rosną po `id`. Zmierzone przy `frequency 12` i trzech fazach bramki: 70–72
+ * komórki po stronie jasnej i 72 po ciemnej, w każdej fazie.
  */
-export function selectSpreadPairs(pairs: readonly TerminatorPair[], count: number): TerminatorPair[] {
+export interface BoundaryCells {
+  /** Komórki oświetlone (`light > 0`) mające ciemnego sąsiada. */
+  readonly lit: readonly number[];
+  /** Komórki nieoświetlone (`light === 0`) mające oświetlonego sąsiada. */
+  readonly dark: readonly number[];
+}
+
+export function findBoundaryCells(cells: readonly Cell[], light: Float32Array): BoundaryCells {
+  const lit: number[] = [];
+  const dark: number[] = [];
+  for (const cell of cells) {
+    const selfLit = light[cell.id] > 0;
+    let touchesOtherSide = false;
+    for (const neighborId of cell.neighbors) {
+      if ((light[neighborId] > 0) !== selfLit) {
+        touchesOtherSide = true;
+        break;
+      }
+    }
+    if (!touchesOtherSide) continue;
+    (selfLit ? lit : dark).push(cell.id);
+  }
+  return { lit, dark };
+}
+
+/**
+ * Wybiera `count` elementów ROZŁOŻONYCH równomiernie po `items` (indeksy
+ * `floor(i·len/count) + offset`, modulo długość), nie pierwsze `count` z brzegu ani losowe.
+ * Deterministyczne: te same wejścia dają zawsze to samo wyjście — bramka ma być odtwarzalna
+ * dla drugiej sesji człowieka, nie za każdym razem inna.
+ *
+ * `offset` daje ROZŁĄCZNE plany prób z tego samego pierścienia granicznego. Bramka potrzebuje
+ * trzech planów (oceniany, porównawczy, kontrolny) i one MUSZĄ używać innych komórek: gdyby
+ * plan kontrolny pytał o te same komórki co oceniany, człowiek znałby odpowiedzi z
+ * odsłonięcia poprzedniego przebiegu i kontrola mierzyłaby jego pamięć, nie czytelność.
+ * Rozłączność jest własnością liczb, nie nadzieją: przy kroku `floor(len/count)` ≥ liczba
+ * planów kolejne przesunięcia nie mogą trafić w te same indeksy — pilnuje tego strażnik
+ * w `createReadabilityGate` (który sprawdza rozłączność WPROST, na gotowych planach) i
+ * test #8 w `terminatorPairs.test.ts`.
+ *
+ * @throws {RangeError} gdy `count` nie jest dodatnią liczbą całkowitą, gdy `offset` nie jest
+ *   nieujemną liczbą całkowitą, albo gdy `items` ma mniej elementów niż `count` — cichy zwrot
+ *   krótszej listy oznaczałby, że bramka „PASS wymaga kompletu piętnastu" mogłaby po cichu
+ *   dostać mniej niż piętnaście prób.
+ */
+export function selectSpread<T>(items: readonly T[], count: number, offset = 0): T[] {
   if (!(Number.isInteger(count) && count > 0)) {
-    throw new RangeError(`selectSpreadPairs: count must be a positive integer, got ${count}`);
+    throw new RangeError(`selectSpread: count must be a positive integer, got ${count}`);
   }
-  if (pairs.length < count) {
-    throw new RangeError(`selectSpreadPairs: need ${count} straddling pairs, only ${pairs.length} available`);
+  if (!(Number.isInteger(offset) && offset >= 0)) {
+    throw new RangeError(`selectSpread: offset must be a non-negative integer, got ${offset}`);
   }
-  const selected: TerminatorPair[] = [];
+  if (items.length < count) {
+    throw new RangeError(`selectSpread: need ${count} items, only ${items.length} available`);
+  }
+  const selected: T[] = [];
   for (let i = 0; i < count; i++) {
-    selected.push(pairs[Math.floor((i * pairs.length) / count)]);
+    selected.push(items[(Math.floor((i * items.length) / count) + offset) % items.length]);
   }
   return selected;
 }
 
-/** Jedna próba bramki czytelności: faza słońca + para komórek do oznaczenia. */
+/**
+ * Jedna próba bramki czytelności: faza słońca + JEDNA zaznaczona komórka + prawda o niej.
+ *
+ * **Jedna komórka, nie para — i na tym polega cała zmiana Fazy 2B (spec Fazy 2A, §7.3.3).**
+ * Bramka 2A pokazywała dwie SĄSIADUJĄCE komórki i pytała, która z nich jest oświetlona. To
+ * pytanie LOKALNE: sprowadza się do „wskaż jaśniejszą" i jest rozwiązywalne przy DOWOLNEJ
+ * monotonicznej palecie, więc przechodziło także przy cieniowaniu, które Faza 0 zmierzyła
+ * jako nieczytelne. Pojedyncza komórka odbiera tę strategię: bez drugiej komórki w kadrze
+ * nie ma czego z czym porównać, więc jedyną informacją, która na to pytanie odpowiada, jest
+ * POŁOŻENIE GRANICY na kuli — a to jest własność globalna, dokładnie ta, o której mówi D1.
+ */
 export interface GateTrial {
   /** Indeks fazy słońca w tablicy `sunDirs` przekazanej do `buildGateTrials` (0-bazowany). */
   readonly phaseIndex: number;
   readonly sunDir: Vec3;
-  readonly pair: TerminatorPair;
+  readonly cellId: number;
+  /** Prawda z symulacji: `light[cellId] > 0`. Nie z pasma renderu — patrz komentarz modułu. */
+  readonly lit: boolean;
 }
 
 /**
- * Buduje pełny plan prób bramki czytelności: dla KAŻDEGO `sunDir` w `sunDirs`, liczy
- * `lightField` PRAWDZIWEJ planety, znajduje pary graniczne (`findTerminatorPairs`) i wybiera
- * z nich `pairsPerPhase` rozłożonych równomiernie (`selectSpreadPairs`). `apps/client/src/
- * gate.ts` woła to raz z trzema fazami słońca (§8.1: "trzy różne fazy słońca") i
- * `pairsPerPhase = 5`, dając piętnaście prób — ale ta funkcja sama nie wie nic o liczbie
- * "trzy" ani "pięć": to parametry protokołu tej KONKRETNEJ bramki, nie własność biblioteki.
+ * Ziarno przeplotu jasna/ciemna. Stałe, więc plan jest odtwarzalny; NIE zależy od `offset`,
+ * więc wszystkie plany biorą z każdej fazy tyle samo komórek jasnych i tyle samo ciemnych —
+ * a od tego zależy dowód rozłączności planów (patrz `selectSpread`): przy TEJ SAMEJ liczbie
+ * pobrań krok wyboru jest ten sam, więc przesunięcia 0/1/2 nie mogą trafić w te same indeksy.
  */
-export function buildGateTrials(planet: Planet, sunDirs: readonly Vec3[], pairsPerPhase: number): GateTrial[] {
+const LIT_PATTERN_SEED = 0x48454c49; // "HELI"
+
+/**
+ * Maska „która próba dotyczy komórki oświetlonej": ZRÓWNOWAŻONA (`ceil(total/2)` jasnych) i
+ * PRZETASOWANA deterministycznie.
+ *
+ * **Zrównoważenie i nieprzewidywalność to dwa różne wymogi i oba są konieczne.**
+ * Zrównoważenie odbiera strategię „odpowiadaj zawsze OŚWIETLONA": bez niego plan złożony
+ * z samych komórek jasnych dawałby komplet trafień bez patrzenia na ekran. Ale pierwsza
+ * wersja tej funkcji realizowała je NAPRZEMIENNIE (`ordinal % 2 === 0`) — i wtedy cała
+ * sekwencja odpowiedzi jest odgadywalna z jednej reguły, więc znów daje się przejść bramkę
+ * bez patrzenia, tylko innym skrótem. Wada wyszła przy pierwszej własnej próbie w trybie
+ * kontrolnym: znając regułę, znało się komplet odpowiedzi.
+ *
+ * Tasowanie jest Fisher–Yates na `Rng` (xoshiro128**, `@heliopolis/sim`) — tym samym
+ * generatorze, którego używa symulacja, więc plan jest identyczny na każdej platformie i w
+ * każdej sesji człowieka.
+ */
+function buildLitMask(total: number): boolean[] {
+  const litCount = Math.ceil(total / 2);
+  const mask = Array.from({ length: total }, (_, i) => i < litCount);
+  const rng = new Rng(LIT_PATTERN_SEED);
+  for (let i = total - 1; i > 0; i--) {
+    const j = rng.nextInt(i + 1);
+    const tmp = mask[i];
+    mask[i] = mask[j];
+    mask[j] = tmp;
+  }
+  return mask;
+}
+
+/**
+ * Buduje plan prób: dla KAŻDEGO `sunDir` wybiera `cellsPerPhase` komórek przylegających do
+ * granicy, rozłożonych równomiernie po pierścieniu, o stronach zadanych przez `buildLitMask`.
+ *
+ * Przy `cellsPerPhase = 5` i trzech fazach plan ma 8 komórek jasnych i 7 ciemnych, więc
+ * najlepsza stała odpowiedź trafia 8/15, a komplet piętnastu trafień przez zgadywanie ma
+ * prawdopodobieństwo 0,5¹⁵ ≈ 0,00003.
+ *
+ * `offset` przekazywany jest do `selectSpread` i służy WYŁĄCZNIE do budowy rozłącznych planów
+ * dla trybów nieocenianych — patrz `selectSpread`.
+ */
+export function buildGateTrials(
+  planet: Planet,
+  sunDirs: readonly Vec3[],
+  cellsPerPhase: number,
+  offset = 0,
+): GateTrial[] {
+  const litMask = buildLitMask(sunDirs.length * cellsPerPhase);
   const trials: GateTrial[] = [];
   for (let phaseIndex = 0; phaseIndex < sunDirs.length; phaseIndex++) {
     const sunDir = sunDirs[phaseIndex];
     const light = lightField(planet, sunDir);
-    const pairs = findTerminatorPairs(planet.cells, light);
-    const chosen = selectSpreadPairs(pairs, pairsPerPhase);
-    for (const pair of chosen) {
-      trials.push({ phaseIndex, sunDir, pair });
+    const { lit, dark } = findBoundaryCells(planet.cells, light);
+
+    // Ile z tej fazy ma być jasnych, a ile ciemnych — policzone Z GÓRY, bo `selectSpread`
+    // rozkłada równomiernie po CAŁEJ liście, więc nie da się go wołać po jednym elemencie.
+    let wantLitCount = 0;
+    for (let i = 0; i < cellsPerPhase; i++) {
+      if (litMask[phaseIndex * cellsPerPhase + i]) wantLitCount++;
+    }
+    const litPicks = wantLitCount > 0 ? selectSpread(lit, wantLitCount, offset) : [];
+    const darkPicks =
+      cellsPerPhase - wantLitCount > 0 ? selectSpread(dark, cellsPerPhase - wantLitCount, offset) : [];
+
+    let litCursor = 0;
+    let darkCursor = 0;
+    for (let i = 0; i < cellsPerPhase; i++) {
+      const wantsLit = litMask[phaseIndex * cellsPerPhase + i];
+      const cellId = wantsLit ? litPicks[litCursor++] : darkPicks[darkCursor++];
+      trials.push({ phaseIndex, sunDir, cellId, lit: light[cellId] > 0 });
     }
   }
   return trials;

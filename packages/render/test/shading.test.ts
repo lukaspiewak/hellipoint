@@ -10,7 +10,7 @@ import {
   type Palette,
   type Rgb,
 } from '../src/shading.js';
-import { findTerminatorPairs, selectSpreadPairs } from '../src/terminatorPairs.js';
+import { findTerminatorPairs, selectSpread } from '../src/terminatorPairs.js';
 
 // Ta sama planeta-fixture co `geometry.test.ts` (ten sam seed) — oba pliki testowe w tym
 // pakiecie mówią więc o TEJ SAMEJ "prawdziwej planecie", nie o dwóch różnych.
@@ -40,16 +40,20 @@ describe('lightBand', () => {
   it('1. jest monotoniczna i schodkowa: przy KAŻDYM progu dwie wartości różniące się o mniej niż 0,01 dają różne pasma', () => {
     for (let i = 0; i < LIGHT_BANDS.length; i++) {
       const t = LIGHT_BANDS[i];
-      const justBelow = t - 1e-6;
+      // Porównanie w `lightBand` jest ŚCISŁE (`light > próg`), więc skok leży TUŻ NAD progiem,
+      // nie NA nim — patrz uzasadnienie przy `lightBand` w `shading.ts`. Dla progu zerowego
+      // to jest cała istota zmiany Fazy 2B: `lightBand(0) === 0` znaczy „noc to dokładnie
+      // `light === 0`", czyli dokładnie to, co dla symulacji.
+      const justAbove = t + 1e-6;
 
       // Kontrola pozytywna na sam test: dowód, że para faktycznie różni się o mniej niż
       // 0,01 (i że różnica jest dodatnia, nie przypadkiem zerowa) — inaczej poniższe dwa
       // `expect` mogłyby sprawdzać coś dalekiego od progu, nie "nieciągłość NA progu".
-      expect(t - justBelow).toBeLessThan(0.01);
-      expect(t - justBelow).toBeGreaterThan(0);
+      expect(justAbove - t).toBeLessThan(0.01);
+      expect(justAbove - t).toBeGreaterThan(0);
 
-      expect(lightBand(justBelow)).toBe(i);
-      expect(lightBand(t)).toBe(i + 1);
+      expect(lightBand(t)).toBe(i);
+      expect(lightBand(justAbove)).toBe(i + 1);
     }
 
     // Monotoniczność globalna: pasmo nigdy nie maleje wraz ze wzrostem light, na gęstej
@@ -66,9 +70,13 @@ describe('lightBand', () => {
 
   it('2. jest STAŁA w obrębie jednego pasma mimo różnych wejść — asercja, która obala mutację "brak progowania" (lightBand zwraca light bez zmian)', () => {
     const edges = [0, ...LIGHT_BANDS, 1];
+    let sampledBands = 0;
     for (let band = 0; band < edges.length - 1; band++) {
       const lo = edges[band];
       const hi = edges[band + 1];
+      // Pasmo 0 jest po obniżeniu pierwszego progu do zera JEDNOPUNKTOWE (`light === 0`), więc
+      // nie da się z niego wziąć trzech różnych wejść. Sprawdzane jest osobno, niżej.
+      if (!(hi > lo)) continue;
       const quarter = lo + (hi - lo) / 4;
       const mid = lo + (hi - lo) / 2;
       const threeQuarters = lo + (3 * (hi - lo)) / 4;
@@ -76,15 +84,25 @@ describe('lightBand', () => {
       // Kontrola pozytywna: trzy wejścia RÓŻNE między sobą — gdyby `lightBand` było
       // identycznością, poniższe trzy `toBe(band)` nie mogłyby przejść (band to mała liczba
       // całkowita 0/1/2…, a quarter/mid/threeQuarters to różne ułamki). Dokładnie o to pytał
-      // brief: "czy jakikolwiek test przeszedłby, gdyby lightBand po prostu zwracało light
-      // bez zmian?" — ten ma nie przejść.
+      // brief Fazy 2A: "czy jakikolwiek test przeszedłby, gdyby lightBand po prostu zwracało
+      // light bez zmian?" — ten ma nie przejść.
       expect(quarter).not.toBe(mid);
       expect(mid).not.toBe(threeQuarters);
 
       expect(lightBand(quarter)).toBe(band);
       expect(lightBand(mid)).toBe(band);
       expect(lightBand(threeQuarters)).toBe(band);
+      sampledBands++;
     }
+    // Kontrola pozytywna na sam test: pętla faktycznie coś sprawdziła. Bez tego zdegenerowana
+    // tablica progów (np. same zera) dałaby zero iteracji i zielony test o niczym. Liczba jest
+    // zarazem kotwicą na „pierwszy próg wynosi zero": pasm o DODATNIEJ szerokości jest tyle,
+    // ile progów, dokładnie wtedy, gdy pasmo 0 jest jednopunktowe.
+    expect(sampledBands).toBe(LIGHT_BANDS.length);
+
+    // Pasmo 0 — jednopunktowe, i to jest jego cała treść: TYLKO dokładne zero.
+    expect(lightBand(0)).toBe(0);
+    expect(lightBand(Number.MIN_VALUE)).toBe(1);
   });
 
   it('3. dokładne zero daje pasmo najciemniejsze (0), dokładna jedynka pasmo najjaśniejsze (LIGHT_BANDS.length)', () => {
@@ -260,27 +278,31 @@ describe('writeCellColors', () => {
       expect(counts[i]).toBeLessThan(planet.cells.length / 2);
     }
 
-    // Przypięte przy `seed: 20260915`, `frequency` domyślne (12): 753 / 256 / 433. Zmierzone
-    // i uzasadnione w komentarzu przy `DEFAULT_PALETTE` w shading.ts — ten test jest
-    // kanarkiem: gdyby ktoś (Faza 4) przesunął progi tak, że pasmo dzienne przejęłoby
-    // większość komórek, powyższa pętla by to złapała; ten dokładny odcisk łapie DOWOLNĄ
+    // Przypięte przy `seed: 20260915`, `frequency` domyślne (12): 745 / 264 / 433 — zmierzone
+    // PO obniżeniu `LIGHT_BANDS[0]` do zera (Faza 2B, Zadanie 1, Krok 3; wcześniej było
+    // 753 / 256 / 433). Osiem komórek przeszło z nocy do zmierzchu: dokładnie te, które w tej
+    // fazie wpadały w szczelinę `0 < light < 0,05`. Ten test jest kanarkiem: łapie DOWOLNĄ
     // zmianę progów, nawet drobną.
-    expect(counts).toEqual([753, 256, 433]);
+    expect(counts).toEqual([745, 264, 433]);
   });
 
-  it('13. [dodatek] LIGHT_BANDS: niepusta, ściśle rosnąca, każdy próg ściśle wewnątrz (0,1)', () => {
+  it('13. [dodatek] LIGHT_BANDS: niepusta, ściśle rosnąca, progi w [0,1); pierwszy DOKŁADNIE zero', () => {
     // Bez tego: LIGHT_BANDS = [] jest technicznie zgodne z typem `readonly number[]` i —
-    // zmierzone w tabeli mutacji raportu — sprawia, że KAŻDY test powyżej w tym pliku
+    // zmierzone w tabeli mutacji raportu Fazy 2A — sprawia, że KAŻDY test powyżej w tym pliku
     // przechodzi (jedno pasmo, brak progu do złapania), mimo że cały sens zadania (granica)
     // by zniknął.
     expect(LIGHT_BANDS.length).toBeGreaterThan(0);
     for (const t of LIGHT_BANDS) {
-      expect(t).toBeGreaterThan(0);
+      expect(t).toBeGreaterThanOrEqual(0);
       expect(t).toBeLessThan(1);
     }
     for (let i = 1; i < LIGHT_BANDS.length; i++) {
       expect(LIGHT_BANDS[i]).toBeGreaterThan(LIGHT_BANDS[i - 1]);
     }
+    // Pierwszy próg jest DECYZJĄ, nie strojeniem (patrz `shading.ts`): tylko przy zerze pasmo
+    // nocy znaczy to samo, co noc symulacji. Test #18 mierzy skutek; ten pilnuje przyczyny,
+    // żeby podniesienie progu oblało GŁOŚNO i w miejscu, gdzie zapisana jest decyzja.
+    expect(LIGHT_BANDS[0]).toBe(0);
   });
 });
 
@@ -321,7 +343,7 @@ describe('writeCellColorsSmooth — tryb gładki na PRAWDZIWYCH parach terminato
 
     // Pary z `findTerminatorPairs` — DOKŁADNIE te, których używa harness bramki, a nie
     // osobno wymyślone na potrzeby tego testu.
-    const pairs = selectSpreadPairs(findTerminatorPairs(planet.cells, light), 5);
+    const pairs = selectSpread(findTerminatorPairs(planet.cells, light), 5);
     expect(pairs.length).toBe(5); // kontrola pozytywna: pętla niżej ma na czym pracować
 
     let checked = 0;
@@ -410,6 +432,7 @@ describe('writeCellColorsSmooth — tryb gładki na PRAWDZIWYCH parach terminato
     }
   });
 
+
   it('17. rzuca RangeError dla out/light o złej długości — ten sam wzorzec strażników co writeCellColors', () => {
     const out = new Float32Array(geo.positions.length);
     expect(() => writeCellColorsSmooth(geo, light, out, DEFAULT_PALETTE)).not.toThrow();
@@ -422,5 +445,56 @@ describe('writeCellColorsSmooth — tryb gładki na PRAWDZIWYCH parach terminato
     );
     expect(() => writeCellColorsSmooth(geo, light, out, [])).toThrow(RangeError);
     expect(() => writeCellColorsSmooth(geo, light, out, [DEFAULT_PALETTE[0]])).toThrow(RangeError);
+  });
+});
+
+describe('granica renderu kontra granica symulacji (Faza 2B, Zadanie 1, Krok 3)', () => {
+  it('18. [KROK 3 FAZY 2B] pasmo 0 renderu pokrywa się DOKŁADNIE z nocą symulacji — zero rozjazdu na 1442 komórkach × 12 fazach obrotu', () => {
+    // Powód istnienia tego testu, zmierzony w Fazie 2A: przy `LIGHT_BANDS[0] = 0,05` granica
+    // renderowana i granica symulowana rozjeżdżały się o 8 do 38 komórek w każdej fazie
+    // (średnio 30,8), zawsze o dokładnie jeden krok grafu. Spawn i spalanie są BINARNE, więc
+    // istniał jednokomórkowy pierścień, w którym gracz widzi noc, a jednostki się palą i
+    // pentagony nie spawnują. Przy progu zerowym obie granice pokrywają się z KONSTRUKCJI.
+    //
+    // Predykat symulacji jest tu wpisany DOSŁOWNIE (`light > 0` — ten sam, co w `spawning.ts`,
+    // `burning.ts` i `movement.ts`), nie wyprowadzony z `LIGHT_BANDS`. Gdyby oba brzegi
+    // porównania pochodziły ze stałej, którą test sprawdza, asercja poruszałaby się razem z nią
+    // i nie mogłaby oblać — kształt defektu, który ta gałąź już popełniła.
+    const PHASES = 12;
+    let totalDisagreements = 0;
+    let checkedCells = 0;
+    let litSomewhere = 0;
+    let darkSomewhere = 0;
+    for (let k = 0; k < PHASES; k++) {
+      const phaseLight = lightField(planet, sunDirection((k / PHASES) * 180, 180));
+      let disagreements = 0;
+      for (let i = 0; i < phaseLight.length; i++) {
+        const simulationSaysLit = phaseLight[i] > 0;
+        const renderSaysLit = lightBand(phaseLight[i]) >= 1;
+        if (simulationSaysLit !== renderSaysLit) disagreements++;
+        if (simulationSaysLit) litSomewhere++;
+        else darkSomewhere++;
+        checkedCells++;
+      }
+      expect(disagreements, `faza ${k}/${PHASES}`).toBe(0);
+      totalDisagreements += disagreements;
+    }
+    expect(checkedCells).toBe(planet.cells.length * PHASES);
+    expect(totalDisagreements).toBe(0);
+
+    // KONTROLA POZYTYWNA na sam pomiar. „Zero rozjazdu" nic nie znaczy, jeśli obie strony
+    // porównania są zawsze takie same z byle powodu (np. wszystkie komórki oświetlone, albo
+    // `lightBand` zdegenerowane do stałej). Dwa dowody, że przyrząd widzi obie odpowiedzi:
+    expect(litSomewhere).toBeGreaterThan(0);
+    expect(darkSomewhere).toBeGreaterThan(0);
+    // …i że TEN SAM licznik daje NIEZEROWY odczyt dla progu, który faktycznie rozjeżdża
+    // granice — czyli dla progu sprzed tej zmiany.
+    const bandWithOldThreshold = (l: number): number => (l >= 0.05 ? 1 : 0);
+    let oldDisagreements = 0;
+    const referenceLight = lightField(planet, sunDirection(0, 180));
+    for (let i = 0; i < referenceLight.length; i++) {
+      if (referenceLight[i] > 0 !== bandWithOldThreshold(referenceLight[i]) >= 1) oldDisagreements++;
+    }
+    expect(oldDisagreements).toBe(8); // zmierzone w Fazie 2A dla sunDirection(0, 180)
   });
 });

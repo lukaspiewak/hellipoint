@@ -1,28 +1,41 @@
 import { describe, expect, it } from 'vitest';
 import { Mesh, Vector3, type BufferAttribute, type Color, type Scene } from 'three';
-import { createPlanet, lightField, sunDirection, type Planet } from '@heliopolis/sim';
+import { createPlanet, lightField, sunDirection } from '@heliopolis/sim';
 import {
   createReadabilityGate,
   formatGateResultsMarkdown,
   markerPosition,
   type GateAnswerRecord,
+  type GateMode,
+  type GatePlans,
   type ReadabilityGate,
 } from '../src/readabilityGate.js';
-import { buildGateTrials, findTerminatorPairs, type GateTrial } from '../src/terminatorPairs.js';
+import { buildGateTrials, type GateTrial } from '../src/terminatorPairs.js';
 import { buildPlanetGeometry } from '../src/geometry.js';
+import { buildSmearedGeometry } from '../src/positiveControl.js';
 import { DEFAULT_PALETTE, lightBand, writeCellColors } from '../src/shading.js';
 import type { SceneRenderer } from '../src/scene.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
 
 const planet = createPlanet({ seed: 20260915 });
+const sharedGeo = buildPlanetGeometry(planet);
+const smearedGeo = buildSmearedGeometry(planet);
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 600;
+const CELLS_PER_PHASE = 5;
 
-function createFakeRenderer(): SceneRenderer & {
-  renderCalls: number;
-  disposeCalls: number;
-  lastScene: Scene | null;
-} {
+const gateSunDirs = [0, 1 / 3, 2 / 3].map((f) => sunDirection(f * 180, 180));
+
+/** Trzy rozłączne plany, dokładnie jak buduje je `apps/client/src/gate.ts`. */
+function realPlans(cellsPerPhase = CELLS_PER_PHASE): GatePlans {
+  return {
+    threshold: buildGateTrials(planet, gateSunDirs, cellsPerPhase, 0),
+    smooth: buildGateTrials(planet, gateSunDirs, cellsPerPhase, 1),
+    control: buildGateTrials(planet, gateSunDirs, cellsPerPhase, 2),
+  };
+}
+
+function createFakeRenderer(): SceneRenderer & { renderCalls: number; disposeCalls: number; lastScene: Scene | null } {
   const renderer = {
     renderCalls: 0,
     disposeCalls: 0,
@@ -41,449 +54,465 @@ function createFakeRenderer(): SceneRenderer & {
   return renderer;
 }
 
+function makeGate(plans: GatePlans = realPlans()): {
+  gate: ReadabilityGate;
+  renderer: ReturnType<typeof createFakeRenderer>;
+} {
+  const renderer = createFakeRenderer();
+  const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), plans, () => renderer);
+  return { gate, renderer };
+}
+
 /**
- * Bufor kolorów PLANETY, wyjęty ze sceny, którą harness faktycznie przekazuje rendererowi.
- * Świadomie NIE przez nowe pole w `ReadabilityGate`: scena jest tym, co renderer dostaje do
- * narysowania, więc odczyt z niej sprawdza dokładnie to, co zobaczy człowiek — a nie to, co
- * harness deklaruje o sobie przez dodatkowe API zbudowane pod test.
+ * Siatki wyjęte ze SCENY, którą harness faktycznie przekazuje rendererowi — nie przez nowe
+ * pole w API zbudowane pod test. Scena jest tym, co renderer dostaje do narysowania, więc
+ * odczyt z niej sprawdza dokładnie to, co zobaczy człowiek.
  */
-function planetColorBuffer(gate: ReadabilityGate, renderer: { lastScene: Scene | null }): Float32Array {
+function meshesOf(gate: ReadabilityGate, renderer: { lastScene: Scene | null }): { flat: Mesh; smeared: Mesh } {
   gate.renderFrame();
   const scene = renderer.lastScene;
   if (!scene) throw new Error('test: renderer nie dostał sceny');
-  // `Sprite` NIE jest `Mesh` w Three.js (oba dziedziczą po Object3D), więc to trafia w
-  // siatkę planety, nigdy w znacznik — sprawdzone asercją na długość bufora u wywołujących.
-  const mesh = scene.children.find((o): o is Mesh => o instanceof Mesh);
-  if (!mesh) throw new Error('test: brak siatki planety w scenie');
+  const meshes = scene.children.filter((o): o is Mesh => o instanceof Mesh);
+  const flat = meshes.find((m) => m.geometry.getAttribute('position').count === sharedGeo.positions.length / 3);
+  const smeared = meshes.find((m) => m.geometry.getAttribute('position').count === smearedGeo.vertexCount);
+  if (!flat || !smeared) throw new Error('test: brak którejś z dwóch siatek w scenie');
+  return { flat, smeared };
+}
+
+function colorsOf(mesh: Mesh): Float32Array {
   return (mesh.geometry.getAttribute('color') as BufferAttribute).array as Float32Array;
 }
 
-/** Kolor (rgb 0..1) pierwszego wierzchołka komórki `cellId` w buforze kolorów planety. */
-function cellColor(colors: Float32Array, cellId: number): [number, number, number] {
-  const geo = sharedGeo;
-  const o = geo.cellVertexStart[cellId] * 3;
+function cellColorFlat(colors: Float32Array, cellId: number): [number, number, number] {
+  const o = sharedGeo.cellVertexStart[cellId] * 3;
   return [colors[o], colors[o + 1], colors[o + 2]];
 }
 
-function colorDistance(a: readonly number[], b: readonly number[]): number {
+function cellColorSmeared(colors: Float32Array, cellId: number): [number, number, number] {
+  return [colors[cellId * 3], colors[cellId * 3 + 1], colors[cellId * 3 + 2]];
+}
+
+function distance(a: readonly number[], b: readonly number[]): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
-const sharedGeo = buildPlanetGeometry(planet);
-
+const NIGHT = DEFAULT_PALETTE[0].map(Math.fround);
 const isGreenDominant = (c: Color): boolean => c.g > c.r && c.g > c.b;
 const isRedDominant = (c: Color): boolean => c.r > c.g && c.r > c.b;
+const isNeutral = (c: Color): boolean => c.r === c.g && c.g === c.b;
 
-/** Trzy fazy słońca ewidentnie różne, i para pełnego planu (3×5=15), tak jak wywoła je apps/client. */
-function realTrials(pairsPerPhase = 5): GateTrial[] {
-  const sunDirs = [sunDirection(0, 180), sunDirection(60, 180), sunDirection(120, 180)];
-  return buildGateTrials(planet, sunDirs, pairsPerPhase);
+/** Przechodzi cały plan aktywnego trybu, odpowiadając wg `strategy`. Zwraca log tego trybu. */
+function runPlan(gate: ReadabilityGate, strategy: (trial: GateTrial) => boolean): readonly GateAnswerRecord[] {
+  const mode = gate.mode();
+  let guard = 0;
+  while (!gate.isFinished() && guard <= gate.totalTrials) {
+    const trial = gate.currentTrial();
+    if (!trial) break;
+    gate.answer(strategy(trial));
+    gate.advance();
+    guard++;
+  }
+  return gate.answersFor(mode);
 }
 
-/**
- * Piksel canvasu (CSS, jak `event.offsetX/Y`), w który trzeba kliknąć, żeby trafić w
- * `target` — rzutuje jego pozycję świata przez BIEŻĄCĄ kamerę. Wymaga świeżego
- * `matrixWorld` (ten sam wymóg co `Raycaster.setFromCamera` w `readabilityGate.ts` —
- * zweryfikowane empirycznie probe'ą przed napisaniem tego pliku).
- */
-function screenPointFor(gate: ReadabilityGate, target: Vector3): { x: number; y: number } {
-  gate.camera.object.updateMatrixWorld(true);
-  const ndc = target.clone().project(gate.camera.object);
-  return {
-    x: ((ndc.x + 1) / 2) * CANVAS_WIDTH,
-    y: ((1 - ndc.y) / 2) * CANVAS_HEIGHT,
-  };
-}
-
-function pixelDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-describe('createReadabilityGate — konstrukcja nie mutuje Planet', () => {
-  it('1. budowa harnessu (geometria + siatka + kamera + znaczniki) zostawia Planet bit w bit identyczny', () => {
+describe('createReadabilityGate — konstrukcja i walidacja planów', () => {
+  it('1. budowa harnessu zostawia Planet bit w bit identyczny', () => {
     const before = JSON.stringify(planet);
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      createFakeRenderer(),
-    );
+    const { gate } = makeGate();
     expect(JSON.stringify(planet)).toBe(before);
     gate.dispose();
   });
 
-  it('2. rzuca RangeError, gdy plan prób jest pusty', () => {
+  it('2. rzuca RangeError, gdy którykolwiek plan jest pusty', () => {
+    const plans = realPlans();
+    for (const mode of ['threshold', 'smooth', 'control'] as const) {
+      expect(() =>
+        createReadabilityGate(planet, createFakeCanvas(), { ...plans, [mode]: [] }, () => createFakeRenderer()),
+      ).toThrow(RangeError);
+    }
+    // Kontrola pozytywna: komplet niepustych planów NIE rzuca.
+    const { gate } = makeGate(plans);
+    gate.dispose();
+  });
+
+  it('3. rzuca RangeError, gdy plany mają różne długości — "piętnaście prób" musi znaczyć jedno', () => {
+    const plans = realPlans();
     expect(() =>
-      createReadabilityGate(planet, createFakeCanvas(), [], () => createFakeRenderer()),
+      createReadabilityGate(planet, createFakeCanvas(), { ...plans, control: plans.control.slice(0, 14) }, () =>
+        createFakeRenderer(),
+      ),
     ).toThrow(RangeError);
+  });
+
+  it('4. [WŁASNOŚĆ KRYTYCZNA DLA KONTROLI] rzuca RangeError, gdy dwa plany dzielą komórkę w tej samej fazie', () => {
+    // Plan kontrolny na komórce już odsłoniętej w planie ocenianym mierzyłby PAMIĘĆ
+    // człowieka, nie czytelność renderu — czyli kontrola przestałaby móc oblać dokładnie
+    // tam, gdzie cała jej wartość polega na tym, że może.
+    const plans = realPlans();
+    expect(() =>
+      createReadabilityGate(planet, createFakeCanvas(), { ...plans, control: plans.threshold }, () =>
+        createFakeRenderer(),
+      ),
+    ).toThrow(RangeError);
+
+    // Kontrola pozytywna: plany z `buildGateTrials` o trzech różnych offsetach NIE rzucają —
+    // więc powyższy rzut jest o rozłączność, nie o cokolwiek innego w walidacji.
+    const { gate } = makeGate(plans);
+    expect(gate.totalTrials).toBe(15);
+    gate.dispose();
   });
 });
 
 describe('markerPosition — funkcja czysta', () => {
-  it('3. wynik leży wzdłuż normalnej komórki, w niewielkiej dodatniej odległości od jej środka', () => {
+  it('5. wynik leży wzdłuż normalnej komórki, w niewielkiej dodatniej odległości od jej środka', () => {
     for (const cellId of [0, 733, planet.cells.length - 1]) {
       const cell = planet.cells[cellId];
       const pos = markerPosition(planet, cellId);
       const delta = new Vector3(pos.x - cell.center.x, pos.y - cell.center.y, pos.z - cell.center.z);
-      const dist = delta.length();
-
-      expect(dist).toBeGreaterThan(0);
-      expect(dist).toBeLessThan(planet.radius * 0.1); // dużo mniej niż promień — "tuż nad", nie "gdzieś w kosmosie"
-
+      expect(delta.length()).toBeGreaterThan(0);
+      expect(delta.length()).toBeLessThan(planet.radius * 0.05);
       const normal = new Vector3(cell.normal.x, cell.normal.y, cell.normal.z);
-      const cosAngle = delta.clone().normalize().dot(normal);
-      expect(cosAngle).toBeGreaterThan(0.999); // równoległe do normalnej, nie w bok
+      expect(delta.clone().normalize().dot(normal)).toBeGreaterThan(0.999);
     }
   });
 });
 
-describe('createReadabilityGate — stan neutralny PRZED odsłonięciem (żaden marker nie zdradza odpowiedzi)', () => {
-  it('4. oba znaczniki startują z DOKŁADNIE tą samą barwą materiału', () => {
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      createFakeRenderer(),
-    );
-    expect(gate.markerLit.material.color.equals(gate.markerDark.material.color)).toBe(true);
+describe('createReadabilityGate — znacznik nie zdradza odpowiedzi', () => {
+  it('6. PRZED odpowiedzią znacznik ma tę samą, neutralną barwę i ten sam rozmiar w KAŻDEJ z 15 prób — także tych o komórkach ciemnych', () => {
+    // Przy JEDNYM znaczniku (zamiast pary z Fazy 2A) każda jego własność zależna od tego, co
+    // jest pod nim, byłaby wprost odpowiedzią na zadane pytanie.
+    const { gate } = makeGate();
+    let litTrials = 0;
+    let darkTrials = 0;
+    const scales = new Set<number>();
+    for (let i = 0; i < gate.totalTrials; i++) {
+      const trial = gate.currentTrial() as GateTrial;
+      expect(isNeutral(gate.marker.material.color), `próba ${i + 1}`).toBe(true);
+      expect(isGreenDominant(gate.marker.material.color)).toBe(false);
+      expect(isRedDominant(gate.marker.material.color)).toBe(false);
+      scales.add(gate.marker.scale.x);
+      if (trial.lit) litTrials++;
+      else darkTrials++;
+      gate.answer(true);
+      gate.advance();
+    }
+    // Kontrola pozytywna na sam test: obie klasy prób FAKTYCZNIE wystąpiły — inaczej
+    // „neutralny w każdej próbie" byłoby prawdą trywialnie, dla planu z jedną stroną granicy.
+    expect(litTrials).toBeGreaterThan(0);
+    expect(darkTrials).toBeGreaterThan(0);
+    expect(scales.size).toBe(1); // jeden rozmiar dla wszystkich prób
+    expect([...scales][0]).toBeGreaterThan(0);
     gate.dispose();
   });
 
-  it('5. oba znaczniki dzielą DOKŁADNIE ten sam obiekt tekstury (ta sama referencja `.map`)', () => {
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      createFakeRenderer(),
-    );
-    expect(gate.markerLit.material.map).toBe(gate.markerDark.material.map);
-    gate.dispose();
-  });
-
-  it('6. oba znaczniki mają DOKŁADNIE ten sam rozmiar (scale)', () => {
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      createFakeRenderer(),
-    );
-    expect(gate.markerLit.scale.x).toBe(gate.markerDark.scale.x);
-    expect(gate.markerLit.scale.x).toBeGreaterThan(0);
-    gate.dispose();
-  });
-
-  it('7. pozycje znaczników po starcie odpowiadają markerPosition() dla pary PIERWSZEJ próby', () => {
-    const trials = realTrials();
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () =>
-      createFakeRenderer(),
-    );
-    const expectedLit = markerPosition(planet, trials[0].pair.litCellId);
-    const expectedDark = markerPosition(planet, trials[0].pair.darkCellId);
-    expect(gate.markerLit.position.x).toBeCloseTo(expectedLit.x, 6);
-    expect(gate.markerLit.position.y).toBeCloseTo(expectedLit.y, 6);
-    expect(gate.markerLit.position.z).toBeCloseTo(expectedLit.z, 6);
-    expect(gate.markerDark.position.x).toBeCloseTo(expectedDark.x, 6);
-    gate.dispose();
-  });
-});
-
-describe('createReadabilityGate — handleClick: scoring i odsłonięcie', () => {
-  it('8. klik trafiający we znacznik NAD faktycznie oświetloną komórką -> correct:true, isRevealed() staje się true', () => {
-    const trials = realTrials();
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () =>
-      createFakeRenderer(),
-    );
-    expect(gate.isRevealed()).toBe(false);
-
-    const p = screenPointFor(gate, gate.markerLit.position);
-    const record = gate.handleClick(p.x, p.y);
-
-    expect(record).not.toBeNull();
-    expect((record as GateAnswerRecord).correct).toBe(true);
-    expect((record as GateAnswerRecord).clickedCellId).toBe(trials[0].pair.litCellId);
-    expect(gate.isRevealed()).toBe(true);
-    gate.dispose();
-  });
-
-  it('9. klik trafiający we znacznik NAD faktycznie ciemną komórką -> correct:false, clickedCellId to darkCellId', () => {
-    const trials = realTrials();
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () =>
-      createFakeRenderer(),
-    );
-    const p = screenPointFor(gate, gate.markerDark.position);
-    const record = gate.handleClick(p.x, p.y);
-
-    expect(record).not.toBeNull();
-    expect((record as GateAnswerRecord).correct).toBe(false);
-    expect((record as GateAnswerRecord).clickedCellId).toBe(trials[0].pair.darkCellId);
-    gate.dispose();
-  });
-
-  it('10. odsłonięcie zmienia barwy znaczników (przestają być identyczne) — a PRZED kliknięciem były identyczne (test 4)', () => {
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      createFakeRenderer(),
-    );
-    const p = screenPointFor(gate, gate.markerLit.position);
-    gate.handleClick(p.x, p.y);
-    expect(gate.markerLit.material.color.equals(gate.markerDark.material.color)).toBe(false);
-    gate.dispose();
-  });
-
-  it('11. klik OBOK obu znaczników (daleki róg ekranu) zwraca null i NIE zapisuje odpowiedzi', () => {
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      createFakeRenderer(),
-    );
-    // focusOn wyśrodkowuje parę na ekranie (patrz setupTrial) — róg canvasu powinien więc
-    // leżeć daleko od obu. Nie ZAKŁADAMY tego: liczymy oba rzuty i SPRAWDZAMY (kontrola
-    // pozytywna na sam test), że wybrany róg jest naprawdę odległy o >200px od każdego,
-    // zanim wyciągniemy wniosek z braku trafienia.
-    const litPoint = screenPointFor(gate, gate.markerLit.position);
-    const darkPoint = screenPointFor(gate, gate.markerDark.position);
-    const corner = { x: 2, y: 2 };
-    expect(pixelDistance(corner, litPoint)).toBeGreaterThan(200);
-    expect(pixelDistance(corner, darkPoint)).toBeGreaterThan(200);
-
-    const record = gate.handleClick(corner.x, corner.y);
-    expect(record).toBeNull();
-    expect(gate.answers().length).toBe(0);
-    expect(gate.isRevealed()).toBe(false);
-    gate.dispose();
-  });
-
-  it('12. drugi klik na TĘ SAMĄ, już odsłoniętą próbę zwraca null i NIE dopisuje drugiej odpowiedzi', () => {
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      createFakeRenderer(),
-    );
-    const p = screenPointFor(gate, gate.markerLit.position);
-    gate.handleClick(p.x, p.y);
-    expect(gate.answers().length).toBe(1);
-
-    const second = gate.handleClick(p.x, p.y);
-    expect(second).toBeNull();
-    expect(gate.answers().length).toBe(1);
-    gate.dispose();
-  });
-
-  it('13. [TRYB PORÓWNAWCZY] w trybie "smooth" klik NIE zapisuje odpowiedzi, nawet trafiając idealnie we znacznik', () => {
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      createFakeRenderer(),
-    );
-    gate.setMode('smooth');
-    expect(gate.mode()).toBe('smooth');
-
-    const p = screenPointFor(gate, gate.markerLit.position);
-    const record = gate.handleClick(p.x, p.y);
-
-    expect(record).toBeNull();
-    expect(gate.answers().length).toBe(0);
-    expect(gate.isRevealed()).toBe(false);
-    gate.dispose();
-  });
-
-  it('14. setMode nie rusza pozycji znaczników ani stanu odsłonięcia — tylko przemalowuje planetę', () => {
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      createFakeRenderer(),
-    );
-    const before = gate.markerLit.position.clone();
-    gate.setMode('smooth');
-    gate.setMode('threshold');
-    expect(gate.markerLit.position.equals(before)).toBe(true);
-    expect(gate.isRevealed()).toBe(false);
+  it('7. znacznik stoi na komórce BIEŻĄCEJ próby aktywnego planu, a po wyczerpaniu planu znika', () => {
+    const plans = realPlans();
+    const { gate } = makeGate(plans);
+    for (let i = 0; i < gate.totalTrials; i++) {
+      const expected = markerPosition(planet, plans.threshold[i].cellId);
+      expect(gate.marker.visible).toBe(true);
+      expect(gate.marker.position.x).toBeCloseTo(expected.x, 6);
+      expect(gate.marker.position.y).toBeCloseTo(expected.y, 6);
+      expect(gate.marker.position.z).toBeCloseTo(expected.z, 6);
+      gate.answer(true);
+      gate.advance();
+    }
+    expect(gate.isFinished()).toBe(true);
+    expect(gate.marker.visible).toBe(false); // nie zostaje na ostatniej komórce z odsłoniętą prawdą
     gate.dispose();
   });
 });
 
-describe('createReadabilityGate — advance()', () => {
-  it('15. advance() PRZED odsłonięciem nie robi nic i zwraca false', () => {
-    const trials = realTrials();
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () =>
-      createFakeRenderer(),
-    );
+describe('createReadabilityGate — answer(): scoring i odsłonięcie', () => {
+  it('8. odpowiedź zgodna z prawdą symulacji daje correct:true, niezgodna false — obie gałęzie', () => {
+    const plans = realPlans();
+    for (const truthful of [true, false]) {
+      const { gate } = makeGate(plans);
+      const trial = gate.currentTrial() as GateTrial;
+      const record = gate.answer(truthful ? trial.lit : !trial.lit) as GateAnswerRecord;
+      expect(record).not.toBeNull();
+      expect(record.correct).toBe(truthful);
+      expect(record.cellId).toBe(trial.cellId);
+      expect(record.actuallyLit).toBe(trial.lit);
+      expect(record.answeredLit).toBe(truthful ? trial.lit : !trial.lit);
+      expect(record.mode).toBe('threshold');
+      expect(gate.isRevealed()).toBe(true);
+      gate.dispose();
+    }
+  });
+
+  it('9. odsłonięcie pokazuje PRAWDĘ, nie informację zwrotną: zielony ⟺ komórka faktycznie oświetlona, niezależnie od odpowiedzi', () => {
+    // Zamiana obu kolorów odsłonięcia miejscami nie rusza `correct`, więc tabela nadal
+    // drukowałaby PASS, a człowiek uczyłby się MIĘDZY próbami odwrotnej zasady.
+    const plans = realPlans();
+    let litSeen = 0;
+    let darkSeen = 0;
+    for (const answeredLit of [true, false]) {
+      const { gate } = makeGate(plans);
+      for (let i = 0; i < gate.totalTrials; i++) {
+        const trial = gate.currentTrial() as GateTrial;
+        expect(isNeutral(gate.marker.material.color)).toBe(true);
+        gate.answer(answeredLit);
+        expect(isGreenDominant(gate.marker.material.color), `próba ${i + 1}, odpowiedź ${answeredLit}`).toBe(trial.lit);
+        expect(isRedDominant(gate.marker.material.color), `próba ${i + 1}, odpowiedź ${answeredLit}`).toBe(!trial.lit);
+        if (trial.lit) litSeen++;
+        else darkSeen++;
+        gate.advance();
+      }
+      gate.dispose();
+    }
+    expect(litSeen).toBeGreaterThan(0); // kontrola: obie barwy odsłonięcia faktycznie wystąpiły
+    expect(darkSeen).toBeGreaterThan(0);
+  });
+
+  it('10. druga odpowiedź na tę samą, już odsłoniętą próbę zwraca null i NIE dopisuje wpisu', () => {
+    const { gate } = makeGate();
+    expect(gate.answer(true)).not.toBeNull();
+    expect(gate.answers().length).toBe(1);
+    expect(gate.answer(false)).toBeNull();
+    expect(gate.answers().length).toBe(1);
+    gate.dispose();
+  });
+
+  it('11. advance() PRZED odsłonięciem nie robi nic; PO odsłonięciu przechodzi dalej i zeruje odsłonięcie', () => {
+    const { gate } = makeGate();
     expect(gate.advance()).toBe(false);
     expect(gate.currentTrialIndex()).toBe(0);
-    gate.dispose();
-  });
-
-  it('16. advance() PO odsłonięciu przechodzi do kolejnej próby: nowa para, reset barwy do neutralnej, isRevealed() wraca na false', () => {
-    const trials = realTrials();
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () =>
-      createFakeRenderer(),
-    );
-    const p = screenPointFor(gate, gate.markerLit.position);
-    gate.handleClick(p.x, p.y);
-
-    const advanced = gate.advance();
-    expect(advanced).toBe(true);
+    gate.answer(true);
+    expect(gate.advance()).toBe(true);
     expect(gate.currentTrialIndex()).toBe(1);
     expect(gate.isRevealed()).toBe(false);
-    expect(gate.markerLit.material.color.equals(gate.markerDark.material.color)).toBe(true);
-
-    const expectedLit = markerPosition(planet, trials[1].pair.litCellId);
-    expect(gate.markerLit.position.x).toBeCloseTo(expectedLit.x, 6);
     gate.dispose();
   });
 
-  it('17. [przebieg pełny] piętnaście trafień z rzędu (zawsze w znacznik "jasny") kończy plan: isFinished() true, 15 poprawnych odpowiedzi', () => {
-    const trials = realTrials();
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () =>
-      createFakeRenderer(),
-    );
-
-    let guard = 0;
-    while (!gate.isFinished() && guard < trials.length + 1) {
-      const p = screenPointFor(gate, gate.markerLit.position);
-      const record = gate.handleClick(p.x, p.y);
-      expect(record).not.toBeNull();
-      expect((record as GateAnswerRecord).correct).toBe(true);
-      gate.advance();
-      guard++;
+  it('12. [przebieg pełny] odpowiadanie zgodnie z prawdą daje komplet; advance() po ostatniej próbie zwraca false', () => {
+    const { gate } = makeGate();
+    let lastAdvance = true;
+    for (let i = 0; i < gate.totalTrials; i++) {
+      const trial = gate.currentTrial() as GateTrial;
+      gate.answer(trial.lit);
+      lastAdvance = gate.advance();
     }
-
+    expect(lastAdvance).toBe(false);
     expect(gate.isFinished()).toBe(true);
-    expect(gate.answers().length).toBe(trials.length);
+    expect(gate.answers().length).toBe(15);
     expect(gate.answers().every((a) => a.correct)).toBe(true);
     gate.dispose();
   });
 
-  it('18. advance() po OSTATNIEJ próbie zwraca false (koniec planu, nie ma dokąd iść)', () => {
-    const trials = realTrials(5); // 3 fazy x 5 = 15
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () =>
-      createFakeRenderer(),
-    );
-    for (let i = 0; i < trials.length; i++) {
-      const p = screenPointFor(gate, gate.markerLit.position);
-      gate.handleClick(p.x, p.y);
-      const result = gate.advance();
-      if (i < trials.length - 1) {
-        expect(result).toBe(true);
-      } else {
-        expect(result).toBe(false); // ostatnia próba: nie ma kolejnej
-      }
+  it('13. [PODŁOGA ZGADYWANIA] stała odpowiedź "oświetlona" daje DOKŁADNIE 8/15, stała "ciemna" 7/15 — komplet nie jest osiągalny bez patrzenia', () => {
+    // To jest liczba, na której stoi sens werdyktu „PASS wymaga kompletu piętnastu". Bramka
+    // Fazy 2A miała tę własność z innego powodu (wymuszony wybór dwóch alternatyw); tutaj
+    // niesie ją przeplot jasna/ciemna w `buildGateTrials` i trzeba jej pilnować osobno.
+    const alwaysLit = makeGate();
+    expect(runPlan(alwaysLit.gate, () => true).filter((a) => a.correct).length).toBe(8);
+    alwaysLit.gate.dispose();
+
+    const alwaysDark = makeGate();
+    expect(runPlan(alwaysDark.gate, () => false).filter((a) => a.correct).length).toBe(7);
+    alwaysDark.gate.dispose();
+  });
+});
+
+describe('createReadabilityGate — tryby: rozdział logów i przemalowanie', () => {
+  it('14. odpowiedzi z trybów NIEOCENIANYCH nie trafiają do answers() — werdykt nie może się nimi zanieczyścić', () => {
+    const { gate } = makeGate();
+    for (const mode of ['smooth', 'control'] as const) {
+      gate.setMode(mode);
+      gate.answer(true);
+      gate.advance();
+      expect(gate.answersFor(mode).length).toBe(1);
     }
-    expect(gate.isFinished()).toBe(true);
+    expect(gate.answers()).toEqual([]); // ani jednego wpisu w logu ocenianym
+    gate.setMode('threshold');
+    gate.answer(true);
+    expect(gate.answers().length).toBe(1);
+    expect(gate.answers()[0].mode).toBe('threshold');
+    gate.dispose();
+  });
+
+  it('15. każdy tryb ma WŁASNY kursor: przełączenie tam i z powrotem nie gubi postępu ocenianego planu', () => {
+    const { gate } = makeGate();
+    gate.answer(true);
+    gate.advance();
+    expect(gate.currentTrialIndex()).toBe(1);
+    gate.setMode('control');
+    expect(gate.currentTrialIndex()).toBe(0); // własny kursor planu kontrolnego
+    gate.setMode('threshold');
+    expect(gate.currentTrialIndex()).toBe(1);
+    expect(gate.answers().length).toBe(1);
+    gate.dispose();
+  });
+
+  it('16. tryb kontrolny pokazuje siatkę ze WSPÓŁDZIELONYMI wierzchołkami, pozostałe — siatkę gry; zawsze dokładnie jedna jest widoczna', () => {
+    const { gate, renderer } = makeGate();
+    const { flat, smeared } = meshesOf(gate, renderer);
+    const visibility: Record<string, [boolean, boolean]> = {};
+    for (const mode of ['threshold', 'smooth', 'control'] as const) {
+      gate.setMode(mode);
+      gate.renderFrame();
+      visibility[mode] = [flat.visible, smeared.visible];
+      expect(flat.visible !== smeared.visible, `tryb ${mode}`).toBe(true);
+    }
+    expect(visibility).toEqual({
+      threshold: [true, false],
+      smooth: [true, false],
+      control: [false, true],
+    });
+    gate.dispose();
+  });
+
+  it('17. KAŻDA próba maluje planetę światłem SWOJEJ fazy — bufor kolorów zgadza się co do bitu z policzonym niezależnie', () => {
+    // Usunięcie przemalowania zostawiało w Fazie 2A CAŁĄ gałąź zieloną, a człowiek oglądałby
+    // próby 6-15 w świetle fazy 1 — najdroższy możliwy tryb awarii tego pliku: on wyprodukował
+    // werdykt na D1.
+    const plans = realPlans();
+    const { gate, renderer } = makeGate(plans);
+    const colors = colorsOf(meshesOf(gate, renderer).flat);
+
+    const bufferForTrial = (i: number): Float32Array => {
+      const buf = new Float32Array(sharedGeo.positions.length);
+      writeCellColors(sharedGeo, lightField(planet, plans.threshold[i].sunDir), buf, DEFAULT_PALETTE);
+      return buf;
+    };
+    // KONTROLA POZYTYWNA na sam test: fazy dają RÓŻNE bufory, inaczej porównanie niżej
+    // przechodziłoby także dla harnessu, który maluje raz i nigdy nie odświeża.
+    expect(Array.from(bufferForTrial(0))).not.toEqual(Array.from(bufferForTrial(5)));
+    expect(Array.from(bufferForTrial(5))).not.toEqual(Array.from(bufferForTrial(10)));
+
+    let checked = 0;
+    for (let i = 0; i < plans.threshold.length; i++) {
+      expect(gate.currentTrialIndex()).toBe(i);
+      const expected = bufferForTrial(i);
+      let mismatches = 0;
+      for (let k = 0; k < expected.length; k++) if (colors[k] !== expected[k]) mismatches++;
+      expect(mismatches, `próba ${i + 1} (faza ${plans.threshold[i].phaseIndex + 1})`).toBe(0);
+      checked++;
+      gate.answer(true);
+      gate.advance();
+    }
+    expect(checked).toBe(plans.threshold.length);
     gate.dispose();
   });
 });
 
-describe('createReadabilityGate — przemalowanie planety na KAŻDĄ próbę (bramka nie może kłamać)', () => {
-  it('26. każda próba maluje planetę światłem SWOJEJ fazy — bufor kolorów zgadza się co do bitu z policzonym niezależnie', () => {
-    // Zmierzone przez przegląd całogałęziowy: usunięcie `applyPhaseColoring()` z `setupTrial`
-    // zostawiało CAŁĄ gałąź zieloną (485/485). Człowiek oglądałby wtedy próby 6-15 w świetle
-    // FAZY 1, harness dalej skorowałby każdy rzut monetą i wydrukował werdykt. To jest
-    // najdroższy z możliwych trybów awarii tego pliku: on wyprodukował werdykt na D1.
-    const trials = realTrials();
-    const renderer = createFakeRenderer();
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () => renderer);
+describe('createReadabilityGate — co WIDAĆ pod znacznikiem: tryb oceniany kontra kontrola pozytywna', () => {
+  it('18. [SEDNO BRAMKI] w trybie progowanym komórka oświetlona jest odległa o PEŁNY skok palety od barwy nocy, a ciemna leży na niej dokładnie', () => {
+    const plans = realPlans();
+    const { gate, renderer } = makeGate(plans);
+    const colors = colorsOf(meshesOf(gate, renderer).flat);
 
-    const colors = planetColorBuffer(gate, renderer);
-    expect(colors.length).toBe(sharedGeo.positions.length); // trafiliśmy w siatkę planety, nie w znacznik
-
-    const expected = new Float32Array(sharedGeo.positions.length);
-    // KONTROLA POZYTYWNA na sam test: fazy muszą dawać RÓŻNE bufory, inaczej porównanie
-    // niżej przechodziłoby także dla harnessu, który maluje raz i nigdy nie odświeża.
-    const bufferForPhase = (i: number): Float32Array => {
-      const buf = new Float32Array(sharedGeo.positions.length);
-      writeCellColors(sharedGeo, lightField(planet, trials[i].sunDir), buf, DEFAULT_PALETTE);
-      return buf;
-    };
-    expect(Array.from(bufferForPhase(0))).not.toEqual(Array.from(bufferForPhase(5)));
-    expect(Array.from(bufferForPhase(5))).not.toEqual(Array.from(bufferForPhase(10)));
-
-    let checked = 0;
-    for (let i = 0; i < trials.length; i++) {
-      expect(gate.currentTrialIndex()).toBe(i);
-      writeCellColors(sharedGeo, lightField(planet, trials[i].sunDir), expected, DEFAULT_PALETTE);
-
-      // Licznik rozbieżności zamiast toEqual na 30246 elementach: szybciej i daje LICZBĘ
-      // do raportu zamiast samego "różne".
-      let mismatches = 0;
-      for (let k = 0; k < expected.length; k++) {
-        if (colors[k] !== expected[k]) mismatches++;
+    let litChecked = 0;
+    let darkChecked = 0;
+    let minLitDistance = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < plans.threshold.length; i++) {
+      const trial = plans.threshold[i];
+      const d = distance(cellColorFlat(colors, trial.cellId), NIGHT);
+      if (trial.lit) {
+        expect(d, `próba ${i + 1}, komórka ${trial.cellId}`).toBeGreaterThan(0.5);
+        minLitDistance = Math.min(minLitDistance, d);
+        litChecked++;
+      } else {
+        expect(d, `próba ${i + 1}, komórka ${trial.cellId}`).toBe(0);
+        darkChecked++;
       }
-      expect(mismatches, `próba ${i + 1} (faza ${trials[i].phaseIndex + 1})`).toBe(0);
-      checked++;
-
-      const p = screenPointFor(gate, gate.markerLit.position);
-      gate.handleClick(p.x, p.y);
+      gate.answer(true);
       gate.advance();
-      // `colors` to TEN SAM obiekt Float32Array przez cały czas życia siatki (atrybut
-      // `color` nie jest podmieniany) — `planetColorBuffer` odczytany raz wystarcza.
     }
-    expect(checked).toBe(trials.length);
+    expect(litChecked).toBe(8);
+    expect(darkChecked).toBe(7);
+    console.log(`[BRAMKA] tryb progowany: najmniejsza odległość komórki oświetlonej od nocy = ${minLitDistance.toFixed(4)}`);
     gate.dispose();
   });
 
-  it('27. w KAŻDEJ z 15 prób obie oznaczone komórki są pomalowane RÓŻNYMI kolorami — człowiek ma co rozróżniać', () => {
-    // Własność, którą bramka MIERZY, sprowadzona do liczby: gdyby przemalowanie wypadło,
-    // dla prób 6-15 obie komórki pary wpadłyby w to samo pasmo i odległość barwna wyniosłaby
-    // DOKŁADNIE 0,0000 — dwa nierozróżnialne znaczniki, a harness i tak liczyłby punkty.
-    const trials = realTrials();
-    const renderer = createFakeRenderer();
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), trials, () => renderer);
-    const colors = planetColorBuffer(gate, renderer);
+  it('19. [KONTROLA POZYTYWNA] w trybie kontrolnym ta sama miara zapada się o rząd wielkości — barwa komórki przestaje odpowiadać na pytanie bramki', () => {
+    // To jest liczbowy odpowiednik tego, co człowiek ma zobaczyć: w trybie ocenianym barwa
+    // pod pierścieniem odpowiada na pytanie wprost; w kontroli nie niesie już tej informacji.
+    // Gdyby ta liczba była porównywalna z trybem progowanym, kontrola NIE odtwarzałaby awarii
+    // Fazy 0 i wynik bramki nic by nie znaczył.
+    const plans = realPlans();
+    const { gate, renderer } = makeGate(plans);
+    gate.setMode('control');
+    const colors = colorsOf(meshesOf(gate, renderer).smeared);
 
-    let checked = 0;
-    let minDistance = Number.POSITIVE_INFINITY;
-    for (let i = 0; i < trials.length; i++) {
-      const d = colorDistance(
-        cellColor(colors, trials[i].pair.litCellId),
-        cellColor(colors, trials[i].pair.darkCellId),
-      );
-      expect(d, `próba ${i + 1} (faza ${trials[i].phaseIndex + 1})`).toBeGreaterThan(0);
-      minDistance = Math.min(minDistance, d);
-      checked++;
-
-      const p = screenPointFor(gate, gate.markerLit.position);
-      gate.handleClick(p.x, p.y);
+    let maxLitDistance = 0;
+    let litChecked = 0;
+    for (let i = 0; i < plans.control.length; i++) {
+      const trial = plans.control[i];
+      const d = distance(cellColorSmeared(colors, trial.cellId), NIGHT);
+      if (trial.lit) {
+        maxLitDistance = Math.max(maxLitDistance, d);
+        litChecked++;
+      } else {
+        expect(d, `próba ${i + 1} (ciemna)`).toBe(0);
+      }
+      gate.answer(true);
       gate.advance();
     }
-    expect(checked).toBe(trials.length); // kontrola: pętla przeszła wszystkie próby, nie zero
-    // Przy DEFAULT_PALETTE granica noc↔(półmrok|dzień) to pełny skok palety — nie "trochę
-    // większe od zera". Przypięte, żeby drobne strojenie progów nie przeszło niezauważone.
-    expect(minDistance).toBeGreaterThan(0.5);
-    gate.dispose();
+    expect(litChecked).toBe(8);
+    console.log(`[KONTROLA] tryb kontrolny: NAJWIĘKSZA odległość komórki oświetlonej od nocy = ${maxLitDistance.toFixed(4)}`);
+    // Zmierzone: kontrola ≤ 0,16 wobec 0,90 w trybie ocenianym, czyli co najmniej 5× mniej.
+    expect(maxLitDistance).toBeLessThan(0.2);
+    expect(maxLitDistance).toBeGreaterThan(0); // i nie jest zerem — kontrola coś rysuje, nie jest czarna
   });
 
-  it('28. odsłonięcie pokazuje PRAWDĘ, nie informację zwrotną: zielony ZAWSZE nad oświetloną, czerwony ZAWSZE nad ciemną', () => {
-    // Test 10 sprawdzał wyłącznie, że barwy PRZESTAJĄ być identyczne — zmierzone: zamiana
-    // obu kolorów odsłonięcia miejscami zostawiała 485/485 zielone. Odwrócone odsłonięcie
-    // nie rusza `correct`, więc tabela wyniku nadal drukowałaby PASS, a człowiek uczyłby
-    // się MIĘDZY próbami odwrotnej zasady — dokładnie odwrotnie do §5.2 punktu 6.
-    for (const clickTarget of ['lit', 'dark'] as const) {
-      const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-        createFakeRenderer(),
-      );
-      // Przed odsłonięciem żaden znacznik nie jest ani zielony, ani czerwony (neutralna biel)
-      // — inaczej asercje niżej mogłyby być spełnione "od zawsze", bez związku z klikiem.
-      expect(isGreenDominant(gate.markerLit.material.color)).toBe(false);
-      expect(isRedDominant(gate.markerDark.material.color)).toBe(false);
+  it('20. w trybie kontrolnym kolor jest zapisywany PER WIERZCHOŁEK siatki współdzielonej, więc granica nie ma ani jednej nieciągłości', () => {
+    const { gate, renderer } = makeGate();
+    gate.setMode('control');
+    const { smeared } = meshesOf(gate, renderer);
+    const colors = colorsOf(smeared);
+    expect(colors.length).toBe(smearedGeo.vertexCount * 3);
 
-      const target = clickTarget === 'lit' ? gate.markerLit : gate.markerDark;
-      const p = screenPointFor(gate, target.position);
-      const record = gate.handleClick(p.x, p.y);
-      expect(record).not.toBeNull();
-      expect((record as GateAnswerRecord).correct).toBe(clickTarget === 'lit');
-
-      // Kluczowe: to NIE zależy od tego, co kliknięto — w obu przebiegach ten sam wynik.
-      expect(isGreenDominant(gate.markerLit.material.color), `klik w ${clickTarget}`).toBe(true);
-      expect(isRedDominant(gate.markerDark.material.color), `klik w ${clickTarget}`).toBe(true);
-      gate.dispose();
+    const trial = gate.currentTrial() as GateTrial;
+    const light = lightField(planet, trial.sunDir);
+    let maxNeighborStep = 0;
+    for (const cell of planet.cells) {
+      for (const n of cell.neighbors) {
+        if (n <= cell.id) continue;
+        maxNeighborStep = Math.max(
+          maxNeighborStep,
+          distance(cellColorSmeared(colors, cell.id), cellColorSmeared(colors, n)),
+        );
+      }
     }
+    // Kontrola pozytywna: w tym samym świetle render gry MA pełny skok na granicy — więc
+    // mała liczba wyżej jest własnością kontroli, nie tej fazy słońca.
+    const pair = planet.cells.find((c) => c.neighbors.some((n) => (light[n] > 0) !== (light[c.id] > 0)));
+    expect(pair).toBeDefined();
+    const flatBuf = new Float32Array(sharedGeo.positions.length);
+    writeCellColors(sharedGeo, light, flatBuf, DEFAULT_PALETTE);
+    const other = (pair as { id: number; neighbors: readonly number[] }).neighbors.find(
+      (n) => (light[n] > 0) !== (light[(pair as { id: number }).id] > 0),
+    ) as number;
+    const flatStep = distance(
+      cellColorFlat(flatBuf, (pair as { id: number }).id),
+      cellColorFlat(flatBuf, other),
+    );
+    expect(flatStep).toBeGreaterThan(0.5);
+    expect(maxNeighborStep).toBeLessThan(flatStep / 5);
+    gate.dispose();
   });
 });
 
 describe('createReadabilityGate — renderFrame/resize/dispose', () => {
-  it('19. renderFrame() faktycznie woła renderer.render()', () => {
-    const fakeRenderer = createFakeRenderer();
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      fakeRenderer,
-    );
+  it('21. renderFrame() faktycznie woła renderer.render()', () => {
+    const { gate, renderer } = makeGate();
+    const before = renderer.renderCalls;
     gate.renderFrame();
     gate.renderFrame();
-    expect(fakeRenderer.renderCalls).toBe(2);
+    expect(renderer.renderCalls).toBe(before + 2);
     gate.dispose();
   });
 
-  it('20. dispose() nie rzuca i faktycznie zwalnia renderer', () => {
-    const fakeRenderer = createFakeRenderer();
-    const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), realTrials(), () =>
-      fakeRenderer,
-    );
+  it('22. dispose() nie rzuca i zwalnia renderer', () => {
+    const { gate, renderer } = makeGate();
     expect(() => gate.dispose()).not.toThrow();
-    expect(fakeRenderer.disposeCalls).toBe(1);
+    expect(renderer.disposeCalls).toBe(1);
   });
 
-  it('21. resize() nie rzuca po zmianie wymiarów canvasu', () => {
+  it('23. resize() przelicza proporcje kamery', () => {
     const canvas = createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
-    const gate = createReadabilityGate(planet, canvas, realTrials(), () => createFakeRenderer());
+    const gate = createReadabilityGate(planet, canvas, realPlans(), () => createFakeRenderer());
     const mutable = canvas as unknown as { clientWidth: number; clientHeight: number };
     mutable.clientWidth = 1024;
     mutable.clientHeight = 768;
@@ -493,66 +522,88 @@ describe('createReadabilityGate — renderFrame/resize/dispose', () => {
   });
 });
 
-describe('findTerminatorPairs + buildGateTrials — integracja z prawdziwym planem trzech faz', () => {
-  it('22. dla trzech różnych faz słońca istnieje co najmniej 5 par granicznych KAŻDA (buildGateTrials nie rzuca)', () => {
-    // Nie testuje samej liczby (to już robi terminatorPairs.test.ts) — testuje, że KONKRETNIE
-    // te trzy fazy, których użyje apps/client/src/gate.ts, faktycznie mają dość materiału.
-    expect(() => realTrials(5)).not.toThrow();
-    const trials = realTrials(5);
-    expect(trials.length).toBe(15);
-  });
-});
-
 describe('formatGateResultsMarkdown', () => {
-  const make = (n: number, wrongAt: number[] = []): GateAnswerRecord[] =>
-    Array.from({ length: n }, (_, i) => ({
-      trialOrdinal: i,
-      phaseIndex: Math.floor(i / 5),
-      litCellId: i,
-      darkCellId: 1000 + i,
-      clickedCellId: wrongAt.includes(i) ? 1000 + i : i,
-      correct: !wrongAt.includes(i),
-    }));
+  const make = (n: number, wrongAt: number[] = [], mode: GateMode = 'threshold'): GateAnswerRecord[] =>
+    Array.from({ length: n }, (_, i) => {
+      const actuallyLit = i % 2 === 0;
+      const wrong = wrongAt.includes(i);
+      return {
+        mode,
+        trialOrdinal: i,
+        phaseIndex: Math.floor(i / 5),
+        cellId: 100 + i,
+        actuallyLit,
+        answeredLit: wrong ? !actuallyLit : actuallyLit,
+        correct: !wrong,
+      };
+    });
 
-  it('23. wszystkie poprawne z KOMPLETU prób -> zawiera "PASS" i poprawny licznik n/n', () => {
+  it('24. komplet poprawnych z KOMPLETU prób → "PASS" i licznik n/n', () => {
     const md = formatGateResultsMarkdown(make(15), 15);
     expect(md).toContain('PASS');
     expect(md).toContain('Wynik: 15/15');
   });
 
-  it('24. choć jedna błędna -> "FAIL (n/m)", NIE "PASS"', () => {
+  it('25. choć jedna błędna → "FAIL (n/m)", NIE "PASS"', () => {
     const md = formatGateResultsMarkdown(make(15, [7]), 15);
     expect(md).toContain('FAIL (14/15)');
     expect(md).not.toContain('PASS');
   });
 
-  it('25. tabela ma jeden wiersz danych na odpowiedź (plus nagłówek i separator)', () => {
-    const md = formatGateResultsMarkdown(make(3), 15);
-    const lines = md.split('\n').filter((l) => l.startsWith('|'));
-    expect(lines.length).toBe(2 + 3); // nagłówek + separator + 3 wiersze
+  it('26. tabela ma jeden wiersz danych na odpowiedź (plus nagłówek i separator)', () => {
+    const lines = formatGateResultsMarkdown(make(3), 15)
+      .split('\n')
+      .filter((l) => l.startsWith('|'));
+    expect(lines.length).toBe(2 + 3);
   });
 
-  it('29. log NIEPEŁNEGO przebiegu NIE może orzec PASS — trzy poprawne z piętnastu to nie 3/3', () => {
-    // Zmierzone: poprzednia wersja liczyła werdykt wyłącznie z długości `answers`, więc log
-    // trzech odpowiedzi drukował "Wynik: 3/3 — PASS". Ścieżka UI do tego nie dopuszczała, ale
-    // to jest publiczne API pakietu, a jego wyjście jest ARTEFAKTEM, który człowiek wkleja do
-    // dokumentu wyników (§7.2) — dokument dostawałby wtedy PASS za jedną piątą bramki.
+  it('27. log NIEPEŁNEGO przebiegu NIE może orzec PASS — trzy poprawne z piętnastu to nie 3/3', () => {
     const md = formatGateResultsMarkdown(make(3), 15);
     expect(md).not.toContain('PASS');
     expect(md).toContain('NIEKOMPLETNE');
     expect(md).toContain('3 z 15');
     expect(md).toContain('Wynik: 3/15'); // mianownik to LICZBA PRÓB, nie liczba odpowiedzi
-
-    // Nawet komplet trafień, ale niepełny — najbardziej zwodniczy przypadek: same "OK"
-    // w tabeli, a mimo to żadnego werdyktu.
-    expect(formatGateResultsMarkdown(make(14), 15)).not.toContain('PASS');
+    expect(formatGateResultsMarkdown(make(14), 15)).not.toContain('PASS'); // komplet trafień, ale niepełny
   });
 
-  it('30. rzuca RangeError dla bezsensownej liczby prób i dla większej liczby odpowiedzi niż prób', () => {
+  it('28. log trybu NIEOCENIANEGO jest wyraźnie oznaczony — tabela z kontroli nie może udawać werdyktu', () => {
+    const md = formatGateResultsMarkdown(make(15, [], 'control'), 15);
+    expect(md).toContain('Tryb: control');
+    expect(md).toContain('NIE JEST oceniany');
+    // Kontrola pozytywna: ta sama tabela w trybie ocenianym tej adnotacji NIE ma.
+    expect(formatGateResultsMarkdown(make(15), 15)).not.toContain('NIE JEST oceniany');
+  });
+
+  it('29. rzuca RangeError dla bezsensownej liczby prób, nadmiaru odpowiedzi i logu z pomieszanych trybów', () => {
     expect(() => formatGateResultsMarkdown(make(3), 0)).toThrow(RangeError);
     expect(() => formatGateResultsMarkdown(make(3), -1)).toThrow(RangeError);
     expect(() => formatGateResultsMarkdown(make(3), 2.5)).toThrow(RangeError);
     expect(() => formatGateResultsMarkdown(make(16), 15)).toThrow(RangeError);
+    expect(() => formatGateResultsMarkdown([...make(2), ...make(2, [], 'control')], 15)).toThrow(RangeError);
     expect(() => formatGateResultsMarkdown(make(15), 15)).not.toThrow();
+  });
+
+  it('30. tabela niesie PRAWDĘ i ODPOWIEDŹ osobno — z samego "OK/BŁĄD" nie da się odtworzyć, po której stronie granicy leżała komórka', () => {
+    const md = formatGateResultsMarkdown(make(2, [1]), 15);
+    expect(md).toContain('| 1 | 1 | 100 | oświetlona | oświetlona | OK |');
+    expect(md).toContain('| 2 | 1 | 101 | ciemna | oświetlona | BŁĄD |');
+  });
+});
+
+describe('spójność renderu z symulacją na komórkach, o które pyta bramka', () => {
+  it('31. dla KAŻDEJ komórki KAŻDEJ próby: pasmo 0 renderu ⟺ symulacja uznaje komórkę za nieoświetloną', () => {
+    // Bramka pokazuje człowiekowi kolor renderu, a scoruje prawdą symulacji. Gdyby te dwie
+    // granice się rozjechały (jak przy `LIGHT_BANDS[0] = 0,05` w Fazie 2A — 8 do 38 komórek
+    // różnicy), człowiek odpowiadałby poprawnie „co widzę" i dostawał BŁĄD.
+    const plans = realPlans();
+    let checked = 0;
+    for (const mode of ['threshold', 'smooth', 'control'] as const) {
+      for (const trial of plans[mode]) {
+        const light = lightField(planet, trial.sunDir);
+        expect(lightBand(light[trial.cellId]) === 0, `komórka ${trial.cellId}`).toBe(!trial.lit);
+        checked++;
+      }
+    }
+    expect(checked).toBe(45);
   });
 });

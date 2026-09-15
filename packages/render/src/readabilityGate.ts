@@ -1,12 +1,13 @@
 import {
+  BufferAttribute,
+  BufferGeometry,
   CanvasTexture,
-  Raycaster,
+  Mesh,
+  MeshBasicMaterial,
   Scene,
   Sprite,
   SpriteMaterial,
-  Vector2,
   WebGLRenderer,
-  type BufferAttribute,
   type Texture,
 } from 'three';
 import type { Planet, Vec3 } from '@heliopolis/sim';
@@ -16,107 +17,98 @@ import { createCamera, type OrbitCamera } from './camera.js';
 import { buildPlanetGeometry, type PlanetGeometry } from './geometry.js';
 import { createPlanetMesh, type PlanetMesh } from './planetMesh.js';
 import { writeCellColorsSmooth } from './shading.js';
+import { buildSmearedGeometry, writeSmearedColors, type SmearedGeometry } from './positiveControl.js';
 import type { GateTrial } from './terminatorPairs.js';
 
 /**
- * Harness bramki czytelności (Zadanie 5, Krok 4 briefu; kryterium dosłownie z §8.1 specu —
- * patrz `docs/superpowers/specs/2026-09-15-faza-2a-czytelnosc.md`). NIE jest kodem
- * rozgrywki — to instrument, który pozwala CZŁOWIEKOWI wydać werdykt "widzę granicę światła
- * na tej planecie, bez UI, bez najeżdżania, bez nakładki prawdy", i zapisuje ten werdykt.
- * Ja (wykonawca) nie mam prawa przejść tej bramki za człowieka — patrz `ReadabilityGate`
- * niżej: kontroler NIGDY nie ocenia czytelności sam, tylko RAPORTUJE, co faktycznie kliknął
- * człowiek, w porównaniu z `lightField` policzonym z prawdziwej symulacji.
+ * Harness bramki czytelności terminatora — **wersja Fazy 2B, przeprojektowana, bo poprzednia
+ * mierzyła inną zdolność, niż deklarowała** (spec Fazy 2A, §7.3.3).
  *
- * ## Jak znacznik NIE zdradza odpowiedzi
+ * NIE jest kodem rozgrywki. To instrument, który pozwala CZŁOWIEKOWI wydać werdykt na D1
+ * („gracz czyta granicę światła wzrokiem, bez UI"), i zapisuje ten werdykt. Kontroler nie
+ * ocenia czytelności sam — raportuje, co człowiek faktycznie odpowiedział, w porównaniu z
+ * `lightField` policzonym z prawdziwej symulacji.
  *
- * Każda próba pokazuje DWA znaczniki, po jednym na środku każdej z dwóch sąsiadujących
- * komórek z `GateTrial.pair` (`terminatorPairs.ts` gwarantuje, że jedna z nich jest
- * faktycznie oświetlona, druga faktycznie nie — z prawdziwego `lightField`). Oba znaczniki:
+ * ## Co się zmieniło i dlaczego
  *
- * - dzielą DOKŁADNIE tę samą geometrię (`Sprite`), tę samą teksturę (`createMarkerTexture`,
- *   jeden obiekt `CanvasTexture` re-użyty przez oba materiały) i ten sam rozmiar — różni je
- *   WYŁĄCZNIE pozycja w świecie. Żadnego rozróżnienia kolorem, kształtem ani podpisem,
- *   dopóki człowiek nie odpowie (`isRevealed() === false`).
- * - są billboardami (`Sprite`, nie siatka zorientowana wg normalnej komórki) — ZAWSZE
- *   zwrócone wprost do kamery, więc człowiek widzi ten sam, niezniekształcony obrazek
- *   niezależnie od kąta orbity K1. Gdyby zamiast tego znacznik leżał płasko na powierzchni
- *   (zorientowany wg normalnej komórki), oglądany z bliska pod kątem stycznym wyglądałby
- *   jak cienka kreska — a to, JAK BARDZO kreska, zależałoby od kąta patrzenia, nie od tego,
- *   co bada bramka.
- * - tekstura jest CELOWO dwutonowa: biały wypełniony okrąg z czarnym obrysem, na
- *   przezroczystym tle. To jest odpowiedź na ryzyko z briefu ("marker widoczny bardziej po
- *   ciemnej stronie mierzy sam siebie, nie terminator"): biały środek wybija się na
- *   ciemnym (nocnym) tle, czarny obrys wybija się na jasnym (dziennym/zmierzchowym) tle —
- *   więc SUMARYCZNA widoczność samego znacznika (czy człowiek w ogóle go zauważy i trafi
- *   weń kursorem) jest w przybliżeniu taka sama niezależnie od tego, pod którym pasmem
- *   światła stoi. Jeden jednolity kolor (np. sam biały, sam czarny, sam neutralny szary)
- *   NIE miałby tej własności: biały byłby bardziej kontrastowy na tle nocy niż na tle dnia
- *   i SAM przez to zdradzałby, po której stronie terminatora stoi, zanim człowiek w ogóle
- *   oceni kolor komórki pod nim.
- * - są uniesione nad powierzchnią komórki wzdłuż jej normalnej
- *   (`MARKER_SURFACE_OFFSET_FACTOR`), NIE leżą dokładnie na niej — patrz `markerPosition`
- *   niżej. Dwa powody, oba konkretne: (1) płaski billboard styczny do kuli w dowolnym
- *   punkcie poza swoim środkiem opada PONIŻEJ krzywizny sfery — bez uniesienia jego brzegi
- *   ucinałaby geometria terenu (z-fighting/klipping zależny od kąta patrzenia, czyli
- *   dokładnie ten sam rodzaj artefaktu zależnego-od-kąta, którego unika wybór Sprite'a); (2)
- *   znacznik nie styka się wtedy bezpośrednio z barwną powierzchnią komórki, więc nie ma
- *   nawet teoretycznego mostka do blendingu krawędzi między kolorem znacznika a kolorem
- *   terenu pod nim (choć wypełnienie jest w pełni nieprzezroczyste, więc to drugie ryzyko
- *   było już zamknięte samym wyborem materiału — uniesienie to dodatkowa, tania rezerwa).
- * - odpowiedź jest wymuszonym wyborem dwuwartościowym (2AFC — kliknij TEN, który Twoim
- *   zdaniem leży na oświetlonej komórce), nie samo-oceną "widzę/nie widzę": to zamienia
- *   subiektywne wrażenie w zero-jedynkowy, weryfikowalny wynik per próba, i chroni przed
- *   obciążeniem typu "chcę, żeby wyszło PASS" — piętnaście trafień z rzędu przez czysty zgad
- *   ma prawdopodobieństwo 0,5¹⁵ ≈ 0,00003.
+ * Bramka 2A pokazywała DWA znaczniki na dwóch SĄSIADUJĄCYCH komórkach i pytała, który leży
+ * na oświetlonej. Przeszła 15/15 i wyglądało to na dowód. Nie było: pytanie sprowadzało się
+ * do „wskaż jaśniejszą", co jest rozwiązywalne przy DOWOLNEJ monotonicznej palecie — więc
+ * bramka przechodziła także przy cieniowaniu ciągłym, zmierzonym w Fazie 0 jako nieczytelne.
  *
- * ## Tryb porównawczy — NIE jest kontrolą pozytywną
+ * Obserwacja, na której stoi nowy projekt (oglądane wprost, na żywym renderze): w trybie
+ * progowanym granica jest widoczna **jako linia przez całą tarczę**; w trybie ciągłym ta
+ * linia **znika całkowicie**, a pary sąsiadów pozostają rozróżnialne. Pytanie GLOBALNE
+ * rozróżnia oba tryby, lokalne nie.
  *
- * `setMode('smooth')` przełącza cieniowanie CAŁEJ planety (nie samych znaczników) na
- * `writeCellColorsSmooth` — gradient bez progowania. Klik w tym trybie NIC nie zapisuje
- * (`handleClick` zwraca `null`): nie jest częścią piętnastu ocenianych prób.
+ * **Nowe pytanie: JEDEN znacznik, jedna komórka, odpowiedź „oświetlona" albo „ciemna".**
+ * Bez drugiej komórki w kadrze nie ma czego z czym porównać — jedyną informacją, która na to
+ * pytanie odpowiada, jest położenie granicy na kuli. Ocena pozostaje binarna i bezdyskusyjna
+ * (to była zaleta konstrukcji 2A i nie ma powodu jej tracić), a podłoga zgadywania zostaje
+ * na 0,5¹⁵ ≈ 0,00003, bo plan prób jest zrównoważony (`buildGateTrials`).
  *
- * **Ten tryb był opisany jako kontrola pozytywna i tym nie jest.** Ustalone przez
- * właściciela projektu i zmierzone (spec §7.3.1): `writeCellColorsSmooth` zmienia MAPOWANIE
- * palety, a nie INTERPOLACJĘ — nadal maluje każdą komórkę jednym płaskim kolorem, bo
- * `geometry.ts` daje każdej własne wierzchołki. Tryb awarii Fazy 0 (kolor interpolowany PO
- * POWIERZCHNI, między wierzchołkami współdzielonymi, granica ROZMAZANA) jest przez tę
- * architekturę nieodtwarzalny z konstrukcji. Na prawdziwych parach terminatora różnica
- * barwna w trybie gładkim jest niezerowa (0,030–0,081 na kanał) i zawsze w tę samą stronę,
- * więc przy wymuszonym wyborze dwóch alternatyw komplet trafień jest osiągalny także tutaj.
+ * ## Trzy tryby, trzy ROZŁĄCZNE plany prób
  *
- * Co ten przełącznik POKAZUJE, i co jest warte pokazania: ile kontrastu dokłada progowanie
- * ponad to, co dowozi sama geometria (odległość barwna pary rośnie z ~0,07–0,12 do 0,90).
- * Czytelność dowozi GEOMETRIA; progowanie czyni ją wygodną. Kontrola pozytywna
- * odtwarzająca RZECZYWISTY tryb awarii Fazy 0 jest do domknięcia w Fazie 2B (§7.3.2).
+ * | tryb | geometria | kolor | rola |
+ * |---|---|---|---|
+ * | `threshold` | osobne wierzchołki (płaskie komórki) | progowany `LIGHT_BANDS` | **jedyny OCENIANY** |
+ * | `smooth` | osobne wierzchołki (płaskie komórki) | gradient noc→dzień | porównanie: ile dokłada progowanie |
+ * | `control` | **współdzielone wierzchołki** | gradient per wierzchołek | **kontrola pozytywna** — awaria Fazy 0 |
+ *
+ * Tylko `threshold` liczy się do werdyktu (`answers()`); pozostałe trafiają do osobnego logu
+ * (`answersFor`). Każdy tryb ma WŁASNY plan prób, na ROZŁĄCZNYCH komórkach — bo po
+ * odsłonięciu prawdy człowiek zna odpowiedź, więc plan kontrolny na tych samych komórkach
+ * mierzyłby jego pamięć zamiast czytelności. Rozłączność jest sprawdzana przy konstrukcji,
+ * nie zakładana.
+ *
+ * ## Jak znacznik nie zdradza odpowiedzi
+ *
+ * Przy JEDNEJ komórce ryzyko jest większe niż przy parze: nie ma drugiego znacznika, na tle
+ * którego pierwszy by się kalibrował, więc każda własność znacznika zależna od tła jest
+ * wprost odpowiedzią na zadane pytanie. Stąd:
+ *
+ * - **Znacznik jest PIERŚCIENIEM, nie wypełnionym kołem.** Wypełnione koło 2A zasłaniało
+ *   komórkę — przy dwóch znacznikach to nie przeszkadzało (człowiek porównywał tła wokół
+ *   nich), przy jednym zasłaniałoby DOKŁADNIE to, o co bramka pyta. Pierścień otacza komórkę
+ *   i zostawia jej środek widoczny.
+ * - **Pierścień jest dwutonowy** (jasne wypełnienie, ciemny obrys po obu krawędziach): jasna
+ *   część wybija się na tle nocy, ciemna na tle dnia, więc SUMARYCZNA widoczność samego
+ *   znacznika jest podobna po obu stronach granicy. Jeden jednolity kolor tej własności NIE
+ *   MA — biały pierścień byłby bardziej kontrastowy na tle nocy i sam zdradzałby stronę.
+ * - **Jest billboardem** (`Sprite`), zawsze zwróconym do kamery — ten sam, niezniekształcony
+ *   obrazek pod każdym kątem orbity K1. Znacznik leżący płasko na powierzchni oglądany pod
+ *   kątem stycznym wyglądałby jak kreska, a to JAK BARDZO zależałoby od kąta patrzenia.
+ * - **Jest uniesiony nad powierzchnię** o `MARKER_SURFACE_OFFSET_FACTOR`, bo płaski billboard
+ *   styczny do kuli opada poniżej jej krzywizny i geometria terenu ucinałaby mu brzegi.
+ *   Uniesienie kosztuje paralaksę (pod dużym kątem pierścień zdaje się przesunięty względem
+ *   swojej komórki), więc jest MAŁE i `setupTrial` celuje kamerę wprost w komórkę, gdzie
+ *   kierunek patrzenia pokrywa się z normalną i paralaksa znika.
  */
 
-// --- Stałe wizualne znacznika — [WYGLĄD], żadna nie wpływa na WŁASNOŚĆ "identyczne dla
-// obu", tylko na to, jak duży/ostry jest wspólny obrazek. ------------------------------
+// --- Stałe wizualne znacznika — [WYGLĄD] ------------------------------------------------
 const MARKER_TEXTURE_SIZE = 128; // [WYGLĄD] rozdzielczość tekstury znacznika (piksele)
-const MARKER_SCALE_FACTOR = 0.06; // [WYGLĄD] rozmiar znacznika w świecie = promień planety × ten czynnik
-const MARKER_SURFACE_OFFSET_FACTOR = 0.03; // [WYGLĄD] jak wysoko nad powierzchnią unosi się znacznik (patrz uzasadnienie wyżej)
-const NEUTRAL_COLOR = 0xffffff; // [WYGLĄD] barwa OBU znaczników, dopóki para nie jest odsłonięta
-const REVEAL_LIT_COLOR = 0x2ecc71; // [WYGLĄD] odsłonięcie: znacznik nad faktycznie oświetloną komórką
-const REVEAL_DARK_COLOR = 0xe23d3d; // [WYGLĄD] odsłonięcie: znacznik nad faktycznie ciemną komórką
+const MARKER_SCALE_FACTOR = 0.16; // [WYGLĄD] średnica pierścienia = promień planety × ten czynnik (średnica komórki ≈ 0,10 promienia, więc pierścień OTACZA komórkę)
+const MARKER_SURFACE_OFFSET_FACTOR = 0.012; // [WYGLĄD] jak wysoko nad powierzchnią unosi się znacznik (patrz paralaksa wyżej)
+const NEUTRAL_COLOR = 0xffffff; // [WYGLĄD] barwa znacznika, dopóki próba nie jest odsłonięta
+const REVEAL_LIT_COLOR = 0x2ecc71; // [WYGLĄD] odsłonięcie: komórka faktycznie oświetlona
+const REVEAL_DARK_COLOR = 0xe23d3d; // [WYGLĄD] odsłonięcie: komórka faktycznie ciemna
 
-// --- Dwutonowość znacznika: to NIE jest zwykła estetyka ------------------------------
-// Te trzy stałe niosą własność "znacznik nie zdradza, po której stronie terminatora stoi"
-// (uzasadnienie w komentarzu modułu wyżej). Jasne wypełnienie wybija się na tle nocy,
-// ciemny obrys wybija się na tle dnia — więc sumaryczna widoczność znacznika jest podobna
-// po obu stronach granicy. Jeden jednolity kolor tej własności NIE MA. Tagi [WYGLĄD] są
-// tu z tego samego powodu co przy `LIGHT_BANDS`: Faza 4 może chcieć je stroić, i ma wtedy
-// przeczytać, że stroi coś, na czym stoi WAŻNOŚĆ bramki, nie sam ładny wygląd.
-const MARKER_FILL_COLOR = '#ffffff'; // [WYGLĄD] wypełnienie — jasne, dla kontrastu z nocą
-const MARKER_STROKE_COLOR = '#000000'; // [WYGLĄD] obrys — ciemny, dla kontrastu z dniem
-const MARKER_STROKE_WIDTH_FACTOR = 0.08; // [WYGLĄD] grubość obrysu jako ułamek MARKER_TEXTURE_SIZE
+// --- Dwutonowość pierścienia: to NIE jest zwykła estetyka -------------------------------
+// Te stałe niosą własność „znacznik nie zdradza, po której stronie granicy stoi"
+// (uzasadnienie w komentarzu modułu). Faza 4 może chcieć je stroić i ma wtedy przeczytać,
+// że stroi coś, na czym stoi WAŻNOŚĆ bramki, nie sam ładny wygląd.
+const MARKER_FILL_COLOR = '#ffffff'; // [WYGLĄD] jasna część pierścienia — kontrast z nocą
+const MARKER_STROKE_COLOR = '#000000'; // [WYGLĄD] ciemne obrysy pierścienia — kontrast z dniem
+const MARKER_RING_WIDTH_FACTOR = 0.1; // [WYGLĄD] grubość jasnej części, jako ułamek MARKER_TEXTURE_SIZE
+const MARKER_STROKE_WIDTH_FACTOR = 0.035; // [WYGLĄD] grubość każdego z dwóch ciemnych obrysów
 
 /**
- * Buduje neutralną, dwutonową teksturę znacznika (patrz uzasadnienie w komentarzu modułu).
- * Zwraca `undefined` w środowisku bez DOM (Vitest/Node) — TEN SAM wzorzec straży co
- * `typeof window !== 'undefined'` w `scene.ts`: `SpriteMaterial` akceptuje `map: undefined`
- * (renderuje się wtedy jako jednolity kolor zamiast tekstury), więc harness pozostaje w pełni
- * testowalny bez canvasu/DOM — testy nie sprawdzają WYGLĄDU piksela, tylko pozycję,
- * scoring i przejścia stanu.
+ * Buduje neutralną, dwutonową teksturę PIERŚCIENIA (patrz uzasadnienie w komentarzu modułu):
+ * jasna obręcz z ciemnym obrysem po obu jej krawędziach, środek i zewnętrze przezroczyste.
+ *
+ * Zwraca `undefined` w środowisku bez DOM (Vitest/Node) — ten sam wzorzec straży co
+ * `typeof window !== 'undefined'` w `scene.ts`. Harness pozostaje w pełni testowalny bez
+ * canvasu: testy nie sprawdzają WYGLĄDU piksela, tylko pozycję, scoring i przejścia stanu.
  */
 function createMarkerTexture(): CanvasTexture | undefined {
   if (typeof document === 'undefined') return undefined;
@@ -126,16 +118,26 @@ function createMarkerTexture(): CanvasTexture | undefined {
   const ctx = canvas.getContext('2d');
   if (!ctx) return undefined;
 
-  const r = MARKER_TEXTURE_SIZE / 2;
+  const c = MARKER_TEXTURE_SIZE / 2;
+  const ringWidth = MARKER_TEXTURE_SIZE * MARKER_RING_WIDTH_FACTOR;
   const strokeWidth = MARKER_TEXTURE_SIZE * MARKER_STROKE_WIDTH_FACTOR;
+  // Promień środka obręczy tak dobrany, żeby OBA obrysy zmieściły się w teksturze.
+  const ringRadius = c - ringWidth / 2 - strokeWidth;
+
   ctx.clearRect(0, 0, MARKER_TEXTURE_SIZE, MARKER_TEXTURE_SIZE);
+  ctx.strokeStyle = MARKER_FILL_COLOR;
+  ctx.lineWidth = ringWidth;
   ctx.beginPath();
-  ctx.arc(r, r, r - strokeWidth, 0, Math.PI * 2);
-  ctx.fillStyle = MARKER_FILL_COLOR;
-  ctx.fill();
-  ctx.lineWidth = strokeWidth;
-  ctx.strokeStyle = MARKER_STROKE_COLOR;
+  ctx.arc(c, c, ringRadius, 0, Math.PI * 2);
   ctx.stroke();
+
+  ctx.strokeStyle = MARKER_STROKE_COLOR;
+  ctx.lineWidth = strokeWidth;
+  for (const r of [ringRadius - ringWidth / 2 - strokeWidth / 2, ringRadius + ringWidth / 2 + strokeWidth / 2]) {
+    ctx.beginPath();
+    ctx.arc(c, c, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   return new CanvasTexture(canvas);
 }
@@ -143,14 +145,12 @@ function createMarkerTexture(): CanvasTexture | undefined {
 function createMarkerSprite(texture: Texture | undefined): Sprite {
   const material = new SpriteMaterial({
     // `map` pominięty CAŁKOWICIE (nie `map: undefined`) w środowisku bez DOM — Three.js
-    // ostrzega w konsoli ("parameter 'map' has value of undefined"), gdy klucz jest OBECNY,
-    // ale pusty; pominięcie klucza zamiast przypisania mu `undefined` daje ten sam efekt
-    // (materiał bez tekstury) bez hałasu w logach testów.
+    // ostrzega w konsoli, gdy klucz jest OBECNY, ale pusty.
     ...(texture ? { map: texture } : {}),
     color: NEUTRAL_COLOR,
     transparent: true,
     depthTest: true,
-    depthWrite: false, // standard dla billboardów przezroczystych — patrz uzasadnienie w komentarzu modułu
+    depthWrite: false, // standard dla billboardów przezroczystych
   });
   return new Sprite(material);
 }
@@ -158,7 +158,7 @@ function createMarkerSprite(texture: Texture | undefined): Sprite {
 /**
  * Pozycja świata znacznika dla komórki `cellId`: środek komórki, uniesiony wzdłuż jej
  * normalnej o `radius × MARKER_SURFACE_OFFSET_FACTOR`. Funkcja czysta — testowalna bez
- * Three.js mimo że mieszka w pliku, który go używa (jedyny konsument to `setupTrial` niżej).
+ * Three.js mimo że mieszka w pliku, który go używa.
  */
 export function markerPosition(planet: Planet, cellId: number): Vec3 {
   const cell = planet.cells[cellId];
@@ -170,152 +170,176 @@ export function markerPosition(planet: Planet, cellId: number): Vec3 {
   };
 }
 
-export type GateMode = 'threshold' | 'smooth';
+/** `threshold` to jedyny tryb OCENIANY — patrz tabela w komentarzu modułu. */
+export type GateMode = 'threshold' | 'smooth' | 'control';
 
-/** Wynik jednej ROZSTRZYGNIĘTEJ próby (po kliknięciu) — patrz `ReadabilityGate.answers()`. */
+export const GATE_MODES: readonly GateMode[] = ['threshold', 'smooth', 'control'];
+
+/** Plany prób: po jednym na tryb, na ROZŁĄCZNYCH komórkach (sprawdzane w konstruktorze). */
+export type GatePlans = Readonly<Record<GateMode, readonly GateTrial[]>>;
+
+/** Wynik jednej ROZSTRZYGNIĘTEJ próby. */
 export interface GateAnswerRecord {
-  /** Numer próby w CAŁYM planie (0-bazowany, 0..totalTrials-1) — kolejność zadawania, nie fazy. */
+  /** Tryb, w którym padła odpowiedź. Tylko `'threshold'` liczy się do werdyktu. */
+  readonly mode: GateMode;
+  /** Numer próby w planie SWOJEGO trybu (0-bazowany). */
   readonly trialOrdinal: number;
   readonly phaseIndex: number;
-  readonly litCellId: number;
-  readonly darkCellId: number;
-  /** Który cellId faktycznie kliknął człowiek. */
-  readonly clickedCellId: number;
-  /** `clickedCellId === litCellId` — poprawna odpowiedź to trafienie w znacznik NAD oświetloną komórką. */
+  readonly cellId: number;
+  /** Prawda z symulacji (`light[cellId] > 0`). */
+  readonly actuallyLit: boolean;
+  /** Co odpowiedział człowiek. */
+  readonly answeredLit: boolean;
   readonly correct: boolean;
 }
 
 export interface ReadabilityGate {
+  /** Liczba prób w planie KAŻDEGO trybu (wszystkie plany mają tę samą długość). */
   readonly totalTrials: number;
-  currentTrialIndex(): number;
-  /** `true`, gdy WSZYSTKIE próby zostały już rozstrzygnięte (kliknięte) i odsłonięte. */
-  isFinished(): boolean;
-  /** `true`, gdy bieżąca próba została już kliknięta (prawda odsłonięta na znacznikach). */
-  isRevealed(): boolean;
-  /** `null` po zakończeniu (`isFinished()`). */
-  currentTrial(): GateTrial | null;
   mode(): GateMode;
-  /** Przełącza cieniowanie CAŁEJ planety; nie rusza znaczników ani stanu odsłonięcia bieżącej próby. */
+  /** Przełącza tryb: podmienia cieniowanie CAŁEJ planety i plan prób na plan tego trybu. */
   setMode(mode: GateMode): void;
+  /** Indeks bieżącej próby w planie AKTYWNEGO trybu. */
+  currentTrialIndex(): number;
+  /** `null` po wyczerpaniu planu aktywnego trybu. */
+  currentTrial(): GateTrial | null;
+  /** `true`, gdy bieżąca próba aktywnego trybu została już rozstrzygnięta (prawda odsłonięta). */
+  isRevealed(): boolean;
+  /** `true`, gdy plan aktywnego trybu jest wyczerpany. */
+  isFinished(): boolean;
   /**
-   * Skoruje klik na WSPÓŁRZĘDNYCH CANVASU (piksele CSS — `event.offsetX`/`offsetY`).
-   * Zwraca `null`, gdy: tryb ≠ `'threshold'` (klik w trybie porównawczym się nie liczy),
-   * bieżąca próba jest już odsłonięta, gate jest już skończony, albo klik nie trafił w
-   * ŻADEN z dwóch znaczników bieżącej pary. W przeciwnym razie zapisuje odpowiedź, odsłania
-   * prawdę na znacznikach (zielony = faktycznie oświetlony, czerwony = faktycznie ciemny —
-   * NIEZALEŻNIE od tego, co kliknięto) i zwraca zapis.
+   * Zapisuje odpowiedź człowieka na bieżącą próbę („czy zaznaczona komórka jest oświetlona").
+   * Zwraca `null`, gdy próba jest już odsłonięta albo plan aktywnego trybu wyczerpany.
+   * Odsłania prawdę na znaczniku (zielony = faktycznie oświetlona, czerwony = faktycznie
+   * ciemna) NIEZALEŻNIE od tego, co odpowiedziano.
    */
-  handleClick(canvasX: number, canvasY: number): GateAnswerRecord | null;
-  /**
-   * Przechodzi do kolejnej próby. Wymaga, żeby bieżąca była już odsłonięta — inaczej nic nie
-   * robi i zwraca `false` (ten sam kod wyniku co "koniec planu prób"; UI ma nie wołać tego
-   * przed odsłonięciem, więc rozróżnienie nie jest tu potrzebne wywołującemu).
-   */
+  answer(answeredLit: boolean): GateAnswerRecord | null;
+  /** Przechodzi do kolejnej próby aktywnego trybu. Wymaga odsłonięcia bieżącej. */
   advance(): boolean;
-  /** Pełny, niemutowalny log odpowiedzi udzielonych dotąd (kopia — patrz `Cell.neighbors` w `@heliopolis/sim` po ten sam wzorzec). */
+  /** Log OCENIANY — wyłącznie odpowiedzi z trybu `'threshold'`. Kopia. */
   answers(): readonly GateAnswerRecord[];
-  /** Aktualizuje bezwładność orbity kamery i rysuje jedną klatkę — do wołania co rAF przez hosta. */
+  /** Log wybranego trybu. Kopia. */
+  answersFor(mode: GateMode): readonly GateAnswerRecord[];
   renderFrame(): void;
-  /** Przelicza proporcje kamery i devicePixelRatio na podstawie wymiarów canvasu — patrz `PlanetScene.resize`. */
   resize(): void;
   dispose(): void;
 
-  // Wystawione dla testowalności — patrz `PlanetScene.camera`/`PlanetMesh.mesh` po ten sam
-  // wzorzec (obiekty Three.js jako część publicznego kształtu, gdy to jedyny sposób, by test
-  // sprawdził rzeczywisty stan sceny, nie tylko wywołanie funkcji).
+  // Wystawione dla testowalności — ten sam wzorzec co `PlanetScene.camera`/`PlanetMesh.mesh`.
   readonly camera: OrbitCamera;
-  readonly markerLit: Sprite;
-  readonly markerDark: Sprite;
+  readonly marker: Sprite;
+}
+
+interface PlanState {
+  readonly trials: readonly GateTrial[];
+  index: number;
+  revealed: boolean;
+  readonly answers: GateAnswerRecord[];
 }
 
 /**
- * Buduje harness bramki czytelności dla PEŁNEGO planu prób (`trials`, zwykle z
- * `buildGateTrials`). `makeRenderer` — ten sam szew testowalności co
- * `createSceneWithRenderer` (`scene.ts`): domyślnie prawdziwy `WebGLRenderer`, w testach
- * atrapa bez GPU.
+ * Buduje harness bramki czytelności dla trzech planów prób (`plans`, zwykle z trzech wywołań
+ * `buildGateTrials` różniącymi się `offset`).
  *
- * @throws {RangeError} gdy `trials` jest puste — bramka bez ani jednej próby nie ma czego mierzyć.
+ * `makeRenderer` — ten sam szew testowalności co `createSceneWithRenderer` (`scene.ts`):
+ * domyślnie prawdziwy `WebGLRenderer`, w testach atrapa bez GPU.
+ *
+ * @throws {RangeError} gdy którykolwiek plan jest pusty — bramka bez próby nie ma czego mierzyć.
+ * @throws {RangeError} gdy plany mają różne długości — `totalTrials` musi znaczyć jedno.
+ * @throws {RangeError} gdy dwa plany dzielą choć jedną parę (faza, komórka). To nie jest
+ *   pedanteria: plan kontrolny na komórce już odsłoniętej w planie ocenianym mierzyłby
+ *   PAMIĘĆ człowieka, nie czytelność renderu — czyli kontrola pozytywna przestałaby móc oblać
+ *   dokładnie w tym jednym miejscu, w którym cała jej wartość polega na tym, że może.
  */
 export function createReadabilityGate(
   planet: Planet,
   canvas: HTMLCanvasElement,
-  trials: readonly GateTrial[],
+  plans: GatePlans,
   makeRenderer: (canvas: HTMLCanvasElement) => SceneRenderer = (c) =>
     new WebGLRenderer({ canvas: c, antialias: true }),
 ): ReadabilityGate {
-  if (trials.length === 0) {
-    throw new RangeError('createReadabilityGate: trials must be non-empty');
-  }
+  validatePlans(plans);
 
   const geo: PlanetGeometry = buildPlanetGeometry(planet);
   const planetMesh: PlanetMesh = createPlanetMesh(geo);
   const camera = createCamera(canvas, planet.radius);
 
+  // Siatka kontroli pozytywnej: WSPÓŁDZIELONE wierzchołki, budowana RAZ obok normalnej.
+  // Obie żyją w scenie przez cały czas; `setMode` przełącza tylko `visible`, więc zmiana
+  // trybu nie alokuje niczego i nie przebudowuje sceny.
+  const smearedGeo: SmearedGeometry = buildSmearedGeometry(planet);
+  const smearedColors = new Float32Array(smearedGeo.vertexCount * 3);
+  const smearedGeometry = new BufferGeometry();
+  smearedGeometry.setAttribute('position', new BufferAttribute(smearedGeo.positions, 3));
+  smearedGeometry.setAttribute('normal', new BufferAttribute(smearedGeo.normals, 3));
+  smearedGeometry.setAttribute('color', new BufferAttribute(smearedColors, 3));
+  smearedGeometry.setIndex(new BufferAttribute(smearedGeo.indices, 1));
+  const smearedMaterial = new MeshBasicMaterial({ vertexColors: true });
+  const smearedMesh = new Mesh(smearedGeometry, smearedMaterial);
+  smearedMesh.visible = false;
+
   const threeScene = new Scene();
   threeScene.add(planetMesh.mesh);
+  threeScene.add(smearedMesh);
 
   const sharedTexture = createMarkerTexture();
-  const markerLit = createMarkerSprite(sharedTexture);
-  const markerDark = createMarkerSprite(sharedTexture);
-  threeScene.add(markerLit, markerDark);
+  const marker = createMarkerSprite(sharedTexture);
+  threeScene.add(marker);
 
   const renderer = makeRenderer(canvas);
   renderer.setClearColor(CLEAR_COLOR, 1);
 
-  const raycaster = new Raycaster();
-  const ndc = new Vector2();
-
   let mode: GateMode = 'threshold';
-  let trialIndex = 0;
-  let revealed = false;
-  const answers: GateAnswerRecord[] = [];
+  const state: Record<GateMode, PlanState> = {
+    threshold: { trials: plans.threshold, index: 0, revealed: false, answers: [] },
+    smooth: { trials: plans.smooth, index: 0, revealed: false, answers: [] },
+    control: { trials: plans.control, index: 0, revealed: false, answers: [] },
+  };
+  const active = (): PlanState => state[mode];
 
-  function currentLight(): Float32Array {
-    return lightField(planet, trials[trialIndex].sunDir);
-  }
-
-  /** Przemalowuje CAŁĄ planetę wg bieżącego `mode`, dla światła BIEŻĄCEJ próby. Nie rusza znaczników. */
+  /** Przemalowuje CAŁĄ planetę wg bieżącego `mode`, dla światła BIEŻĄCEJ próby tego trybu. */
   function applyPhaseColoring(): void {
-    const light = currentLight();
+    // Widoczność siatek przełączana ZAWSZE, także gdy plan jest już wyczerpany — inaczej
+    // przejście na tryb o skończonym planie zostawiłoby na ekranie siatkę poprzedniego trybu.
+    smearedMesh.visible = mode === 'control';
+    planetMesh.mesh.visible = mode !== 'control';
+
+    const plan = active();
+    if (plan.index >= plan.trials.length) return;
+    const light = lightField(planet, plan.trials[plan.index].sunDir);
+
     if (mode === 'threshold') {
       planetMesh.updateColors(light);
-    } else {
+    } else if (mode === 'smooth') {
       const colorAttr = planetMesh.mesh.geometry.getAttribute('color') as BufferAttribute;
       writeCellColorsSmooth(geo, light, colorAttr.array as Float32Array);
       colorAttr.needsUpdate = true;
+    } else {
+      writeSmearedColors(smearedGeo, light, smearedColors);
+      (smearedGeometry.getAttribute('color') as BufferAttribute).needsUpdate = true;
     }
   }
 
-  function resetMarkerTint(): void {
-    markerLit.material.color.setHex(NEUTRAL_COLOR);
-    markerDark.material.color.setHex(NEUTRAL_COLOR);
-  }
-
-  /** Umieszcza znaczniki na parze bieżącej próby, resetuje ich barwę do neutralnej, przelicza cieniowanie i celuje kamerę na środek pary. */
-  function setupTrial(index: number): void {
-    const trial = trials[index];
-    const litPos = markerPosition(planet, trial.pair.litCellId);
-    const darkPos = markerPosition(planet, trial.pair.darkCellId);
-
-    markerLit.position.set(litPos.x, litPos.y, litPos.z);
-    markerDark.position.set(darkPos.x, darkPos.y, darkPos.z);
+  /** Ustawia znacznik na komórce bieżącej próby, resetuje barwę, przemalowuje, celuje kamerę. */
+  function setupTrial(): void {
+    const plan = active();
+    // Po wyczerpaniu planu znacznik ZNIKA. Zostawiony na ostatniej komórce sugerowałby, że
+    // bramka wciąż o coś pyta — a gorzej: jego barwa niosłaby odsłoniętą prawdę o komórce,
+    // o którą nikt już nie pyta.
+    marker.visible = plan.index < plan.trials.length;
+    if (!marker.visible) {
+      applyPhaseColoring();
+      return;
+    }
+    const pos = markerPosition(planet, plan.trials[plan.index].cellId);
+    marker.position.set(pos.x, pos.y, pos.z);
     const s = planet.radius * MARKER_SCALE_FACTOR;
-    markerLit.scale.set(s, s, 1);
-    markerDark.scale.set(s, s, 1);
-
-    resetMarkerTint();
-    revealed = false;
+    marker.scale.set(s, s, 1);
+    marker.material.color.setHex(NEUTRAL_COLOR);
     applyPhaseColoring();
-
-    const mid: Vec3 = {
-      x: (litPos.x + darkPos.x) / 2,
-      y: (litPos.y + darkPos.y) / 2,
-      z: (litPos.z + darkPos.z) / 2,
-    };
-    camera.focusOn(mid, true);
+    camera.focusOn(pos, true);
   }
 
-  setupTrial(trialIndex);
+  setupTrial();
 
   function resize(): void {
     const width = canvas.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1);
@@ -332,81 +356,70 @@ export function createReadabilityGate(
   }
 
   return {
-    totalTrials: trials.length,
+    totalTrials: plans.threshold.length,
     camera,
-    markerLit,
-    markerDark,
+    marker,
 
-    currentTrialIndex: (): number => trialIndex,
-    isFinished: (): boolean => trialIndex >= trials.length,
-    isRevealed: (): boolean => revealed,
-    currentTrial: (): GateTrial | null => (trialIndex < trials.length ? trials[trialIndex] : null),
     mode: (): GateMode => mode,
-
-    setMode(next: GateMode): void {
-      mode = next;
-      if (trialIndex < trials.length) applyPhaseColoring();
+    currentTrialIndex: (): number => active().index,
+    isFinished: (): boolean => active().index >= active().trials.length,
+    isRevealed: (): boolean => active().revealed,
+    currentTrial: (): GateTrial | null => {
+      const plan = active();
+      return plan.index < plan.trials.length ? plan.trials[plan.index] : null;
     },
 
-    handleClick(canvasX: number, canvasY: number): GateAnswerRecord | null {
-      if (mode !== 'threshold') return null;
-      if (revealed) return null;
-      if (trialIndex >= trials.length) return null;
+    setMode(next: GateMode): void {
+      if (next === mode) return;
+      mode = next;
+      // Znacznik i cieniowanie MUSZĄ przeskoczyć na próbę nowego planu — plany są rozłączne,
+      // więc zostawienie znacznika na komórce poprzedniego trybu pokazywałoby człowiekowi
+      // komórkę, o którą bramka w tym trybie nie pyta.
+      setupTrial();
+      // `setupTrial` resetuje barwę znacznika na neutralną — a próba nowego trybu mogła być
+      // już wcześniej odsłonięta. Przywróć odsłonięcie, żeby powrót do trybu nie „cofał"
+      // udzielonej odpowiedzi wizualnie.
+      if (active().revealed) revealTruth();
+    },
 
-      // Kamera mogła się poruszyć (orbita, focusOn) bez ani jednego wywołania renderFrame()
-      // od tego czasu — Raycaster czyta matrixWorld kamery i znaczników, a Three.js NIE
-      // przelicza go automatycznie przy samym position.set()/quaternion. Zmierzone WPROST
-      // (probe uruchomiona przed napisaniem tego pliku, w Node, poza tym repo): bez tej linii
-      // klik natychmiast po focusOn/orbicie, przed pierwszą klatką renderu, trafia w ZERO
-      // obiektów. `renderFrame` i tak by to naprawił NASTĘPNYM razem, ale wtedy klik "o jedną
-      // klatkę za wcześnie" cicho by nic nie zrobił — myląco identyczne z "kliknąłeś obok".
-      camera.object.updateMatrixWorld(true);
-      threeScene.updateMatrixWorld(true);
+    answer(answeredLit: boolean): GateAnswerRecord | null {
+      const plan = active();
+      if (plan.revealed) return null;
+      if (plan.index >= plan.trials.length) return null;
 
-      const width = canvas.clientWidth || 1;
-      const height = canvas.clientHeight || 1;
-      ndc.set((canvasX / width) * 2 - 1, -(canvasY / height) * 2 + 1);
-      raycaster.setFromCamera(ndc, camera.object);
-
-      const hits = raycaster.intersectObjects([markerLit, markerDark], false);
-      if (hits.length === 0) return null;
-
-      const clickedLit = hits[0].object === markerLit;
-      const trial = trials[trialIndex];
+      const trial = plan.trials[plan.index];
       const record: GateAnswerRecord = {
-        trialOrdinal: trialIndex,
+        mode,
+        trialOrdinal: plan.index,
         phaseIndex: trial.phaseIndex,
-        litCellId: trial.pair.litCellId,
-        darkCellId: trial.pair.darkCellId,
-        clickedCellId: clickedLit ? trial.pair.litCellId : trial.pair.darkCellId,
-        correct: clickedLit,
+        cellId: trial.cellId,
+        actuallyLit: trial.lit,
+        answeredLit,
+        correct: answeredLit === trial.lit,
       };
-      answers.push(record);
-      revealed = true;
+      plan.answers.push(record);
+      plan.revealed = true;
 
-      // Odsłonięcie PRAWDY, nie informacji zwrotnej: zielony zawsze oznacza "to jest ta
-      // faktycznie oświetlona", czerwony zawsze "faktycznie ciemna" — niezależnie od tego,
-      // co człowiek kliknął. Gdyby kolor zależał od trafienia/pudła, człowiek widziałby
-      // "dobrze/źle", nie "oto gdzie faktycznie biegnie granica" — a to drugie jest tym, co
-      // ma sprawdzić.
-      markerLit.material.color.setHex(REVEAL_LIT_COLOR);
-      markerDark.material.color.setHex(REVEAL_DARK_COLOR);
-
+      // Odsłonięcie PRAWDY, nie informacji zwrotnej: zielony zawsze znaczy „ta komórka jest
+      // faktycznie oświetlona", czerwony „faktycznie ciemna" — niezależnie od odpowiedzi.
+      // Gdyby kolor zależał od trafienia, człowiek widziałby „dobrze/źle", nie „oto gdzie
+      // faktycznie biegnie granica" — a to drugie jest tym, co ma sprawdzić.
+      revealTruth();
       return record;
     },
 
     advance(): boolean {
-      if (trialIndex >= trials.length) return false;
-      if (!revealed) return false;
-      trialIndex++;
-      if (trialIndex < trials.length) {
-        setupTrial(trialIndex);
-        return true;
-      }
-      return false;
+      const plan = active();
+      if (plan.index >= plan.trials.length) return false;
+      if (!plan.revealed) return false;
+      plan.index++;
+      plan.revealed = false;
+      setupTrial();
+      return plan.index < plan.trials.length;
     },
 
-    answers: (): readonly GateAnswerRecord[] => answers.slice(),
+    answers: (): readonly GateAnswerRecord[] => state.threshold.answers.slice(),
+    answersFor: (m: GateMode): readonly GateAnswerRecord[] => state[m].answers.slice(),
 
     renderFrame(): void {
       camera.update();
@@ -421,37 +434,67 @@ export function createReadabilityGate(
       }
       camera.dispose();
       planetMesh.dispose();
-      markerLit.material.dispose();
-      markerDark.material.dispose();
+      smearedGeometry.dispose();
+      smearedMaterial.dispose();
+      marker.material.dispose();
       sharedTexture?.dispose();
       renderer.dispose();
     },
   };
+
+  function revealTruth(): void {
+    const plan = active();
+    if (plan.index >= plan.trials.length) return;
+    marker.material.color.setHex(plan.trials[plan.index].lit ? REVEAL_LIT_COLOR : REVEAL_DARK_COLOR);
+  }
+}
+
+/** Patrz `@throws` przy `createReadabilityGate` — wydzielone, żeby dało się je przeczytać. */
+function validatePlans(plans: GatePlans): void {
+  const seen = new Map<string, GateMode>();
+  let expectedLength: number | null = null;
+  for (const mode of GATE_MODES) {
+    const trials = plans[mode];
+    if (trials.length === 0) {
+      throw new RangeError(`createReadabilityGate: plan "${mode}" must be non-empty`);
+    }
+    if (expectedLength === null) {
+      expectedLength = trials.length;
+    } else if (trials.length !== expectedLength) {
+      throw new RangeError(
+        `createReadabilityGate: every plan must have the same length — "${mode}" has ${trials.length}, expected ${expectedLength}`,
+      );
+    }
+    for (const trial of trials) {
+      const key = `${trial.phaseIndex}:${trial.cellId}`;
+      const owner = seen.get(key);
+      if (owner !== undefined) {
+        throw new RangeError(
+          `createReadabilityGate: plans "${owner}" and "${mode}" share cell ${trial.cellId} in phase ${trial.phaseIndex} — plans must be disjoint`,
+        );
+      }
+      seen.set(key, mode);
+    }
+  }
 }
 
 /**
- * Formatuje log odpowiedzi jako tabelę Markdown gotową do wklejenia w dokument wyników
- * (`docs/superpowers/specs/2026-09-15-faza-2a-czytelnosc.md`) — ten sam pomysł co "eksport
- * markdown w dokładnie tym formacie" ze spike'u Fazy 0 (`docs/superpowers/specs/
- * 2026-09-14-faza-0-wyniki.md`, §3). Funkcja czysta: string in (dane), string out
- * (Markdown) — testowalna bez Three.js/DOM.
+ * Formatuje log odpowiedzi jako tabelę Markdown gotową do wklejenia w dokument wyników.
+ * Funkcja czysta: dane in, Markdown out — testowalna bez Three.js/DOM.
  *
- * Werdykt jest MECHANICZNY, nie moją oceną: PASS wtedy i tylko wtedy, gdy udzielono
- * KOMPLETU `totalTrials` odpowiedzi i WSZYSTKIE są poprawne (§8.1: "PASS wymaga kompletu
- * piętnastu"). To, CO człowiek kliknął, jest jedynym wejściem tej funkcji — ja nie oceniam
- * czytelności, tylko zliczam fakty, które człowiek już ustalił własnym kliknięciem.
+ * Werdykt jest MECHANICZNY, nie oceną kontrolera: PASS wtedy i tylko wtedy, gdy udzielono
+ * KOMPLETU `totalTrials` odpowiedzi i WSZYSTKIE są poprawne. To, co człowiek odpowiedział,
+ * jest jedynym wejściem — kontroler nie ocenia czytelności, tylko zlicza fakty, które
+ * człowiek już ustalił własną odpowiedzią.
  *
- * `totalTrials` jest WYMAGANY, nie domyślny. Poprzednia wersja liczyła werdykt wyłącznie z
- * długości `answers`, więc log TRZECH odpowiedzi drukował "Wynik: 3/3 — PASS". Ścieżka UI
- * (`apps/client/src/gate.ts`) do tego nie dopuszczała — panel woła to dopiero po
- * `isFinished()` — ale to jest publiczne API pakietu, a jego wyjście jest ARTEFAKTEM, który
- * człowiek wkleja do dokumentu wyników (§7.2). Domyślna wartość `totalTrials = answers.length`
- * przywróciłaby dokładnie tę dziurę, tylko ciszej.
+ * `totalTrials` jest WYMAGANY, nie domyślny: domyślne `answers.length` sprawiałoby, że log
+ * trzech odpowiedzi drukuje „Wynik: 3/3 — PASS", a wyjście tej funkcji jest ARTEFAKTEM,
+ * który człowiek wkleja do dokumentu wyników.
  *
  * @throws {RangeError} gdy `totalTrials` nie jest dodatnią liczbą całkowitą, albo gdy
- *   odpowiedzi jest WIĘCEJ niż prób — oba przypadki oznaczają, że wywołujący pomylił
- *   wielkości, a cichy werdykt z pomylonych liczb jest dokładnie tym, czego ta funkcja
- *   ma nie robić.
+ *   odpowiedzi jest WIĘCEJ niż prób.
+ * @throws {RangeError} gdy log zawiera odpowiedź z trybu innego niż jeden — tabela z
+ *   pomieszanych trybów drukowałaby jeden werdykt dla dwóch różnych pytań.
  */
 export function formatGateResultsMarkdown(answers: readonly GateAnswerRecord[], totalTrials: number): string {
   if (!(Number.isInteger(totalTrials) && totalTrials > 0)) {
@@ -462,12 +505,22 @@ export function formatGateResultsMarkdown(answers: readonly GateAnswerRecord[], 
       `formatGateResultsMarkdown: got ${answers.length} answers for ${totalTrials} trials — more answers than trials`,
     );
   }
-  const header = '| # | Faza | Komórka jasna | Komórka ciemna | Kliknięto | Wynik |\n|---|---|---|---|---|---|';
+  const modes = new Set(answers.map((a) => a.mode));
+  if (modes.size > 1) {
+    throw new RangeError(
+      `formatGateResultsMarkdown: answers mix modes (${[...modes].join(', ')}) — one table, one mode`,
+    );
+  }
+  const mode = answers.length > 0 ? answers[0].mode : 'threshold';
+
+  const header =
+    '| # | Faza | Komórka | Prawda | Odpowiedź | Wynik |\n|---|---|---|---|---|---|';
+  const side = (lit: boolean): string => (lit ? 'oświetlona' : 'ciemna');
   const rows = answers.map(
     (a) =>
-      `| ${a.trialOrdinal + 1} | ${a.phaseIndex + 1} | ${a.litCellId} | ${a.darkCellId} | ${a.clickedCellId} | ${
-        a.correct ? 'OK' : 'BŁĄD'
-      } |`,
+      `| ${a.trialOrdinal + 1} | ${a.phaseIndex + 1} | ${a.cellId} | ${side(a.actuallyLit)} | ${side(
+        a.answeredLit,
+      )} | ${a.correct ? 'OK' : 'BŁĄD'} |`,
   );
   const correctCount = answers.filter((a) => a.correct).length;
   const complete = answers.length === totalTrials;
@@ -476,5 +529,11 @@ export function formatGateResultsMarkdown(answers: readonly GateAnswerRecord[], 
       ? 'PASS'
       : `FAIL (${correctCount}/${totalTrials})`
     : `NIEKOMPLETNE — rozstrzygnięto ${answers.length} z ${totalTrials} prób, werdykt NIE zapada`;
-  return [header, ...rows, '', `Wynik: ${correctCount}/${totalTrials} — ${verdict}`].join('\n');
+  const evaluated =
+    mode === 'threshold'
+      ? ''
+      : `\n\nUWAGA: to jest log trybu "${mode}", który NIE JEST oceniany. Werdykt bramki zapada wyłącznie z trybu "threshold".`;
+  return [header, ...rows, '', `Tryb: ${mode}`, `Wynik: ${correctCount}/${totalTrials} — ${verdict}${evaluated}`].join(
+    '\n',
+  );
 }

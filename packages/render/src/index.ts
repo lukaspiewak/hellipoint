@@ -44,16 +44,25 @@ export {
 export { createRollingWindow, median, percentile, type RollingWindow } from './frameStats.js';
 export {
   buildGateTrials,
+  findBoundaryCells,
   findTerminatorPairs,
-  selectSpreadPairs,
+  selectSpread,
+  type BoundaryCells,
   type GateTrial,
   type TerminatorPair,
 } from './terminatorPairs.js';
 export {
+  buildSmearedGeometry,
+  writeSmearedColors,
+  type SmearedGeometry,
+} from './positiveControl.js';
+export {
   createReadabilityGate,
   formatGateResultsMarkdown,
   markerPosition,
+  GATE_MODES,
   type GateAnswerRecord,
   type GateMode,
+  type GatePlans,
   type ReadabilityGate,
 } from './readabilityGate.js';
