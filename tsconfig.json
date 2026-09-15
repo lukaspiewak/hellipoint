@@ -4,6 +4,9 @@
     { "path": "packages/sim" },
     { "path": "packages/sim/tsconfig.test.json" },
     { "path": "tools/headless" },
-    { "path": "tools/headless/tsconfig.test.json" }
+    { "path": "tools/headless/tsconfig.test.json" },
+    { "path": "packages/render" },
+    { "path": "packages/render/tsconfig.test.json" },
+    { "path": "apps/client" }
   ]
 }

@@ -28,6 +28,17 @@
 - Każda liczba czysto wizualna (kolory, progi pasm, czułość kamery) oznaczona komentarzem `// [WYGLĄD]` — analogicznie do `[STROJENIE]` w symulacji, żeby Faza 4 wiedziała, co wolno jej ruszać.
 - Commit po każdym zadaniu.
 
+> **Odstępstwo od zwyczaju planów Fazy 1, świadome.** Plany 1A–1C niosły **kompletny kod**
+> do przepisania. Zmierzony skutek: **trzy z sześciu implementacji referencyjnych oblewały
+> własne testy** z tych samych planów (suma zmiennoprzecinkowa w Tasku 3 Fazy 1C, brak kroku
+> uzbrojenia w Tasku 4, zgubione strażnice konstruktora w Tasku 5). Kod pisany w planie, którego
+> autor nie uruchomił, daje złudzenie specyfikacji przy zerowej pewności.
+>
+> Ten plan specyfikuje **zachowanie i kryteria akceptacji**, nie treść plików. Powód jest
+> dodatkowy i mocniejszy: to jest render, a ja nie mam jak uruchomić Three.js przy pisaniu planu —
+> kod przepisany stąd byłby zgadywaniem wobec API, którego nie wykonałem. Wykonawca ma napisać
+> kod sam i sprawdzić go testami; plan mówi, co ma być prawdą, i to możliwie ostro.
+
 ---
 
 ## Struktura plików
@@ -93,14 +104,50 @@ Testy do napisania, każdy z wartością wziętą z rzeczywistej planety, nie z 
 2. zakresy komórek **nie zachodzą na siebie i nie zostawiają dziur** — posortowane `start` z `count` pokrywają dokładnie całą tablicę
 3. pentagon ma 5 rogów, heks 6 — liczba trójkątów zgadza się z liczbą rogów
 4. każdy wierzchołek leży na sferze o promieniu planety (z tolerancją zmiennoprzecinkową)
-5. normalna każdej komórki wskazuje **na zewnątrz** — `dot(normal, center) > 0`
+5. normalna każdej komórki wskazuje **na zewnątrz** — sprawdzana na `geo.normals` i `geo.positions`,
+   **nie** na `Cell.normal` i `Cell.center` z symulacji.
+
+   > **To była pułapka w pierwszej wersji tego planu i wykonawca Taska 2 ją zmierzył.**
+   > `Cell.normal ≡ center/radius` z konstrukcji, więc `dot(Cell.normal, Cell.center) > 0` jest
+   > **tautologią wejścia** — zdaniem prawdziwym niezależnie od tego, co funkcja badana zapisze
+   > na wyjściu, i pokrytym już przez `packages/sim/test/planet.test.ts`. Dowiedzione empirycznie:
+   > dosłowna wersja tej asercji, wdrożona jako sonda, **przeszła mimo odwrócenia wszystkich
+   > normalnych na wyjściu**. Asercja ma czytać to, co funkcja wyprodukowała.
 6. kolejność wierzchołków daje trójkąty **zwrócone na zewnątrz** (winding), sprawdzone iloczynem wektorowym wobec normalnej komórki
 7. determinizm: dwa wywołania na tym samym seedzie dają identyczne tablice co do bitu
+8. **tożsamość per komórka, PRZEZ WARTOŚĆ** — wierzchołek pod `cellVertexStart[i]` to
+   `cells[i].center`, a kolejne `cellVertexCount[i] - 1` to jej **własne** `corners`, w kolejności.
+
+   > **To jest najważniejszy test w tym zadaniu i nie wynika z żadnego innego.** Wszystkie
+   > pozostałe sprawdzają własności SUMARYCZNE — sumę, pokrycie, brak nakładania, położenie
+   > na sferze — a **zamiana zakresów między dwiema komórkami tego samego typu zachowuje je
+   > wszystkie**. Zmierzone: taka zamiana przechodziła komplet ośmiu testów, przy ~1,02 miliona
+   > możliwych par samych heksów. Skutek byłby widoczny i mylący: `writeCellColors` pomalowałby
+   > wielobok jednej komórki kolorem drugiej, a raycaster Fazy 2C zwracałby po kliknięciu cudze
+   > `cellId`. Obie awarie wyglądają jak błąd renderu, nie jak błąd mapowania.
+   > Po dopisaniu: zamiana daje **14 rozbieżności** (7 wierzchołków × 2 komórki) i oblewa
+   > **wyłącznie ten test**, przy ośmiu pozostałych zielonych.
+
+9. **kontrola pozytywna:** inna `frequency` daje inne liczby wierzchołków i trójkątów.
+   Ten test istnieje po to, żeby złapać implementację zwracającą puste tablice — i **złapał
+   realny defekt dwóch innych testów z tej listy**: punkty 2 i 5, zapisane naiwnie, degenerują
+   się przy pustych tablicach do pustej pętli, więc ich `expect` nie wykonuje się ani razu.
+   Zakotwicz je w niezależnie policzonej, niezerowej liczbie wierzchołków **przed** pętlą.
 
 - [ ] **Krok 2: Uruchom testy i potwierdź porażkę**
 - [ ] **Krok 3: Zaimplementuj**
 - [ ] **Krok 4: Testy zielone**
-- [ ] **Krok 5: Zmierz i zapisz w komentarzu** liczbę wierzchołków i trójkątów dla `frequency 12` — Faza 4 będzie się o to pytać przy optymalizacji
+- [ ] **Krok 5: Zmierz i zapisz w komentarzu** liczbę wierzchołków i trójkątów dla `frequency 12` — Faza 4 będzie się o to pytać przy optymalizacji.
+
+  Zmierzone przy wykonaniu: **10 082 wierzchołki, 8640 trójkątów** — to 1442 środki plus 8640
+  narożników. Do tego **5760 pozycji powtarza się** między komórkami i **tak ma być**: narożnik
+  siatki dualnej należy geometrycznie do trzech komórek, a każda dostaje własny wierzchołek
+  w tym samym punkcie. Dokładnie dlatego kolory się nie interpolują. Nie „optymalizuj" tego
+  scalaniem — to nie jest marnotrawstwo, to jest mechanizm.
+
+  Kolejność nawijania zmierzona, nie założona: `buildDual` produkuje narożniki już zwrócone
+  na zewnątrz, **0 wyjątków na 8640 par**, więc wachlarz `(center, corners[k], corners[k+1])`
+  nie wymaga odwracania.
 - [ ] **Krok 6: Commit**
 
 ---
@@ -113,9 +160,18 @@ Testy do napisania, każdy z wartością wziętą z rzeczywistej planety, nie z 
 **Interfaces:**
 - Consumes: `Float32Array` z `lightField`, `PlanetGeometry`
 - Produces:
-  - `const LIGHT_BANDS: readonly number[]` — `[WYGLĄD]`
-  - `function lightBand(light: number): number`
+  - `type Rgb = readonly [r: number, g: number, b: number]` — składowe w zakresie 0..1, jak w Three.js
+  - `const LIGHT_BANDS: readonly number[]` — rosnące progi w (0, 1), `[WYGLĄD]`
+  - `type Palette = readonly Rgb[]` — **dokładnie `LIGHT_BANDS.length + 1` pozycji**: jedna na pasmo poniżej pierwszego progu, po jednej na każdy przedział, jedna powyżej ostatniego
+  - `const DEFAULT_PALETTE: Palette` — `[WYGLĄD]`
+  - `function lightBand(light: number): number` — indeks pasma, `0..LIGHT_BANDS.length`
   - `function writeCellColors(geo: PlanetGeometry, light: Float32Array, out: Float32Array, palette: Palette): void`
+
+> **Własność tablicy `out`.** `writeCellColors` **nie alokuje niczego** — pisze do bufora, który
+> dostaje. Bufor należy do `planetMesh.ts` (Task 4), jest alokowany raz przy tworzeniu siatki
+> o długości `positions.length` i podpięty jako atrybut `color` geometrii Three.js. Alokacja
+> per klatka wyrzuciłaby 1442 komórki × ~18 wierzchołków × 3 składowe do odśmiecacza sześćdziesiąt
+> razy na sekundę — a to jest pętla renderu, nie miejsce na presję pamięciową.
 
 To jest zadanie, w którym rozstrzyga się filar D1. Bramka Fazy 0 zmierzyła, że przy gładkim `saturate(dot)` **terminatora nie widać wcale**, a przy progowanym jest ostry i natychmiast czytelny.
 
@@ -129,11 +185,30 @@ To jest zadanie, w którym rozstrzyga się filar D1. Bramka Fazy 0 zmierzyła, �
 4. `writeCellColors` zapisuje **jednolity kolor w całym zakresie komórki** — wszystkie wierzchołki komórki mają identyczny kolor co do bitu
 5. sąsiadujące komórki po dwóch stronach terminatora dostają **różne pasma** przy rzeczywistym `lightField` — wzięte z prawdziwej planety i prawdziwego `sunDirection`, nie z liczb wpisanych ręcznie
 6. `out` o złej długości → `RangeError` nazywający obie długości (wzorzec z `updatePower`)
+7. **`light` o złej długości → `RangeError`.** Ten sam rodzaj zagrożenia co `out` i `palette`,
+   przeoczony w pierwszej wersji tej listy — wykonawca Taska 3 dopisał go i dowiódł mutacją,
+   że nie jest martwym kodem.
+8. **`palette` o złej liczbie pozycji → `RangeError`.** To jest szew między `LIGHT_BANDS`
+   a `DEFAULT_PALETTE`: dwie stałe, które muszą się zgadzać co do długości, a nic ich nie wiąże
+   składniowo. Faza 4 będzie zmieniać paletę i progi niezależnie, więc niezgodność jest kwestią
+   czasu. Dopisz też test, że **`DEFAULT_PALETTE` ma dokładnie `LIGHT_BANDS.length + 1` pozycji** —
+   sprawdzenie samej stałej, nie tylko strażnicy
 
 - [ ] **Krok 2: Uruchom testy i potwierdź porażkę**
 - [ ] **Krok 3: Zaimplementuj**
 - [ ] **Krok 4: Testy zielone**
-- [ ] **Krok 5: Zmierz** ile komórek wypada w każdym paśmie przy `sunDirection(0, 180)` i zapisz w komentarzu. Jeśli jedno pasmo obejmuje ponad połowę komórek, progi są źle dobrane — zgłoś to zamiast zostawiać
+- [ ] **Krok 5: Zmierz** ile komórek wypada w każdym paśmie przy `sunDirection(0, 180)` i zapisz w komentarzu.
+
+  > **Kryterium poprawione — pierwsza wersja była niespełnialna i wykonawca to zmierzył.**
+  > Brzmiała „jeśli jedno pasmo obejmuje ponad połowę komórek, progi są źle dobrane". Ale
+  > `saturate(dot)` sprowadza **całą półkulę nocną do dokładnie 0,0** — to jest clamp samej
+  > symulacji, fizyka sceny, nie skutek doboru progów. Pasmo najciemniejsze będzie więc zawsze
+  > trzymać około połowy komórek, przy **każdym** możliwym progu. Kryterium odrzucałoby każdą
+  > implementację.
+  >
+  > Właściwa postać: **noc jest zwolniona, ale żadne pasmo po stronie DZIENNEJ nie może
+  > przekroczyć połowy.** Zmierzone przy wykonaniu: noc 753 (52,2 %), półmrok 256 (17,8 %),
+  > dzień 433 (30,0 %).
 - [ ] **Krok 6: Commit**
 
 ---
@@ -160,11 +235,43 @@ Testowalna jest **matematyka kamery**, nie obraz. Wydziel ją do czystych funkcj
 1. `focusOn(cellCenter)` ustawia kamerę tak, że **kierunek patrzenia pokrywa się z normalną komórki** — `dot(normalize(camera.position), normalize(target)) > 0,999`
 2. `focusOn` zachowuje **odległość** od środka planety (zoom nie skacze przy powrocie do bazy)
 3. zoom jest ograniczony z obu stron: nie da się wejść pod powierzchnię ani odlecieć poza zadany limit
-4. determinizm: `focusOn` na tę samą komórkę z dwóch różnych pozycji daje **tę samą** pozycję końcową
+4. determinizm: `focusOn` na tę samą komórkę z dwóch różnych pozycji **o tej samej odległości
+   od środka** daje tę samą pozycję końcową.
+
+   > **Doprecyzowanie — pierwsza wersja była sprzeczna z punktem 2 i wykonawca to zauważył.**
+   > Punkt 2 każe zachować odległość, więc `focusOn` z dwóch pozycji o RÓŻNEJ odległości musi
+   > dać różne wyniki. Warunek „ta sama pozycja końcowa" trzyma wyłącznie przy wspólnej
+   > odległości startowej i tego brief nie mówił.
+
+5. **pozycje startowe dobrane analitycznie, nie losowo.** Kamera już mniej więcej skierowana
+   na planetę spełnia luźne `dot > 0,9` z wielu miejsc, więc test przeszedłby dla `focusOn`,
+   które nie robi nic. Zmierzone przy wykonaniu: pozycja antypodyczna (`dot = −1`) i prostopadła
+   (`dot = 0`), obie na wspólnej odległości — czyli najszerszy możliwy rozrzut kątowy, 180°.
 
 - [ ] **Krok 2–4: porażka → implementacja → zielone**
-- [ ] **Krok 5: Spięcie sceny** — `planetMesh.ts` tworzy `THREE.Mesh` z geometrii Taska 2, materiał `MeshBasicMaterial` z `vertexColors: true` (**nie** `MeshStandardMaterial` — oświetlenie liczy symulacja, nie silnik renderu), pętla renderu wywołuje `writeCellColors` i podnosi `needsUpdate`
-- [ ] **Krok 6: Commit**
+- [ ] **Krok 5: Trzy rzeczy, które łatwo pominąć, bo żaden test ich nie pilnuje sam z siebie**
+
+  Wszystkie trzy znalazł przegląd, nie autor — każda leży poza listą testów wyżej i każda
+  jest natychmiast widoczna dla człowieka, a niewidoczna dla suity.
+
+  1. **`setPixelRatio` musi być WOŁANY.** Zmierzone: metoda zadeklarowana i zaślepiona w testach,
+     ale bez wywołania, daje rozmyty render na ekranach o wysokiej gęstości — i nic tego nie
+     zgłasza. Wołaj przy tworzeniu sceny i przy każdej zmianie rozmiaru, z ograniczeniem górnym
+     na dwukrotności (wyżej płaci się czterokrotnym kosztem wypełniania przy znikomym zysku).
+     **Martwa metoda z zaślepką w teście jest najgorszym z trzech stanów** — wygląda na pokrytą
+     i nie działa.
+  2. **Proporcje kadru muszą mieć asercję.** Zmierzone: zaszycie `aspect = 1` zostawia
+     **420 z 422** testów zielonych, a skutkiem jest planeta jako widoczna elipsa w każdym
+     niekwadratowym oknie. Przypnij proporcję do ilorazu wymiarów kanwasu i sprawdź, że zmiana
+     rozmiaru ją aktualizuje.
+  3. **`dispose()` musi dowodzić, że coś zwalnia.** Zmierzone: wypatroszenie wszystkich trzech
+     `dispose()` do pustych funkcji zostawia **419 z 422** zielonych, bo istniejące testy
+     sprawdzały wyłącznie, że wywołanie nie rzuca. Szpieg na wywołania wystarczy — testowanie
+     samego WebGL jest zbędne. Faza 2B przebudowuje sceny, więc gubiony kontekst ujawniłby się
+     jako narastające zużycie pamięci, którego nikt by z tą fazą nie powiązał.
+
+- [ ] **Krok 6: Spięcie sceny** — `planetMesh.ts` tworzy `THREE.Mesh` z geometrii Taska 2, materiał `MeshBasicMaterial` z `vertexColors: true` (**nie** `MeshStandardMaterial` — oświetlenie liczy symulacja, nie silnik renderu), pętla renderu wywołuje `writeCellColors` i podnosi `needsUpdate`
+- [ ] **Krok 7: Commit**
 
 ---
 

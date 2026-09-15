@@ -93,10 +93,53 @@ describe('kontrakt pakietu sim', () => {
     expect(SIM_VERSION).toBe('0.0.0');
   });
 
+  /**
+   * Pola package.json, z których MENEDŻER PAKIETÓW faktycznie instaluje kod do
+   * `node_modules` konsumenta. `devDependencies` jest świadomie POZA tą listą — sim ma
+   * prawo mieć narzędzia deweloperskie, bo one nie trafiają do nikogo, kto instaluje sim.
+   *
+   * Dlaczego lista, a nie dwa pola wypisane wprost (tak było do teraz): przed Fazą 2A
+   * `three` w ogóle nie istniało w tym workspace. Teraz stoi obok `packages/sim`, więc
+   * pojedyncze niepilnowane pole to instalowalna zależność. Zmierzone END-TO-END w tej
+   * sesji: dopisanie `"optionalDependencies": {"three": "^0.186.0"}` do
+   * `packages/sim/package.json` zostawiało strażnika 16/16 zielonym, a `pnpm install`
+   * NAPRAWDĘ zakładało dowiązanie `packages/sim/node_modules/three` i
+   * `await import('three')` z `packages/sim` kończyło się sukcesem (w stanie
+   * zatwierdzonym ten sam import rzuca `ERR_MODULE_NOT_FOUND`).
+   */
+  const INSTALLED_FROM = [
+    'dependencies',
+    'peerDependencies',
+    'optionalDependencies',
+    // `bundledDependencies` (i jego historyczny alias `bundleDependencies`) nie instalują
+    // się z rejestru, tylko JADĄ W PACZCE — z punktu widzenia D5 to ta sama szkoda.
+    'bundledDependencies',
+    'bundleDependencies',
+  ];
+  /** Pola z „dependencies" w nazwie, które NIE wciągają kodu do konsumenta. */
+  const NOT_INSTALLED_FROM = ['devDependencies', 'peerDependenciesMeta'];
+
   it('nie ma ŻADNYCH zależności runtime (fundament D5)', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-    expect(pkg.dependencies ?? {}).toEqual({});
-    expect(pkg.peerDependencies ?? {}).toEqual({});
+
+    for (const field of INSTALLED_FROM) {
+      expect(pkg[field] ?? {}, `packages/sim/package.json: pole "${field}"`).toEqual({});
+    }
+
+    // Strażnik na SAMĄ LISTĘ pól, nie tylko na ich zawartość. Bez tego każde kolejne pole
+    // zależnościowe (wymyślone przez przyszłego menedżera pakietów, albo literówka w
+    // istniejącym) byłoby znów niepilnowane — dokładnie tak, jak `optionalDependencies` do
+    // dziś. Nieznane pole z „dependencies" w nazwie OBLEWA i każe świadomie rozstrzygnąć,
+    // do której z dwóch list należy.
+    const known = new Set([...INSTALLED_FROM, ...NOT_INSTALLED_FROM]);
+    const unknownDependencyFields = Object.keys(pkg).filter(
+      (key) => /dependencies/i.test(key) && !known.has(key),
+    );
+    expect(unknownDependencyFields).toEqual([]);
+
+    // Kontrola pozytywna na sam mechanizm: gdyby odczyt pliku po cichu dał pusty obiekt
+    // (zła ścieżka, pusty plik), wszystkie porównania wyżej przeszłyby „za darmo".
+    expect(pkg.name).toBe('@heliopolis/sim');
   });
 
   it('żaden plik źródłowy nie importuje three ani niczego spoza pakietu', async () => {
@@ -106,15 +149,35 @@ describe('kontrakt pakietu sim', () => {
     // `cwd` przestałby istnieć, `globSync` po cichu zwróciłby [], a cała reszta tego
     // testu zielono "sprawdziłaby" zero plików. `fileURLToPath` dekoduje z powrotem
     // do rzeczywistej ścieżki systemu plików.
-    const files = globSync('src/**/*.ts', { cwd: fileURLToPath(new URL('..', import.meta.url)) });
+    //
+    // `src/**/*`, NIE `src/**/*.ts`. `tsconfig.json` tego pakietu ma `include: ["src"]`,
+    // czyli katalog — a listę rozszerzeń, które z niego kompiluje, wybiera SAM KOMPILATOR
+    // i zmienia ją między wersjami (`.mts`/`.cts` doszły w TS 4.7; `.js`/`.mjs`/`.cjs`
+    // dochodzą po włączeniu `allowJs`). Mirrorowanie tej listy w globie to obietnica
+    // nadążania za kompilatorem, której nikt nie dotrzyma. Zmierzone END-TO-END w tej
+    // sesji: `packages/sim/src/__probe.mts` z `import { Vector3 } from 'three'` zostawiał
+    // strażnika 16/16 zielonym, `tsc -b` EMITOWAŁ `packages/sim/dist/__probe.mjs` z żywym
+    // importem, a ten emitowany moduł wykonywał się w Node bez błędu. Czytamy więc KAŻDY
+    // plik pod `src` — lekser i tak nie znajdzie specyfikatorów tam, gdzie ich nie ma.
+    const cwd = fileURLToPath(new URL('..', import.meta.url));
+    const files = globSync('src/**/*', { cwd, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => `${entry.parentPath}/${entry.name}`);
     // Strażnik na własną niepustość: bez tego powyższa klasa błędu (albo dowolna inna
     // regresja globu) przechodzi zielono, nie przeczytawszy ani jednego pliku.
     expect(files.length).toBeGreaterThan(0);
+    // Kontrola pozytywna na ZASIĘG globu, nie tylko na jego niepustość: katalog `src` ma
+    // podkatalogi (`math/`, `sim/`, `world/`), więc glob, który zszedłby tylko na jeden
+    // poziom, przeszedłby samo „> 0". Liczba plików musi zgadzać się z liczbą modułów,
+    // które faktycznie tam leżą.
+    expect(files.filter((f) => f.includes('/world/')).length).toBeGreaterThan(0);
+    expect(files.filter((f) => f.includes('/sim/')).length).toBeGreaterThan(0);
+
     const offenders: string[] = [];
     for (const f of files) {
-      const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+      const src = readFileSync(f, 'utf8');
       for (const spec of findOffendingSpecifiers(src)) {
-        offenders.push(`${f}: ${spec}`);
+        offenders.push(`${f.slice(cwd.length)}: ${spec}`);
       }
     }
     expect(offenders).toEqual([]);
