@@ -49,6 +49,50 @@ export class Sim {
     if (!Number.isFinite(config.startingOre) || config.startingOre < 0) {
       throw new RangeError(`RunConfig.startingOre must be finite and non-negative, got ${config.startingOre}`);
     }
+    // Pozostałe sześć pól `RunConfig`, tym samym idiomem `Number.isFinite`. DWA z nich
+    // wpływają wprost do `SimState`: `cyclesPerRun` → `evacUnlockTick`, `evacAlarmSeconds`
+    // → `evacAlarmRemaining`. Bez tych straży `NaN`/`Infinity` z konfiguracji ląduje
+    // w stanie, a `JSON.stringify` zamienia je na `null` — i po wczytaniu zapisu w Fazie 5
+    // `s.tick < null` jest fałszem NA ZAWSZE (bramka §5.6 odwraca się w „zawsze otwarta"),
+    // a `null >= 0` i `null - 0.05 <= ALARM_EPSILON` są jednocześnie prawdziwe, więc
+    // PIERWSZY tick po wczytaniu ogłasza zwycięstwo. Dokładnie tryb awarii z komentarza
+    // niezmiennika w state.ts, tyle że wchodzący przez konfigurację, nie przez sentinel.
+    if (!Number.isInteger(config.cyclesPerRun) || config.cyclesPerRun < 1) {
+      throw new RangeError(
+        `RunConfig.cyclesPerRun must be an integer >= 1, got ${config.cyclesPerRun}`,
+      );
+    }
+    // Ułamek, nie „cokolwiek dodatniego": > 1 znaczyłoby próg poza zadeklarowaną długością
+    // runu, a 0 — Evac dostępny od pierwszego ticka (dopuszczalne, np. run jednocyklowy).
+    if (
+      !Number.isFinite(config.evacUnlockFraction) ||
+      config.evacUnlockFraction < 0 || config.evacUnlockFraction > 1
+    ) {
+      throw new RangeError(
+        `RunConfig.evacUnlockFraction must be a finite fraction in [0, 1], got ${config.evacUnlockFraction}`,
+      );
+    }
+    // Te trzy ostro dodatnie, nie nieujemne: zero po cichu USUWA mechanikę, którą §5.6
+    // nazywa z osobna (ładowanie, tempo ładowania, przetrwanie alarmu), zamiast ją
+    // wyłącznie przestroić. Brak straży dawałby zwycięstwo w ticku postawienia modułu.
+    if (!Number.isFinite(config.evacEnergyRequired) || config.evacEnergyRequired <= 0) {
+      throw new RangeError(
+        `RunConfig.evacEnergyRequired must be finite and positive, got ${config.evacEnergyRequired}`,
+      );
+    }
+    if (!Number.isFinite(config.evacChargeRate) || config.evacChargeRate <= 0) {
+      throw new RangeError(
+        `RunConfig.evacChargeRate must be finite and positive, got ${config.evacChargeRate}`,
+      );
+    }
+    if (!Number.isFinite(config.evacAlarmSeconds) || config.evacAlarmSeconds <= 0) {
+      throw new RangeError(
+        `RunConfig.evacAlarmSeconds must be finite and positive, got ${config.evacAlarmSeconds}`,
+      );
+    }
+    if (typeof config.spawn !== 'object' || config.spawn === null) {
+      throw new RangeError(`RunConfig.spawn must be a SpawnConfig object, got ${config.spawn}`);
+    }
 
     this.config = config;
     this.s = createState(planet, config.startingOre);
@@ -61,10 +105,22 @@ export class Sim {
     // `unlockCycle - 1`. `Math.max(0, …)` na wypadek `evacUnlockFraction <= 0`, gdzie
     // `unlockCycle` wychodzi 0 i iloczyn byłby ujemny.
     const unlockCycle = Math.ceil(config.cyclesPerRun * config.evacUnlockFraction);
-    this.s.evacUnlockTick = Math.max(
+    const unlockTick = Math.max(
       0,
       Math.ceil(((unlockCycle - 1) * config.rotationPeriod) / TICK_SECONDS),
     );
+    // Straż na WYNIKU, nie tylko na wejściach — ten sam idiom i to samo uzasadnienie, co
+    // przy `angle` w `sunDirection` (light.ts): każde wejście z osobna może przejść
+    // walidację, a iloczyn i tak przepełnić się do Infinity. Zmierzone: `rotationPeriod`
+    // rzędu 1e308 jest skończony i większy od ticka, więc przechodzi obie straże wyżej,
+    // ale `(unlockCycle − 1) × 1e308` to już Infinity — czyli nieskończoność w `SimState`
+    // mimo poprawnej konfiguracji. Straż należy tam, gdzie wartość faktycznie staje się zła.
+    if (!Number.isFinite(unlockTick)) {
+      throw new RangeError(
+        `RunConfig: evacUnlockTick overflowed to a non-finite value — cyclesPerRun=${config.cyclesPerRun}, evacUnlockFraction=${config.evacUnlockFraction}, rotationPeriod=${config.rotationPeriod}`,
+      );
+    }
+    this.s.evacUnlockTick = unlockTick;
 
     const n = planet.cells.length;
     this.motion = {
@@ -92,9 +148,33 @@ export class Sim {
   enqueue(cmd: Command): void { this.pending.push(cmd); }
 
   /**
-   * Kolejność systemów jest CZĘŚCIĄ KONTRAKTU DETERMINIZMU.
-   * Zmiana kolejności zmienia wynik gry przy tym samym seedzie — nie wolno jej ruszać
-   * bez aktualizacji testów determinizmu.
+   * Kolejność systemów jest CZĘŚCIĄ KONTRAKTU DETERMINIZMU (global-constraints.md).
+   *
+   * **Czego NIE pilnują testy determinizmu.** Wcześniejsza wersja tego komentarza
+   * odsyłała do nich — niesłusznie. Porównują one przebieg SAM ZE SOBĄ, więc są zielone
+   * pod KAŻDĄ stałą permutacją tych dziesięciu wywołań. Zmierzone osobno dla wszystkich
+   * dziewięciu par sąsiednich (10 systemów = 9 ogniw), pełny przebieg 6000 ticków
+   * z ekstraktorem, wieżami, panelami i murem, porównanie po `stateHash` i licznikach:
+   *
+   * | ogniwo | czym przypięte |
+   * |---|---|
+   * | komendy ↔ oświetlenie | **KOMUTUJE** — `lightField` nie czyta stanu mutowalnego |
+   * | oświetlenie ↔ energia | **KOMPILATOR** — TS2448, `light` użyte przed deklaracją |
+   * | energia ↔ ekonomia | test `ekstraktor postawiony w tym ticku już w nim wydobywa` |
+   * | ekonomia ↔ pola przepływu | **KOMUTUJE** — pola czytają `buildings`, ekonomia pisze `ore` |
+   * | pola przepływu ↔ ruch | **KOMPILATOR** — TS2448, `fields` użyte przed deklaracją |
+   * | ruch ↔ walka | test `jednostka atakuje z komórki, do której właśnie weszła` |
+   * | walka ↔ spalanie | test `jednostka gasnąca od słońca zadaje jeszcze swój ostatni cios` |
+   * | spalanie ↔ fale | **KOMUTUJE** — spawn wypuszcza wyłącznie w ciemność (D1), więc
+   *   `updateBurning` i tak nic by z nowymi jednostkami nie zrobił (`exposure = 0`) |
+   * | fale ↔ warunki końca | **KOMUTUJE** — reguły nie czytają `units` ani `pentagons` |
+   *
+   * Cztery ogniwa KOMUTUJĄ i jest to **zmierzone, nie domniemane**: zamiana daje hash
+   * i liczniki identyczne co do bitu przez cały przebieg. Test behawioralny na takie
+   * ogniwo byłby testem, który nie może oblać — dokładnie rodzaj defektu, który ten
+   * projekt tropi. NIE PISZ ICH. Same wywołania w zadeklarowanej kolejności pilnuje
+   * strukturalnie `kolejność wywołań systemów w źródle step()` (fullrun.test.ts),
+   * czytający ten plik.
    */
   step(): void {
     if (this.s.phase !== 'RUNNING') {
@@ -131,9 +211,14 @@ export class Sim {
     }
     const fields = this.fields;
 
-    // 6–8. Ruch → walka → spalanie.
+    // 6. Ruch.
     updateMovement(this.s, fields, light, sun, this.motion);
+
+    // 7. Walka — po ruchu, bo jednostka atakuje z komórki, do której właśnie weszła.
     updateCombat(this.s, fields);
+
+    // 8. Spalanie — po walce, bo `updateBurning` nalicza rudę wyłącznie za własne ofiary
+    //    i polega na tym, że walka zabrała swoich zabitych wcześniej (patrz burning.ts).
     updateBurning(this.s, light);
 
     // 9. Fale i spawn.

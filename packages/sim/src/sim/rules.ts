@@ -4,6 +4,17 @@ import { TICK_SECONDS, type SimState } from './state.js';
 export interface RunConfig {
   rotationPeriod: number;
   startingOre: number;
+  /**
+   * PUNKT ODNIESIENIA DLA PROGU EWAKUACJI, **NIE** DŁUGOŚĆ RUNU. Nazwa sugeruje limit
+   * czasu — takiego nie ma i mieć nie powinno: §5.6 zna dokładnie dwa warunki końca,
+   * zwycięstwo przez ewakuację i porażkę przez utratę Core. Run, w którym gracz się nie
+   * ewakuuje, biegnie dalej po `cyclesPerRun` — zmierzone: przy `cyclesPerRun: 10`
+   * przebieg dochodzi do cyklu 15 i kończy się dopiero utratą CORE.
+   *
+   * Jedyny konsument tego pola to próg ewakuacji: `ceil(cyclesPerRun × evacUnlockFraction)`
+   * daje cykl odblokowania, a `Sim` przelicza go na `SimState.evacUnlockTick`. Faza 3,
+   * strojąc to pole, przesuwa MOMENT OTWARCIA EWAKUACJI, nie długość rozgrywki.
+   */
   cyclesPerRun: number;
   /** Ułamek runu, po którym Evac staje się dostępny. 0,67 = ostatnia tercja. */
   evacUnlockFraction: number;

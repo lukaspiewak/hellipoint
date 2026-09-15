@@ -179,3 +179,113 @@ describe('RunConfig — walidacja w konstruktorze Sim', () => {
     expect(() => new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: TICK_SECONDS, startingOre: 100 })).not.toThrow();
   });
 });
+
+/**
+ * Sześć pozostałych pól `RunConfig` nie miało żadnej walidacji, a DWA z nich wpływają
+ * wprost do `SimState`: `cyclesPerRun` → `evacUnlockTick`, `evacAlarmSeconds` →
+ * `evacAlarmRemaining`. Zmierzone przed poprawką: `cyclesPerRun: NaN` dawało
+ * `evacUnlockTick = NaN`, a `evacAlarmSeconds: Infinity` — `evacAlarmRemaining = Infinity`.
+ * `JSON.stringify` zamienia obie wartości na `null`, więc po wczytaniu zapisu w Fazie 5
+ * `s.tick < null` jest fałszem na zawsze (bramka §5.6 odwraca się w „zawsze otwarta"),
+ * a `null >= 0` i `null - 0,05 <= ALARM_EPSILON` są jednocześnie prawdziwe — pierwszy
+ * tick po wczytaniu ogłasza ZWYCIĘSTWO.
+ */
+describe('RunConfig — walidacja pozostałych sześciu pól', () => {
+  const planet = createPlanet({ seed: 1 });
+  const build = (patch: Partial<typeof DEFAULT_RUN>) =>
+    () => new Sim(planet, { ...DEFAULT_RUN, ...patch });
+
+  it('cyclesPerRun musi być całkowity i >= 1', () => {
+    expect(build({ cyclesPerRun: 0 })).toThrow(/cyclesPerRun.*0/);
+    expect(build({ cyclesPerRun: -3 })).toThrow(/cyclesPerRun.*-3/);
+    expect(build({ cyclesPerRun: NaN })).toThrow(RangeError);
+    expect(build({ cyclesPerRun: Infinity })).toThrow(RangeError);
+    expect(build({ cyclesPerRun: 2.5 })).toThrow(/cyclesPerRun.*2\.5/);
+    expect(build({ cyclesPerRun: 1 })).not.toThrow();
+  });
+
+  it('evacUnlockFraction musi być skończonym ułamkiem z [0, 1]', () => {
+    expect(build({ evacUnlockFraction: -0.1 })).toThrow(/evacUnlockFraction.*-0\.1/);
+    expect(build({ evacUnlockFraction: 1.5 })).toThrow(/evacUnlockFraction.*1\.5/);
+    expect(build({ evacUnlockFraction: NaN })).toThrow(RangeError);
+    expect(build({ evacUnlockFraction: Infinity })).toThrow(RangeError);
+    // Obie granice INCLUSIVE: 0 = Evac od pierwszego ticka, 1 = dopiero w ostatnim cyklu.
+    expect(build({ evacUnlockFraction: 0 })).not.toThrow();
+    expect(build({ evacUnlockFraction: 1 })).not.toThrow();
+  });
+
+  it('evacEnergyRequired musi być skończony i DODATNI — zero usuwa ładowanie', () => {
+    expect(build({ evacEnergyRequired: 0 })).toThrow(/evacEnergyRequired.*0/);
+    expect(build({ evacEnergyRequired: -1 })).toThrow(RangeError);
+    expect(build({ evacEnergyRequired: NaN })).toThrow(RangeError);
+    expect(build({ evacEnergyRequired: Infinity })).toThrow(RangeError);
+  });
+
+  it('evacChargeRate musi być skończony i DODATNI — zero blokuje zwycięstwo na zawsze', () => {
+    expect(build({ evacChargeRate: 0 })).toThrow(/evacChargeRate.*0/);
+    expect(build({ evacChargeRate: -5 })).toThrow(RangeError);
+    expect(build({ evacChargeRate: NaN })).toThrow(RangeError);
+    expect(build({ evacChargeRate: Infinity })).toThrow(RangeError);
+  });
+
+  it('evacAlarmSeconds musi być skończony i DODATNI — zero usuwa alarm z warunku wygranej', () => {
+    expect(build({ evacAlarmSeconds: 0 })).toThrow(/evacAlarmSeconds.*0/);
+    expect(build({ evacAlarmSeconds: -60 })).toThrow(RangeError);
+    expect(build({ evacAlarmSeconds: NaN })).toThrow(RangeError);
+    expect(build({ evacAlarmSeconds: Infinity })).toThrow(RangeError);
+  });
+
+  it('spawn musi być obiektem SpawnConfig, nie null ani liczbą', () => {
+    expect(build({ spawn: null as never })).toThrow(/spawn/);
+    expect(build({ spawn: undefined as never })).toThrow(/spawn/);
+    expect(build({ spawn: 7 as never })).toThrow(/spawn/);
+  });
+
+  /**
+   * Straż na WYNIKU, nie tylko na wejściach — ten sam idiom, co przy `angle`
+   * w `sunDirection` (light.ts). `rotationPeriod = 1e308` jest skończony i większy od
+   * ticka, więc przechodzi obie straże okresu obrotu, ale iloczyn `(cykl − 1) × 1e308`
+   * przepełnia się do Infinity. Bez tej straży poprawna konfiguracja wstawiałaby
+   * nieskończoność do `SimState`.
+   */
+  it('odrzuca konfigurację, w której sam próg PRZEPEŁNIA się do nieskończoności', () => {
+    expect(build({ rotationPeriod: 1e308 })).toThrow(/evacUnlockTick.*non-finite/);
+  });
+
+  /**
+   * Odwrotny kierunek dowodu: nie „te wartości są odrzucane", tylko „żadna PRZYJĘTA
+   * konfiguracja nie wstawia do stanu nieskończoności ani NaN". Skrajne, ale legalne
+   * kombinacje — najkrótszy dopuszczalny obrót, próg na obu granicach ułamka, alarm
+   * mikroskopijny i ogromny.
+   */
+  it('żadna konfiguracja przechodząca walidację nie daje nieskończoności ani NaN w SimState', () => {
+    const skrajne = [
+      { cyclesPerRun: 1, evacUnlockFraction: 0 },
+      { cyclesPerRun: 1, evacUnlockFraction: 1 },
+      { cyclesPerRun: 1_000_000, evacUnlockFraction: 1 },
+      { rotationPeriod: TICK_SECONDS, cyclesPerRun: 1_000_000 },
+      { rotationPeriod: 1e6, evacAlarmSeconds: 1e-6 },
+      { evacAlarmSeconds: 1e6, evacEnergyRequired: 1e-9, evacChargeRate: 1e9 },
+    ];
+    for (const patch of skrajne) {
+      const sim = new Sim(planet, { ...DEFAULT_RUN, ...patch });
+      const opis = JSON.stringify(patch);
+      expect(Number.isFinite(sim.state.evacUnlockTick), `evacUnlockTick dla ${opis}`).toBe(true);
+      expect(Number.isFinite(sim.state.evacAlarmRemaining), `evacAlarmRemaining dla ${opis}`).toBe(true);
+      expect(sim.state.evacUnlockTick, `evacUnlockTick dla ${opis}`).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  /**
+   * Clamp `Math.max(0, …)` przy `evacUnlockTick`: przy `evacUnlockFraction = 0`
+   * cykl odblokowania wychodzi 0, więc `(0 − 1) × rotationPeriod` jest UJEMNE. Ten sam
+   * wzorzec, co podłoga regeneracji ekspozycji w burning.ts — bez clampa do stanu
+   * trafiłby ujemny tick, a `s.tick < -3600` byłoby fałszem „przypadkiem", nie z zasady.
+   */
+  it('clamp trzyma próg na zerze tam, gdzie surowe wyliczenie jest UJEMNE', () => {
+    const sim = new Sim(planet, { ...DEFAULT_RUN, evacUnlockFraction: 0 });
+    const cyklOdblokowania = Math.ceil(DEFAULT_RUN.cyclesPerRun * 0);
+    expect(cyklOdblokowania).toBe(0); // przesłanka: surowo (0 − 1) × 180 / 0,05 = −3600
+    expect(sim.state.evacUnlockTick).toBe(0);
+  });
+});

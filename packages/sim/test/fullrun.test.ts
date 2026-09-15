@@ -4,7 +4,10 @@ import { multiSourceDistances } from '../src/world/graph.js';
 import { Sim } from '../src/sim/loop.js';
 import { currentCycle, DEFAULT_RUN, evacUnlocked } from '../src/sim/rules.js';
 import { stateHash } from '../src/sim/hash.js';
-import { ENEMIES } from '../src/sim/defs.js';
+import { readFileSync } from 'node:fs';
+import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
+import { ORE_PER_SECOND } from '../src/sim/economy.js';
+import { lightField, sunDirection } from '../src/sim/light.js';
 import { spawnUnit } from '../src/sim/movement.js';
 import { TICK_SECONDS, type BuildingType } from '../src/sim/state.js';
 import type { Command } from '../src/sim/commands.js';
@@ -33,6 +36,20 @@ describe('pełny run', () => {
     }
     expect(sim.state.phase).toBe('DEFEAT');
     expect(ticks).toBeLessThan(PASSIVE_CAP);
+
+    // OKNO, nie sam limit. Limit dowodzi tylko, że run się kończy — a to za mało:
+    // zmierzone, że PRZEPOŁOWIENIE `dps` wszystkich wrogów wydłuża ten run z 487 do 597
+    // ticków i cały zestaw nadal przechodzi. Okno przypina TEMPO.
+    //
+    // Margines 5 % dobrany z pomiaru wrażliwości (mnożnik `dps` → długość runu seeda 101):
+    //   ×0,50 → 597 (+22,6 %)   ×0,75 → 529 (+8,6 %)   ×0,90 → 502 (+3,1 %)
+    //   ×1,10 → 473 (−2,9 %)    ×1,25 → 455 (−6,6 %)   ×2,00 → 400 (−17,9 %)
+    // ŁAPIE: zmiany przesuwające run o więcej niż ~5 %, czyli przestrojenie `dps` o ćwierć
+    // i więcej w obie strony. NIE ŁAPIE: zmian rzędu ±10 % `dps`, które ruszają run o ~3 %.
+    // Seed 101 wybrany świadomie — jest najczulszy: przy ×0,5…×2,0 runy seedów 102 i 103
+    // zmieniają się tylko o ~3 %, bo ich długość wyznacza droga i tempo spawnu, nie obrażenia.
+    expect(ticks).toBeGreaterThan(463); // 487 − 5 %
+    expect(ticks).toBeLessThan(511);    // 487 + 5 %
   });
 
   it('pełen run jest deterministyczny na przestrzeni tysięcy ticków', () => {
@@ -55,15 +72,28 @@ describe('pełny run', () => {
 
     let sawUnits = false;
     let ticks = 0;
+    // `?? 0` na końcu przepuszczało CORE **usunięty** ze stanu jako „ma mniej hp niż pełne",
+    // więc test o odniesionych obrażeniach przechodziłby dla rdzenia, którego nikt nie tknął,
+    // a który tylko zniknął. Ten run KOŃCZY SIĘ utratą CORE (zmierzone: 2034 ticki), więc
+    // asercja na stanie końcowym nie ma czego badać — obrażenia trzeba zaobserwować
+    // W TRAKCIE, na budynku, który wtedy JESZCZE STAŁ.
+    let sawDamagedCore = false;
+    let minCoreHp = fullHp;
     while (ticks < PASSIVE_CAP && sim.state.phase === 'RUNNING') {
       sim.step();
       ticks++;
       if (sim.state.units.length > 0) sawUnits = true;
+      const b = sim.state.buildings[core];
+      if (b !== null) {
+        if (b.hp < minCoreHp) minCoreHp = b.hp;
+        if (b.hp < fullHp) sawDamagedCore = true;
+      }
     }
 
     expect(ticks).toBeLessThan(PASSIVE_CAP);
     expect(sawUnits).toBe(true);
-    expect(sim.state.buildings[core]?.hp ?? 0).toBeLessThan(fullHp);
+    expect(sawDamagedCore).toBe(true);
+    expect(minCoreHp).toBeLessThan(fullHp);
   });
 });
 
@@ -156,19 +186,121 @@ describe('próg ewakuacji wyliczany przez Sim', () => {
 
 /**
  * Kolejność systemów w `step()` jest CZĘŚCIĄ KONTRAKTU DETERMINIZMU
- * (global-constraints.md): komendy → oświetlenie → energia → ekonomia → pola przepływu →
- * ruch → walka → spalanie → fale i spawn → warunki końca. Żaden test determinizmu jej nie
- * pilnuje — wszystkie porównują przebieg SAM ZE SOBĄ, więc są zielone przy DOWOLNEJ
- * kolejności, byle stałej. Zmierzone: przestawienie `updateRules` przed ruch i walkę
- * oblewało w całym zestawie dokładnie JEDEN test — i to przypadkiem, bo zmieniało hash
- * bronionego runu, a nie dlatego, że cokolwiek nazywało kolejność.
+ * (global-constraints.md). Dziesięć systemów daje DZIEWIĘĆ sąsiednich ogniw i każde
+ * zostało zmierzone osobno — przestawieniem pary w `loop.ts` i porównaniem `stateHash`
+ * oraz liczników po pełnym przebiegu 6000 ticków (z ekstraktorem, wieżami, panelami,
+ * baterią i murem, żeby dotknąć wszystkich dziesięciu systemów):
  *
- * Ten test przypina OSTATNIE ogniwo łańcucha przez obserwowalny skutek: CORE dobity
- * w walce danego ticka musi zakończyć run W TYM SAMYM ticku. Gdyby warunki końca biegły
- * przed walką, faza zostałaby na RUNNING przez jeszcze jeden pełny tick — jeden tick,
- * w którym gra jest formalnie przegrana, a komendy wciąż się wykonują.
+ *   • DWA pilnuje KOMPILATOR (TS2448, użycie `light`/`fields` przed deklaracją),
+ *   • CZTERY naprawdę KOMUTUJĄ — hash i liczniki identyczne co do bitu,
+ *   • TRZY są obserwowalne i dostają po jednej asercji behawioralnej niżej.
+ *
+ * Żaden test determinizmu tego nie pilnował i pilnować nie może: porównują przebieg
+ * SAM ZE SOBĄ, więc są zielone pod każdą stałą permutacją. Pełna tabela dziewięciu
+ * ogniw stoi w doc-comment nad `step()` w loop.ts.
+ *
+ * **Świadomie nie ma tu testów na cztery komutujące ogniwa.** Test behawioralny na
+ * zamianę, która niczego nie zmienia, nie może oblać — byłby dziewiątym defektywnym
+ * testem tego projektu. Te cztery pilnuje strukturalnie test czytający `loop.ts`,
+ * na końcu tego pliku.
+ *
+ * Uwaga metodologiczna, bo kosztowała jedno podejście: sonda CAŁORUNOWA jest za słabym
+ * narzędziem na te ogniwa. Zamiana energia ↔ ekonomia i walka ↔ spalanie dawała w niej
+ * hash identyczny co do bitu — oba ogniwa ujawniają się dopiero w scenariuszu celowanym
+ * (tick postawienia ekstraktora; jednostka gasnąca dokładnie w tym ticku). Dlatego
+ * poniższe testy budują sytuację wprost, zamiast szukać jej w długim przebiegu.
  */
 describe('kolejność systemów w step()', () => {
+  /**
+   * Ogniwo energia → ekonomia. `updateEconomy` czyta flagę `powered`, którą ustawia
+   * `updatePower`; ekstraktor postawiony komendą w tym ticku ma `powered: false` prosto
+   * z `applyCommand`. Zmierzone: przy poprawnej kolejności wydobywa w ticku budowy
+   * 0,05 rudy (ORE_PER_SECOND × TICK_SECONDS), po zamianie — 0,00, bo ekonomia widzi
+   * jeszcze niezasilony budynek.
+   */
+  it('ekstraktor postawiony w tym ticku już w nim wydobywa — ekonomia widzi flagi energii z TEGO ticka', () => {
+    const planet = createPlanet({ seed: 7 });
+    const fromCore = multiSourceDistances(planet.cells.map((c) => c.neighbors), [planet.startCell]);
+    // Złoże w zasięgu sieci CORE (connectionRadius 3), żeby ekstraktor był ZASILONY —
+    // bez tego test mierzyłby brak zasilania, a nie kolejność systemów.
+    const oreCell = planet.cells
+      .filter((c) => fromCore[c.id] >= 1 && fromCore[c.id] <= 3 && c.cellType === 'HEXAGON' && c.oreCapacity > 0)
+      .sort((a, b) => fromCore[a.id] - fromCore[b.id] || a.id - b.id)[0];
+    expect(oreCell, 'seed bez złoża w zasięgu sieci — test nie miałby czego mierzyć').toBeDefined();
+
+    const sim = new Sim(planet, { ...DEFAULT_RUN, startingOre: 1000 });
+    sim.enqueue({ kind: 'BUILD', cellId: oreCell.id, type: 'EXTRACTOR' });
+    sim.step();
+
+    expect(sim.state.buildings[oreCell.id]).toMatchObject({ type: 'EXTRACTOR', powered: true });
+    const wydobyte = sim.state.ore - (1000 - BUILDINGS.EXTRACTOR.costOre);
+    expect(wydobyte).toBeCloseTo(ORE_PER_SECOND * TICK_SECONDS, 9);
+    expect(wydobyte).toBeGreaterThan(0);
+  });
+
+  /**
+   * Ogniwo ruch → walka. `unitsAttackBuildings` czyta `u.cellId`, które `updateMovement`
+   * właśnie zaktualizował. Zmierzone na seedzie 3 (cała okolica d ≤ 3 komórki startowej
+   * jest CIEMNA na ticku 0 — w świetle jednostka porzuca cel i ucieka, więc ogniwo w ogóle
+   * by się nie ujawniło): jednostka wypuszczona 3 kroki od CORE zadaje pierwsze obrażenia
+   * na iteracji 36; po zamianie ruchu z walką — na 37, bo atakuje z komórki sprzed kroku.
+   */
+  it('jednostka atakuje z komórki, do której właśnie weszła — walka widzi ruch z TEGO ticka', () => {
+    const planet = createPlanet({ seed: 3 });
+    const fromCore = multiSourceDistances(planet.cells.map((c) => c.neighbors), [planet.startCell]);
+    const light0 = lightField(planet, sunDirection(0, DEFAULT_RUN.rotationPeriod));
+    const core = planet.startCell;
+
+    // Przesłanka testu, nie założenie: jednostka musi startować w ciemności.
+    const start = planet.cells
+      .filter((c) => fromCore[c.id] === 3 && c.cellType === 'HEXAGON' && light0[c.id] === 0)
+      .sort((a, b) => a.id - b.id)[0];
+    expect(start, 'brak ciemnej komórki w odległości 3 — jednostka uciekałaby przed światłem').toBeDefined();
+
+    const sim = new Sim(planet, DEFAULT_RUN);
+    const fullHp = sim.state.buildings[core]!.hp;
+    spawnUnit(sim.state, 'SWARM', start.id);
+
+    let iteracje = 0;
+    while (sim.state.buildings[core]?.hp === fullHp && iteracje < 300) {
+      sim.step();
+      iteracje++;
+    }
+
+    expect(sim.state.buildings[core]!.hp).toBeLessThan(fullHp);
+    // Dokładna liczba, nie „mniej niż 300": po zamianie ruchu z walką wychodzi 37.
+    expect(iteracje).toBe(36);
+  });
+
+  /**
+   * Ogniwo walka → spalanie. Oba systemy zabijają jednostki; `updateBurning` jawnie
+   * polega na tym, że walka zabrała swoich zabitych WCZEŚNIEJ (patrz komentarz
+   * o naliczaniu rudy w burning.ts). Konsekwencja obserwowalna: jednostka, której
+   * ekspozycja dobiega końca w tym ticku, zdąży jeszcze zadać swój cios.
+   * Zmierzone: barykada 150 → 149,5 (SWARM dps 10 × 0,05); po zamianie zostaje 150,0.
+   */
+  it('jednostka gasnąca od słońca zadaje jeszcze swój ostatni cios — spalanie biegnie PO walce', () => {
+    const planet = createPlanet({ seed: 7 });
+    const sim = new Sim(planet, DEFAULT_RUN);
+    const light0 = lightField(planet, sunDirection(0, DEFAULT_RUN.rotationPeriod));
+
+    // Komórka OŚWIETLONA (inaczej ekspozycja nie rośnie i jednostka nie zginie w tym ticku).
+    const cell = planet.cells.find((c) => light0[c.id] > 0.5 && c.cellType === 'HEXAGON');
+    expect(cell, 'brak oświetlonego heksa na ticku 0').toBeDefined();
+
+    const fullHp = BUILDINGS.BARRICADE.hp;
+    sim.state.buildings[cell!.id] = { cellId: cell!.id, type: 'BARRICADE', hp: fullHp, powered: false };
+    spawnUnit(sim.state, 'SWARM', cell!.id);
+    // O jeden tick przed progiem: to `+= TICK_SECONDS` w TYM ticku go przekroczy.
+    sim.state.units[0].exposure = ENEMIES.SWARM.burnTime - TICK_SECONDS;
+
+    sim.step();
+
+    expect(sim.state.units.length, 'jednostka miała zginąć od słońca w tym ticku').toBe(0);
+    expect(sim.state.buildings[cell!.id]!.hp).toBeCloseTo(fullHp - ENEMIES.SWARM.dps * TICK_SECONDS, 9);
+    expect(sim.state.buildings[cell!.id]!.hp).toBeLessThan(fullHp);
+  });
+
   it('warunki końca widzą świat PO walce tego samego ticka, nie sprzed niego', () => {
     const planet = createPlanet({ seed: 103 });
     const sim = new Sim(planet, DEFAULT_RUN);
@@ -423,5 +555,60 @@ describe('zwycięstwo jest osiągalne przez samą pętlę, niezależnie od stroj
     expect(sawUnits).toBe(true);
     expect(sim.state.evacAlarmRemaining).toBeCloseTo(0, 9);
     expect(sim.state.phase).toBe('VICTORY');
+  });
+});
+
+/**
+ * Cztery z dziewięciu ogniw kolejności naprawdę KOMUTUJĄ (zmierzone: zamiana daje hash
+ * i liczniki identyczne co do bitu przez cały przebieg), więc test behawioralny na nie
+ * nie może oblać — a test, który nie może oblać, jest gorszy niż brak testu. Ten test
+ * jest jedynym narzędziem, które je przypina: czyta ŹRÓDŁO `loop.ts` i sprawdza, że
+ * dziesięć wywołań systemów występuje w kolejności z global-constraints.md.
+ *
+ * Precedens jest w repozytorium: `contract.test.ts` również czyta pliki źródłowe (tam
+ * lekserem TypeScriptu, bo musi odróżnić import od napisu w komentarzu). Tutaj wystarczy
+ * pozycja unikalnych wywołań, więc nie ma po co ciągnąć leksera.
+ */
+describe('kolejność wywołań systemów w źródle step()', () => {
+  const KOLEJNOSC = [
+    'applyCommand(',        // 1. komendy
+    'sunDirection(',        // 2. oświetlenie
+    'lightField(',
+    'updatePower(',         // 3. energia
+    'updateEconomy(',       // 4. ekonomia
+    'buildAllFlowFields(',  // 5. pola przepływu
+    'updateMovement(',      // 6. ruch
+    'updateCombat(',        // 7. walka
+    'updateBurning(',       // 8. spalanie
+    'updateSpawning(',      // 9. fale i spawn
+    'updateRules(',         // 10. warunki końca
+  ] as const;
+
+  it('dziesięć systemów stoi w kolejności z global-constraints.md', () => {
+    const src = readFileSync(new URL('../src/sim/loop.ts', import.meta.url), 'utf8');
+    const body = src.slice(src.indexOf('  step(): void {'));
+    // Strażnik na własną niepustość: gdyby `step()` przestało się tak nazywać, `slice`
+    // dałby cały plik albo pustkę, a asercje niżej „przeszłyby", nic nie sprawdzając.
+    expect(body.length).toBeGreaterThan(200);
+    expect(body).toContain('this.s.tick++;');
+
+    const pozycje = KOLEJNOSC.map((wywolanie) => {
+      const i = body.indexOf(wywolanie);
+      expect(i, `wywołanie ${wywolanie} zniknęło ze step()`).toBeGreaterThan(-1);
+      // Unikalność: dwa wystąpienia znaczyłyby, że system biegnie dwa razy w ticku,
+      // a `indexOf` po cichu mierzyłby tylko pierwsze.
+      expect(
+        body.indexOf(wywolanie, i + 1),
+        `wywołanie ${wywolanie} występuje w step() więcej niż raz`,
+      ).toBe(-1);
+      return { wywolanie, i };
+    });
+
+    for (let k = 1; k < pozycje.length; k++) {
+      expect(
+        pozycje[k].i,
+        `${pozycje[k].wywolanie} stoi PRZED ${pozycje[k - 1].wywolanie} — kolejność systemów jest częścią kontraktu determinizmu`,
+      ).toBeGreaterThan(pozycje[k - 1].i);
+    }
   });
 });
