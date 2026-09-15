@@ -235,7 +235,18 @@ Testowalna jest **matematyka kamery**, nie obraz. Wydziel ją do czystych funkcj
 1. `focusOn(cellCenter)` ustawia kamerę tak, że **kierunek patrzenia pokrywa się z normalną komórki** — `dot(normalize(camera.position), normalize(target)) > 0,999`
 2. `focusOn` zachowuje **odległość** od środka planety (zoom nie skacze przy powrocie do bazy)
 3. zoom jest ograniczony z obu stron: nie da się wejść pod powierzchnię ani odlecieć poza zadany limit
-4. determinizm: `focusOn` na tę samą komórkę z dwóch różnych pozycji daje **tę samą** pozycję końcową
+4. determinizm: `focusOn` na tę samą komórkę z dwóch różnych pozycji **o tej samej odległości
+   od środka** daje tę samą pozycję końcową.
+
+   > **Doprecyzowanie — pierwsza wersja była sprzeczna z punktem 2 i wykonawca to zauważył.**
+   > Punkt 2 każe zachować odległość, więc `focusOn` z dwóch pozycji o RÓŻNEJ odległości musi
+   > dać różne wyniki. Warunek „ta sama pozycja końcowa" trzyma wyłącznie przy wspólnej
+   > odległości startowej i tego brief nie mówił.
+
+5. **pozycje startowe dobrane analitycznie, nie losowo.** Kamera już mniej więcej skierowana
+   na planetę spełnia luźne `dot > 0,9` z wielu miejsc, więc test przeszedłby dla `focusOn`,
+   które nie robi nic. Zmierzone przy wykonaniu: pozycja antypodyczna (`dot = −1`) i prostopadła
+   (`dot = 0`), obie na wspólnej odległości — czyli najszerszy możliwy rozrzut kątowy, 180°.
 
 - [ ] **Krok 2–4: porażka → implementacja → zielone**
 - [ ] **Krok 5: Spięcie sceny** — `planetMesh.ts` tworzy `THREE.Mesh` z geometrii Taska 2, materiał `MeshBasicMaterial` z `vertexColors: true` (**nie** `MeshStandardMaterial` — oświetlenie liczy symulacja, nie silnik renderu), pętla renderu wywołuje `writeCellColors` i podnosi `needsUpdate`
