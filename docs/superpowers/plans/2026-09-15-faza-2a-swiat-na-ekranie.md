@@ -249,8 +249,29 @@ Testowalna jest **matematyka kamery**, nie obraz. Wydziel ją do czystych funkcj
    (`dot = 0`), obie na wspólnej odległości — czyli najszerszy możliwy rozrzut kątowy, 180°.
 
 - [ ] **Krok 2–4: porażka → implementacja → zielone**
-- [ ] **Krok 5: Spięcie sceny** — `planetMesh.ts` tworzy `THREE.Mesh` z geometrii Taska 2, materiał `MeshBasicMaterial` z `vertexColors: true` (**nie** `MeshStandardMaterial` — oświetlenie liczy symulacja, nie silnik renderu), pętla renderu wywołuje `writeCellColors` i podnosi `needsUpdate`
-- [ ] **Krok 6: Commit**
+- [ ] **Krok 5: Trzy rzeczy, które łatwo pominąć, bo żaden test ich nie pilnuje sam z siebie**
+
+  Wszystkie trzy znalazł przegląd, nie autor — każda leży poza listą testów wyżej i każda
+  jest natychmiast widoczna dla człowieka, a niewidoczna dla suity.
+
+  1. **`setPixelRatio` musi być WOŁANY.** Zmierzone: metoda zadeklarowana i zaślepiona w testach,
+     ale bez wywołania, daje rozmyty render na ekranach o wysokiej gęstości — i nic tego nie
+     zgłasza. Wołaj przy tworzeniu sceny i przy każdej zmianie rozmiaru, z ograniczeniem górnym
+     na dwukrotności (wyżej płaci się czterokrotnym kosztem wypełniania przy znikomym zysku).
+     **Martwa metoda z zaślepką w teście jest najgorszym z trzech stanów** — wygląda na pokrytą
+     i nie działa.
+  2. **Proporcje kadru muszą mieć asercję.** Zmierzone: zaszycie `aspect = 1` zostawia
+     **420 z 422** testów zielonych, a skutkiem jest planeta jako widoczna elipsa w każdym
+     niekwadratowym oknie. Przypnij proporcję do ilorazu wymiarów kanwasu i sprawdź, że zmiana
+     rozmiaru ją aktualizuje.
+  3. **`dispose()` musi dowodzić, że coś zwalnia.** Zmierzone: wypatroszenie wszystkich trzech
+     `dispose()` do pustych funkcji zostawia **419 z 422** zielonych, bo istniejące testy
+     sprawdzały wyłącznie, że wywołanie nie rzuca. Szpieg na wywołania wystarczy — testowanie
+     samego WebGL jest zbędne. Faza 2B przebudowuje sceny, więc gubiony kontekst ujawniłby się
+     jako narastające zużycie pamięci, którego nikt by z tą fazą nie powiązał.
+
+- [ ] **Krok 6: Spięcie sceny** — `planetMesh.ts` tworzy `THREE.Mesh` z geometrii Taska 2, materiał `MeshBasicMaterial` z `vertexColors: true` (**nie** `MeshStandardMaterial` — oświetlenie liczy symulacja, nie silnik renderu), pętla renderu wywołuje `writeCellColors` i podnosi `needsUpdate`
+- [ ] **Krok 7: Commit**
 
 ---
 
