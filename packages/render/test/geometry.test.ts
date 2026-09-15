@@ -17,6 +17,23 @@ function vecAt(arr: Float32Array, vertexIndex: number): Vec3 {
 }
 
 /**
+ * Czy wierzchołek pod `vertexIndex` w `positions` odpowiada DOKŁADNIE `expected` — z
+ * poprawnym zaokrągleniem float64→float32 (`Math.fround`, dokładnie to co robi zapis do
+ * `Float32Array`), więc porównanie jest ścisłe (`===`), nie tolerancyjne. Zamierzenie: żadna
+ * tolerancja nie ma szansy zamaskować podmiany na WŁAŚCIWĄ, ale INNĄ komórkę — dwie różne
+ * komórki na sferze nie mają współrzędnych bliskich siebie na tyle, żeby jakakolwiek
+ * rozsądna tolerancja je pomyliła, ale ścisła równość zamyka to pytanie definitywnie.
+ */
+function vertexMatches(positions: Float32Array, vertexIndex: number, expected: Vec3): boolean {
+  const o = vertexIndex * 3;
+  return (
+    positions[o] === Math.fround(expected.x) &&
+    positions[o + 1] === Math.fround(expected.y) &&
+    positions[o + 2] === Math.fround(expected.z)
+  );
+}
+
+/**
  * Który indeks komórki jest właścicielem każdego wierzchołka, wyprowadzone z
  * `cellVertexStart`/`cellVertexCount` — NIE z założenia, że `indices` jest w tej samej
  * kolejności co `planet.cells` (implementacja może to zmienić; testy 3 i 6 mają wtedy
@@ -183,5 +200,34 @@ describe('buildPlanetGeometry', () => {
     expect(smallerGeo.positions.length).not.toBe(geo.positions.length);
     expect(smallerGeo.indices.length).not.toBe(geo.indices.length);
     expect(smallerGeo.positions.length).toBeGreaterThan(0);
+  });
+
+  it('9. tożsamość komórka→wierzchołki PRZEZ WARTOŚĆ: cellVertexStart[i] to WŁAŚNIE cells[i].center, kolejne WŁAŚNIE jej corners w kolejności', () => {
+    // Testy 1-8 sprawdzają wyłącznie własności SUMARYCZNE (suma, pokrycie, brak
+    // nakładania, „każdy wierzchołek leży na sferze" itd.) — zamiana `cellVertexStart`/
+    // `cellVertexCount` MIĘDZY DWIEMA komórkami tego samego typu (ten sam rozmiar zakresu)
+    // zachowuje każdą z nich, więc żaden z tamtych testów by tego nie złapał. Ten test
+    // sprawdza tożsamość PER KOMÓRKA: nie „czy zakresy się sumują", tylko „czy WŁAŚNIE TA
+    // komórka dostała WŁASNE dane". Licznik rozbieżności (nie fail-fast na pierwszej), żeby
+    // dało się podać dokładną liczbę przy dowodzie zębów w raporcie.
+    let mismatches = 0;
+    let fiveCornerCells = 0;
+
+    for (const cell of planet.cells) {
+      if (cell.corners.length === 5) fiveCornerCells++;
+      const start = geo.cellVertexStart[cell.id];
+
+      if (!vertexMatches(geo.positions, start, cell.center)) mismatches++;
+      for (let k = 0; k < cell.corners.length; k++) {
+        if (!vertexMatches(geo.positions, start + 1 + k, cell.corners[k])) mismatches++;
+      }
+    }
+
+    // Iteracja obejmuje WSZYSTKIE 1442 komórki z `planet.cells`, w tym wszystkie 12
+    // pentagonów — nie tylko heksagony (mutacja D w raporcie użyła id 700, heksu, więc
+    // sama tabela mutacji tego nie dowodziła; tu jest to zweryfikowane niezależnie liczbą
+    // komórek o dokładnie pięciu rogach, którą `dual.test.ts` już ustalił jako 12).
+    expect(fiveCornerCells).toBe(12);
+    expect(mismatches).toBe(0);
   });
 });
