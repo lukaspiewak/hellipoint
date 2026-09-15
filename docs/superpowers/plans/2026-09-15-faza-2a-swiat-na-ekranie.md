@@ -28,6 +28,17 @@
 - Każda liczba czysto wizualna (kolory, progi pasm, czułość kamery) oznaczona komentarzem `// [WYGLĄD]` — analogicznie do `[STROJENIE]` w symulacji, żeby Faza 4 wiedziała, co wolno jej ruszać.
 - Commit po każdym zadaniu.
 
+> **Odstępstwo od zwyczaju planów Fazy 1, świadome.** Plany 1A–1C niosły **kompletny kod**
+> do przepisania. Zmierzony skutek: **trzy z sześciu implementacji referencyjnych oblewały
+> własne testy** z tych samych planów (suma zmiennoprzecinkowa w Tasku 3 Fazy 1C, brak kroku
+> uzbrojenia w Tasku 4, zgubione strażnice konstruktora w Tasku 5). Kod pisany w planie, którego
+> autor nie uruchomił, daje złudzenie specyfikacji przy zerowej pewności.
+>
+> Ten plan specyfikuje **zachowanie i kryteria akceptacji**, nie treść plików. Powód jest
+> dodatkowy i mocniejszy: to jest render, a ja nie mam jak uruchomić Three.js przy pisaniu planu —
+> kod przepisany stąd byłby zgadywaniem wobec API, którego nie wykonałem. Wykonawca ma napisać
+> kod sam i sprawdzić go testami; plan mówi, co ma być prawdą, i to możliwie ostro.
+
 ---
 
 ## Struktura plików
@@ -113,9 +124,18 @@ Testy do napisania, każdy z wartością wziętą z rzeczywistej planety, nie z 
 **Interfaces:**
 - Consumes: `Float32Array` z `lightField`, `PlanetGeometry`
 - Produces:
-  - `const LIGHT_BANDS: readonly number[]` — `[WYGLĄD]`
-  - `function lightBand(light: number): number`
+  - `type Rgb = readonly [r: number, g: number, b: number]` — składowe w zakresie 0..1, jak w Three.js
+  - `const LIGHT_BANDS: readonly number[]` — rosnące progi w (0, 1), `[WYGLĄD]`
+  - `type Palette = readonly Rgb[]` — **dokładnie `LIGHT_BANDS.length + 1` pozycji**: jedna na pasmo poniżej pierwszego progu, po jednej na każdy przedział, jedna powyżej ostatniego
+  - `const DEFAULT_PALETTE: Palette` — `[WYGLĄD]`
+  - `function lightBand(light: number): number` — indeks pasma, `0..LIGHT_BANDS.length`
   - `function writeCellColors(geo: PlanetGeometry, light: Float32Array, out: Float32Array, palette: Palette): void`
+
+> **Własność tablicy `out`.** `writeCellColors` **nie alokuje niczego** — pisze do bufora, który
+> dostaje. Bufor należy do `planetMesh.ts` (Task 4), jest alokowany raz przy tworzeniu siatki
+> o długości `positions.length` i podpięty jako atrybut `color` geometrii Three.js. Alokacja
+> per klatka wyrzuciłaby 1442 komórki × ~18 wierzchołków × 3 składowe do odśmiecacza sześćdziesiąt
+> razy na sekundę — a to jest pętla renderu, nie miejsce na presję pamięciową.
 
 To jest zadanie, w którym rozstrzyga się filar D1. Bramka Fazy 0 zmierzyła, że przy gładkim `saturate(dot)` **terminatora nie widać wcale**, a przy progowanym jest ostry i natychmiast czytelny.
 
@@ -129,6 +149,11 @@ To jest zadanie, w którym rozstrzyga się filar D1. Bramka Fazy 0 zmierzyła, �
 4. `writeCellColors` zapisuje **jednolity kolor w całym zakresie komórki** — wszystkie wierzchołki komórki mają identyczny kolor co do bitu
 5. sąsiadujące komórki po dwóch stronach terminatora dostają **różne pasma** przy rzeczywistym `lightField` — wzięte z prawdziwej planety i prawdziwego `sunDirection`, nie z liczb wpisanych ręcznie
 6. `out` o złej długości → `RangeError` nazywający obie długości (wzorzec z `updatePower`)
+7. **`palette` o złej liczbie pozycji → `RangeError`.** To jest szew między `LIGHT_BANDS`
+   a `DEFAULT_PALETTE`: dwie stałe, które muszą się zgadzać co do długości, a nic ich nie wiąże
+   składniowo. Faza 4 będzie zmieniać paletę i progi niezależnie, więc niezgodność jest kwestią
+   czasu. Dopisz też test, że **`DEFAULT_PALETTE` ma dokładnie `LIGHT_BANDS.length + 1` pozycji** —
+   sprawdzenie samej stałej, nie tylko strażnicy
 
 - [ ] **Krok 2: Uruchom testy i potwierdź porażkę**
 - [ ] **Krok 3: Zaimplementuj**
