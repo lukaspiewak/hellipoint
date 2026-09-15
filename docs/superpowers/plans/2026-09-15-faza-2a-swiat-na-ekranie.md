@@ -333,6 +333,39 @@ Faza 2 to trzy podfazy, tak jak Faza 1 była 1A/1B/1C. Poniższe zarysy istniej�
 żeby wykonawca 2A wiedział, co przyjdzie po nim i czego **nie** ma robić z wyprzedzeniem.
 Pełne plany powstaną po bramkach poprzedniczek, bo każda z nich może zmienić następną.
 
+### 2B — zaczyna od przerobienia bramki czytelności, zanim doda cokolwiek
+
+**To jest pierwsze zadanie Fazy 2B, przed jednostkami i budynkami.** Bramka Fazy 2A przeszła
+15/15, ale po obejrzeniu obu trybów na żywym renderze okazało się, że **mierzy inną zdolność,
+niż deklaruje** — pełny zapis w §7.3.3 dokumentu wyników.
+
+W skrócie: bramka pyta **lokalnie** — „która z tych dwóch zaznaczonych, sąsiadujących komórek
+jest oświetlona". D1 mówi o czytelności **globalnej** — „spójrz na kulę i zobacz, gdzie biegnie
+granica". Wymuszony wybór między dwiema wskazanymi komórkami sprowadza się do „wskaż jaśniejszą"
+i jest rozwiązywalny przy **dowolnej** monotonicznej palecie, więc bramka przechodzi też przy
+cieniowaniu ciągłym. Zaobserwowane wprost: w trybie progowanym granica jest widoczna jako linia
+przez całą tarczę, w trybie ciągłym ta linia znika, a mimo to pary pozostają rozróżnialne,
+bo komórki są płaskimi łatami.
+
+**Przerobiona bramka ma zadawać pytanie globalne.** Dwa warianty warte sprawdzenia, oba tanie:
+- **wskazanie linii** — człowiek klika wzdłuż terminatora, mierzymy odchylenie od prawdziwej
+  granicy w krokach grafu;
+- **klasyfikacja bez sąsiadki** — pokazujemy JEDNĄ zaznaczoną komórkę i pytamy, po której stronie
+  leży. Bez pary odniesienia „wskaż jaśniejszą" przestaje być strategią.
+
+Dopiero taka bramka może oblać w trybie ciągłym — i dopiero wtedy jej PASS będzie dowodem D1.
+Do tego dochodzi kontrola pozytywna odtwarzająca **rzeczywisty** tryb awarii Fazy 0: kolor
+interpolowany po powierzchni, czyli współdzielone wierzchołki albo kolor per wierzchołek.
+
+**Decyzja do podjęcia przy tej samej okazji:** obniżyć `LIGHT_BANDS[0]` do zera, żeby pasmo nocy
+znaczyło dokładnie `light === 0`. Zmierzone w Fazie 2A: przy obecnym progu 0,05 granica
+renderowana i symulowana rozjeżdżają się o 8–38 komórek (średnio 30,8), zawsze o **dokładnie
+jeden krok grafu**. Dla energii to szum poniżej 5 %, ale **spawn i spalanie są binarne**, więc
+tam rozbieżność jest całkowita: istnieje jednokomórkowy pierścień, w którym gracz widzi noc,
+a jednostki się palą i pentagony nie spawnują. Próg zerowy usuwa to bez reszty i czyni granicę
+pełnym skokiem palety dokładnie na linii fizycznej. Kosztem jest unieważnienie piętnastu par
+z zapisanego przebiegu — stąd zmiana należy tutaj, gdzie bramka i tak jest przerabiana.
+
 ### 2B — Jednostki i budynki na ekranie
 
 Instancing dla jednostek (setki naraz, trzy typy, `THREE.InstancedMesh`), budynki jako

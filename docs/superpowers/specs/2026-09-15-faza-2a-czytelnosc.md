@@ -588,6 +588,47 @@ kolor interpolowany po powierzchni, czyli geometria ze współdzielonymi wierzch
 liczony per wierzchołek z pozycji, nie per komórka. Dopiero taka kontrola pozwoli powtórzyć tę
 bramkę jako rozstrzygającą.
 
+### 7.3.3 KOREKTA DRUGA, głębsza — bramka mierzy inną zdolność, niż deklaruje
+
+Po obejrzeniu obu trybów **na żywym renderze, własnymi oczami** (kontroler, po tym jak błędnie
+uznał, że nie ma dostępu do przeglądarki — patrz §7.3.4) widać rzecz, której nie nazwał ani
+pierwotny raport, ani korekta §7.3.1:
+
+**W trybie progowanym granica jest widoczna JAKO LINIA przez całą tarczę** — ostra, poszarpana,
+nie do przeoczenia z dowolnej odległości. **W trybie ciągłym ta linia znika całkowicie.** Zostaje
+płynna rampa od granatu do jasnoszarego.
+
+Ale komórki **pozostają widoczne jako osobne płaskie łaty** o lekko różnych odcieniach, bo każda
+ma własne wierzchołki (Zadanie 2). Więc pytanie „która z tych dwóch SĄSIADEK jest jaśniejsza"
+nadal ma odpowiedź — zmierzone 0,030–0,081 na kanał.
+
+**Stąd sedno, ważniejsze niż sama wada kontroli:**
+
+> **Bramka zadaje pytanie LOKALNE — rozróżnij dwie zaznaczone, sąsiadujące komórki.
+> D1 wymaga czytelności GLOBALNEJ — spójrz na kulę i zobacz, GDZIE biegnie granica.
+> To są dwie różne zdolności i bramka mierzy nie tę.**
+
+Dlatego przeszła w obu trybach, i dlatego przeszłaby przy dowolnej monotonicznej palecie:
+wymuszony wybór między dwiema wskazanymi komórkami sprowadza się do „wskaż jaśniejszą",
+co jest rozwiązywalne zawsze, gdy funkcja jasności jest rosnąca. Progowanie nie było do tego
+potrzebne — potrzebne jest do zobaczenia LINII, czego bramka nie bada.
+
+**Werdykt PASS nadal nie jest fałszywy** — piętnaście trafień to prawdziwa obserwacja
+o rozróżnialności sąsiadów. Ale **nie jest dowodem D1**, bo D1 mówi o czytaniu granicy,
+nie o porównywaniu par.
+
+### 7.3.4 Zapis błędu kontrolera, bo ograniczył zakres bramki końcowej
+
+Kontroler dwukrotnie próbował otworzyć podgląd złą ścieżką (`navigate` zamiast `preview_start`
+z adresem), dostał dwie odmowy i **wyciągnął wniosek, że środowisko nie daje przeglądarki,
+zamiast zbadać przyczynę**. Powtórzył ten wniosek w dyspozycji bramki końcowej, przez co
+recenzent **celowo nie oglądał obrazu** i zapisał listę rzeczy „nieweryfikowalnych bez człowieka".
+Połowa tej listy była weryfikowalna od początku.
+
+Sygnał, który powinien był to złapać: **wykonawca Zadania 5 używał przeglądarki w tej samej
+sesji**, mierząc czasy klatek w Chromium i przełączając tryby na żywo. Sprzeczność między
+„ja nie mogę" a „on właśnie mógł" nie została zauważona.
+
 ### 7.4 Jeśli werdykt jest inny niż PASS — co zapisać
 
 Zgodnie z briefem: FAIL (albo dowolny wynik poniżej 15/15) to WYNIK, nie porażka tego
