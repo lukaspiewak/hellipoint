@@ -594,6 +594,24 @@ describe('krata komórek a terminator (Faza 2B, Zadanie 2)', () => {
     // liczbami bez skali.
     expect(terminatorStep).toBeCloseTo(0.8598, 4);
 
+    // Skok OBRYS↔OBRYS przez granicę pasm — liczba, którą uzasadniony jest `OUTLINE_INSET`
+    // (patrz `planetMesh.ts`) i która trafiła do specu fazy, a do rundy naprawczej 1 nie była
+    // przypięta niczym (i była tam zapisana błędnie jako 0,5546). To jest kontrast, jaki
+    // miałby terminator, gdyby obrysy leżały NA wspólnej krawędzi i ją przykrywały — czyli
+    // jedyne uzasadnienie liczbowe wciągnięcia. Wartości bezwzględne, w obu przestrzeniach.
+    const outlineStepAcross = distance(DEFAULT_OUTLINE_PALETTE[0], DEFAULT_OUTLINE_PALETTE[1]);
+    const fillStepAcross = distance(DEFAULT_PALETTE[0], DEFAULT_PALETTE[1]);
+    expect(fillStepAcross).toBeCloseTo(0.9005, 4); // kontrola: odniesienie to TA SAMA liczba, co w teście 20
+    expect(outlineStepAcross).toBeCloseTo(0.5918, 4);
+    expect(outlineStepAcross / fillStepAcross).toBeCloseTo(0.657, 3);
+    expect(distance(outline[0], outline[1])).toBeCloseTo(0.5632, 4); // ta sama rzecz w sRGB
+
+    // Marginesy „obrys jest bliżej WŁASNEGO pasma niż najbliższego obcego", zmierzone i
+    // wpisane wprost (runda naprawcza 1 — komentarz przy `DEFAULT_OUTLINE_PALETTE` je podawał,
+    // ale żadna asercja ich nie trzymała; asercja (3) niżej wynika w większości par z
+    // nierówności trójkąta i asercji (2), więc sama ich nie zastępuje).
+    const EXPECTED_MARGINS = [3.03, 3.52, 1.67]; // zmierzone: 3,0268 / 3,5248 / 1,6709
+
     let checked = 0;
     for (let band = 0; band < DEFAULT_PALETTE.length; band++) {
       const step = distance(outline[band], fill[band]);
@@ -613,13 +631,70 @@ describe('krata komórek a terminator (Faza 2B, Zadanie 2)', () => {
       // (3) Obrys jest NAJBLIŻEJ wypełnienia WŁASNEGO pasma. Obrys dryfujący w stronę barwy
       //     pasma sąsiedniego czytałby się jak wąski pasek TAMTEGO pasma — czyli rysowałby
       //     nieistniejącą granicę wewnątrz jednolitego obszaru.
+      let nearestOther = Number.POSITIVE_INFINITY;
       for (let other = 0; other < fill.length; other++) {
         if (other === band) continue;
-        expect(distance(outline[band], fill[other]), `${label} kontra wypełnienie ${other}`).toBeGreaterThan(step);
+        const toOther = distance(outline[band], fill[other]);
+        expect(toOther, `${label} kontra wypełnienie ${other}`).toBeGreaterThan(step);
+        nearestOther = Math.min(nearestOther, toOther);
       }
+      // (4) Margines przypięty LICZBĄ, nie tylko nierównością: o ile dalej obrysowi do
+      //     najbliższego obcego wypełnienia niż do własnego. Najciaśniejszy ma dzień (1,67×),
+      //     bo to jego sąsiedztwo z pasmem zmierzchu jest w tej palecie najsłabsze.
+      expect(nearestOther / step, `${label} margines`).toBeGreaterThan(EXPECTED_MARGINS[band] - 0.02);
+      expect(nearestOther / step, `${label} margines`).toBeLessThan(EXPECTED_MARGINS[band] + 0.02);
       checked++;
     }
     expect(checked).toBe(DEFAULT_PALETTE.length); // pętla przeszła wszystkie pasma, nie zero
+
+  });
+
+  it('23. [PRZYPIĘCIE] kontrasty WCAG palety to 5,38 / 1,79 / 9,62 — i wychodzą tak TYLKO przy potraktowaniu jej wartości jako LINIOWYCH', () => {
+    // Dwa powody istnienia tego testu, oba z przeglądu rundy naprawczej 1:
+    //
+    // (1) Te trzy liczby siedzą w `global-constraints.md` jako podstawa doboru barw budynków
+    //     (Zadanie 3) i jednostek (Zadanie 4) — a NIC ich nie pilnowało. Zmiana palety
+    //     przesunęłaby je bez jednego czerwonego testu. Komentarz przy `Rgb` w `shading.ts`
+    //     odsyłał do testu 21, który liczy odległość euklidesową w sRGB, a nie kontrast WCAG.
+    //
+    // (2) Sam FAKT, że paleta jest liniowa, jest ustaleniem empirycznym (odczyt `gl.readPixels`
+    //     z żywego płótna) i już raz kosztował błąd: brief fazy podawał 5,6 / 2,90 / 16,2,
+    //     bo liczył kontrast, traktując te same trójki jako sRGB. Test liczy OBIEMA drogami i
+    //     przypina obie, więc następna osoba zobaczy, która jest która, zamiast wybierać.
+    const luminance = (c: Rgb): number => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const contrast = (a: Rgb, b: Rgb): number => {
+      const la = luminance(a);
+      const lb = luminance(b);
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    };
+    // Odwrotność `encodeSrgb` z testu 21: gdyby paleta BYŁA zapisana w sRGB, kontrast WCAG
+    // liczyłoby się dopiero po jej zdekodowaniu do przestrzeni liniowej.
+    const decodeSrgb = (v: number): number => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    const asIfSrgb = (c: Rgb): Rgb => [decodeSrgb(c[0]), decodeSrgb(c[1]), decodeSrgb(c[2])];
+
+    const [night, dawn, day] = DEFAULT_PALETTE;
+
+    // WŁASNOŚĆ. Wartości bezwzględne, zmierzone; paleta jest LINIOWA, więc idą do wzoru wprost.
+    expect(contrast(night, dawn)).toBeCloseTo(5.38, 2);
+    expect(contrast(dawn, day)).toBeCloseTo(1.79, 2);
+    expect(contrast(night, day)).toBeCloseTo(9.62, 2);
+
+    // Granica D1 — jedyna, która niesie spawn, spalanie i ekonomię dnia i nocy — przechodzi
+    // próg 3:1 z zapasem. Granica wewnętrzna (zmierzch↔dzień) go NIE przechodzi i to jest
+    // znane: stąd wniosek Zadania 2, że zróżnicowanie odcieni po stronie oświetlonej jest
+    // znacznie bardziej ryzykowne niż przy nocy.
+    expect(contrast(night, dawn)).toBeGreaterThan(3);
+    expect(contrast(dawn, day)).toBeLessThan(3);
+
+    // FAKT O PRZESTRZENI BARW. Ta sama paleta potraktowana jako sRGB daje ISTOTNIE INNE
+    // liczby — dokładnie te, które podał brief fazy. Gdyby obie drogi dawały to samo, test
+    // powyżej nie mówiłby nic o przestrzeni i można by go spełnić przypadkiem.
+    expect(contrast(asIfSrgb(night), asIfSrgb(dawn))).toBeCloseTo(5.6, 1);
+    expect(contrast(asIfSrgb(dawn), asIfSrgb(day))).toBeCloseTo(2.9, 1);
+    expect(contrast(asIfSrgb(night), asIfSrgb(day))).toBeCloseTo(16.24, 2);
+    // Kontrola pozytywna na sam rozdział: najsłabszy bok palety wychodzi w złej interpretacji
+    // o ponad 60% LEPIEJ, niż jest naprawdę — czyli pomyłka przestrzeni nie jest kosmetyczna.
+    expect(contrast(asIfSrgb(dawn), asIfSrgb(day)) / contrast(dawn, day)).toBeGreaterThan(1.6);
   });
 
   it('22. obrys KAŻDEJ komórki niesie DOKŁADNIE to pasmo, co jej wypełnienie — przez PlanetMesh.updateColors, 1442 komórki × 12 faz', () => {

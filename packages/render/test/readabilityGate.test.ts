@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Mesh, Vector3, type BufferAttribute, type Color, type Scene } from 'three';
+import { Mesh, Vector3, type BufferAttribute, type BufferGeometry, type Color, type Object3D, type Scene } from 'three';
 import { createPlanet, lightField, sunDirection } from '@heliopolis/sim';
 import {
   createReadabilityGate,
@@ -692,5 +692,132 @@ describe('spójność renderu z symulacją na komórkach, o które pyta bramka',
       }
     }
     expect(checked).toBe(45);
+  });
+});
+
+/**
+ * Wszystko, co scena NARYSUJE, wraz z FAKTYCZNĄ widocznością (z dziedziczeniem po rodzicach).
+ *
+ * Celowo BEZ `instanceof`: „rysowalny" to tutaj „ma geometrię", co obejmuje `Mesh`,
+ * `LineSegments`, `Points` i `Sprite` naraz — i obejmie też to, czego jeszcze nie ma.
+ * Poprzednia wersja pomocnika (`scene.children.filter(o => o instanceof Mesh)`) nie widziała
+ * kraty w ogóle: `LineSegments` nie jest `Mesh`, a obrys jest DZIECKIEM siatki terenu, nie
+ * dzieckiem sceny. Testy bramki były więc ślepe na połowę tego, co bramka pokazuje.
+ */
+function drawablesOf(scene: Scene): { object: Object3D; effectivelyVisible: boolean }[] {
+  const out: { object: Object3D; effectivelyVisible: boolean }[] = [];
+  scene.traverse((object) => {
+    if (!('geometry' in object)) return;
+    let visible = true;
+    for (let node: Object3D | null = object; node; node = node.parent) {
+      if (!node.visible) {
+        visible = false;
+        break;
+      }
+    }
+    out.push({ object, effectivelyVisible: visible });
+  });
+  return out;
+}
+
+function visibleDrawables(gate: ReadabilityGate, renderer: { lastScene: Scene | null }): Set<Object3D> {
+  gate.renderFrame();
+  const scene = renderer.lastScene;
+  if (!scene) throw new Error('test: renderer nie dostał sceny');
+  return new Set(drawablesOf(scene).filter((d) => d.effectivelyVisible).map((d) => d.object));
+}
+
+describe('bramka a krata komórek (Faza 2B, Zadanie 2 — runda naprawcza 1)', () => {
+  it('32. tryb „smooth" bramki maluje gładko TAKŻE kratę — mierzone na scenie, którą dostaje renderer', () => {
+    // Przegląd przywrócił w `readabilityGate.ts` kod sprzed naprawy szwu (zapis wprost do
+    // atrybutu `color` siatki terenu, z pominięciem `PlanetMesh`) i dostał 167/167 zielonych.
+    // Test 28 w `planetMesh.test.ts` dowodzi, że `updateColorsSmooth` pisze OBA bufory — nic
+    // nie dowodziło, że bramka tę metodę WOŁA. Tutaj mierzone jest to drugie: przez scenę.
+    //
+    // Czemu to jest ważne: tryb „smooth" ma pokazywać render BEZ progowania. Krata nadal
+    // progowana rysowałaby w nim terminator jako skok barwy obrysu — czyli tryb pokazywałby
+    // granicę, której z założenia pokazywać nie ma, a porównanie „ile dokłada progowanie"
+    // (spec §7.3.1) przestałoby cokolwiek znaczyć.
+    const { gate, renderer } = makeGate();
+    gate.renderFrame();
+    const scene = renderer.lastScene;
+    if (!scene) throw new Error('test: renderer nie dostał sceny');
+
+    // Krata znaleziona po LICZBIE WIERZCHOŁKÓW, nie po typie — 8640 odcinków × 2 wierzchołki.
+    const outlineVertexCount = 8640 * 2;
+    const outline = drawablesOf(scene)
+      .map((d) => d.object as Object3D & { geometry: BufferGeometry })
+      .find((o) => o.geometry.getAttribute('position')?.count === outlineVertexCount);
+    expect(outline, 'brak geometrii kraty w scenie bramki').toBeDefined();
+    const outlineColors = (outline!.geometry.getAttribute('color') as BufferAttribute).array as Float32Array;
+
+    const distinctOutlineColors = (): number => {
+      const seen = new Set<string>();
+      for (let v = 0; v < outlineColors.length / 3; v++) {
+        seen.add(`${outlineColors[v * 3]},${outlineColors[v * 3 + 1]},${outlineColors[v * 3 + 2]}`);
+      }
+      return seen.size;
+    };
+
+    gate.setMode('threshold');
+    gate.renderFrame();
+    // Progowanie: DOKŁADNIE tyle barw kraty, ile pasm. Kontrola pozytywna na pomiar —
+    // gdyby bufor kraty był w ogóle nieodświeżany, byłaby tu jedynka (same zera).
+    expect(distinctOutlineColors()).toBe(3);
+
+    gate.setMode('smooth');
+    gate.renderFrame();
+    // Gładko: setki barw, bo każda komórka ma własne `light`. Próg 100 jest wartością
+    // BEZWZGLĘDNĄ; asercja „więcej niż przy progowaniu" przeszłaby dla bufora o czterech.
+    expect(distinctOutlineColors()).toBeGreaterThan(100);
+
+    // I z powrotem — przełączenie trybu naprawdę przemalowuje kratę w obie strony.
+    gate.setMode('threshold');
+    gate.renderFrame();
+    expect(distinctOutlineColors()).toBe(3);
+
+    gate.dispose();
+  });
+
+  it('33. [NIEZMIENNIK] w trybie kontroli pozytywnej NIC z renderu gry nie jest widoczne — sprawdzane na całym drzewie sceny, bez wymieniania typów', () => {
+    // To jest straż zastawiona na Zadanie 5, nie na dziś. Mechanizm ukrywania jest DZIEDZICZNY
+    // (`planetMesh.mesh.visible = false` chowa też kratę, bo jest jej dzieckiem) i to jest dobra
+    // decyzja — ale nic w bramce jej nie wymuszało. Gdy Zadanie 5 doda do sceny bramki budynki
+    // i jednostki jako RODZEŃSTWO siatki terenu, zostaną widoczne w trybie kontrolnym, kontrola
+    // pozytywna przestanie móc oblać, a test 16 nadal zaraportuje `[false, true]`, bo patrzy
+    // wyłącznie na dwie siatki, które zna z nazwy.
+    //
+    // Dlatego ten test nie wymienia ŻADNEGO typu ani żadnej siatki: przechodzi całe drzewo,
+    // liczy faktyczną widoczność z dziedziczeniem i orzeka o ZBIORACH.
+    const { gate, renderer } = makeGate();
+
+    gate.setMode('threshold');
+    const inThreshold = visibleDrawables(gate, renderer);
+    gate.setMode('control');
+    const inControl = visibleDrawables(gate, renderer);
+
+    // KONTROLE POZYTYWNE na sam pomiar: oba zbiory niepuste, a tryb oceniany pokazuje coś
+    // PONAD znacznik (inaczej „rozłączność" byłaby prawdziwa z pustki).
+    expect(inThreshold.size).toBeGreaterThan(1);
+    expect(inControl.size).toBeGreaterThan(0);
+    expect(inThreshold.has(gate.marker)).toBe(true);
+
+    // WŁASNOŚĆ 1: jedyną rzeczą widoczną w OBU trybach jest znacznik. Cokolwiek innego, co
+    // przetrwa przełączenie na kontrolę, pokazuje człowiekowi stan komórek w trybie, który ma
+    // go NIE pokazywać — czyli odbiera kontroli zdolność do oblania.
+    const inBoth = [...inControl].filter((o) => inThreshold.has(o));
+    expect(inBoth).toEqual([gate.marker]);
+
+    // WŁASNOŚĆ 2: w kontroli widać DOKŁADNIE dwie rzeczy — siatkę kontrolną i znacznik.
+    // Liczba wpisana wprost, bo dołożenie czegokolwiek widocznego (także czegoś widocznego
+    // WYŁĄCZNIE w kontroli, czego własność 1 by nie złapała) ma ten test oblać, a nie
+    // przesunąć wraz z nim.
+    expect(inControl.size).toBe(2);
+
+    // WŁASNOŚĆ 3: w trybie ocenianym widać dokładnie trzy — teren, kratę i znacznik. Pilnuje
+    // to drugiej strony tej samej monety: kraty, która w grze ZNIKA, a powinna być widoczna.
+    expect(inThreshold.size).toBe(3);
+
+    gate.dispose();
   });
 });

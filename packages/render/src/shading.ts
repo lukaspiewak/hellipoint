@@ -16,7 +16,11 @@
  * Zmierzone kontrasty WCAG tej palety: noc↔zmierzch **5,38**, zmierzch↔dzień **1,79**,
  * noc↔dzień **9,62**. Policzone z tych samych trójek potraktowanych jako sRGB wyszłoby
  * 5,6 / 2,90 / 16,2 — czyli LEPIEJ, niż jest naprawdę, i akurat na tym boku, który jest
- * najsłabszy (zmierzch↔dzień). Patrz `shading.test.ts`, test 21.
+ * najsłabszy (zmierzch↔dzień). Przypina to test **23** w `shading.test.ts` — liczy kontrast
+ * OBIEMA drogami i pokazuje, że tylko liniowa daje te trzy liczby. Odsyłacz do testu 21 był
+ * tu do rundy naprawczej 1 i był błędny: test 21 mierzy odległość euklidesową w sRGB, nie
+ * kontrast WCAG, więc te trzy liczby nie były do tej pory pilnowane przez żaden test — a
+ * `global-constraints.md` opiera na nich dobór barw budynków (Zadanie 3) i jednostek (4).
  */
 export type Rgb = readonly [r: number, g: number, b: number];
 
@@ -165,12 +169,13 @@ export const DEFAULT_PALETTE: Palette = [
  * postrzeganiu, patrz `Rgb`): **0,226 / 0,200 / 0,214**. Dla porównania skok przez
  * terminator (pasmo 0 ↔ 1) wynosi w tej samej przestrzeni **0,860**, czyli 3,8 razy więcej.
  * To jest właśnie ograniczenie, które te trzy trójki mają spełniać i którego pilnuje test
- * 22 w `shading.test.ts`: krata ma dać punkt odniesienia, a NIE konkurować z granicą
+ * 21 w `shading.test.ts`: krata ma dać punkt odniesienia, a NIE konkurować z granicą
  * dnia i nocy. Gdyby obrysy stały się równie kontrastowe co terminator, tarcza z daleka
  * zamieniłaby się w siatkę, w której granica jest jedną z tysięcy linii.
  *
  * Drugie ograniczenie, też sprawdzane testem: każdy obrys jest NAJBLIŻEJ wypełnienia
- * WŁASNEGO pasma (margines 3,03× / 3,52× / 1,67×). Obrys, który dryfuje w stronę barwy
+ * WŁASNEGO pasma (margines 3,03× / 3,52× / 1,67× — od rundy naprawczej 1 przypięte
+ * asercją w teście 21, nie tylko tym zdaniem). Obrys, który dryfuje w stronę barwy
  * pasma SĄSIEDNIEGO, czytałby się jak wąski pasek tamtego pasma — czyli rysowałby
  * nieistniejącą granicę wewnątrz jednolitego obszaru. Najciaśniejszy margines ma dzień,
  * bo to jego sąsiedztwo z pasmem zmierzchu jest w tej palecie najsłabsze (kontrast WCAG

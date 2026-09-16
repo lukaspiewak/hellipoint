@@ -50,6 +50,21 @@ export interface PlanetMesh {
    * wypełnienia gładkie, a kratę nadal progowaną — czyli terminator WIDOCZNY jako skok
    * barwy obrysu, w trybie, którego cała rola polega na pokazaniu, jak wygląda render BEZ
    * progowania. Instrument mierzyłby wtedy coś innego, niż deklaruje.
+   *
+   * ## UWAGA DLA ZADANIA 5: krata w tym trybie NIE jest neutralna (przegląd, znalezisko 6)
+   *
+   * Obie palety są tu interpolowane między SWOIMI końcami, więc krok obrys↔wypełnienie zmienia
+   * się wzdłuż `light`. Przeliczone ze stałych, w sRGB: **0,226 przy `light = 0`** (czyli na
+   * CAŁEJ półkuli nocnej, którą `saturate` spłaszcza do jednej wartości), 0,145 przy 0,05,
+   * 0,096 przy 0,10, **minimum 0,032 przy ≈0,25**, z powrotem 0,214 przy 1,0; znak różnicy
+   * luminancji przechodzi przez zero przy `light ≈ 0,22`. Człowiek widzi więc jasną kratę na
+   * ciemnym tle nad całą nocą, która GAŚNIE I ODWRACA POLARYZACJĘ w pierścieniu ok. 13° za
+   * terminatorem.
+   *
+   * Kierunek przecieku jest zachowawczy — UŁATWIA tryb gładki, więc ZMNIEJSZA zmierzony
+   * przyrost z progowania, nie zawyża go. Ale log z tego trybu wolno czytać wyłącznie jako
+   * „tyle progowanie dokłada CO NAJMNIEJ"; **nie wolno go czytać jako „render jest czytelny
+   * bez progowania"**, bo część tego, co widać, jest artefaktem kraty, nie cieniowania.
    */
   updateColorsSmooth(light: Float32Array, palette?: Palette, outlinePalette?: Palette): void;
   /** Zwalnia geometrię i materiał Three.js — terenu i obrysów. */
@@ -78,12 +93,30 @@ export interface CellOutlines extends CellVertexRanges {
  * granicy pasm — dwie pokrywające się linie w RÓŻNYCH kolorach. Dwa skutki, oba złe:
  * migotanie z walki o bufor głębokości oraz, znacznie gorzej, PRZYKRYCIE samej granicy.
  * Piksele terminatora przestałyby pokazywać skok „wypełnienie nocy ↔ wypełnienie zmierzchu"
- * (odległość barw 0,9005) i pokazywałyby skok „obrys nocy ↔ obrys zmierzchu" — zmierzone
- * 0,5546, czyli **62% tego, co jest dziś**. Bramka Zadania 1 mierzy właśnie tę pierwszą
- * liczbę, więc przeszłaby na pomiarze, a oko dostałoby drugą.
+ * (odległość barw 0,9005) i pokazywałyby skok „obrys nocy ↔ obrys zmierzchu" — przeliczone
+ * z `DEFAULT_OUTLINE_PALETTE`: **0,5918, czyli 65,7% tego, co jest dziś** (w sRGB 0,5632 =
+ * 65,5%). Bramka Zadania 1 mierzy właśnie tę pierwszą liczbę, więc przeszłaby na pomiarze,
+ * a oko dostałoby drugą. Przypina to test 21 w `shading.test.ts`.
+ *
+ * > Do rundy naprawczej 1 stała była tu liczba **0,5546 (62%)** i była zła. Pochodzenie
+ * > ustalone: to odległość policzona, gdy kanał R obrysu zmierzchu wynosił jeszcze 0,598 —
+ * > wartość z PORZUCONEGO wariantu palety (mieszanie ku szarości), nieprzeliczona po
+ * > przejściu na paletę jawną, w której ten kanał ma 0,638. Podstawienie 0,598 odtwarza
+ * > 0,5546 co do czwartej cyfry. Kierunek błędu był zachowawczy, więc decyzja o wciągnięciu
+ * > zostaje w mocy — ale liczba zdążyła trafić do specu fazy.
  *
  * Wciągnięcie zostawia między obrysami dwóch sąsiadów pasek ICH WŁASNYCH wypełnień, więc
  * granica pasm zostaje narysowana pełnym skokiem palety — tak jak przed tą zmianą.
+ *
+ * ## Zakres, a nie tylko dolna granica (runda naprawcza 1)
+ *
+ * Wciągnięcie musi być DODATNIE (wyżej) **i MAŁE**: obrys ma nadal obrysowywać komórkę, a nie
+ * kurczyć się w kropkę przy jej środku. Przy `0,48` obrysy sąsiadów dzieli już 96% długości
+ * krawędzi zamiast 11%, przy `0,97` z kraty zostaje punkcik — a testy pilnujące tylko dolnego
+ * progu przechodziły na obu tych wartościach. Górna granica jest zapisana jako własność
+ * geometrii, nie jako drugi próg na tej stałej: **każdy wierzchołek obrysu zachowuje co
+ * najmniej 75% odległości swojego narożnika od środka komórki** (dziś dokładnie 93%), czyli
+ * `OUTLINE_INSET < 0,25`. Test 24 w `planetMesh.test.ts`.
  */
 export const OUTLINE_INSET = 0.07; // [WYGLĄD]
 
@@ -94,10 +127,27 @@ export const OUTLINE_INSET = 0.07; // [WYGLĄD]
  * Bez tego linia leży DOKŁADNIE w płaszczyźnie trójkąta wachlarza, który ją otacza (odcinek
  * narożnik→środek należy do tego trójkąta) — czyli walczy z nim o bufor głębokości i miga.
  * Ułamek promienia, a nie stała światowa: `createPlanet` może dostać inny `radius` (tak samo
- * jak granice zoomu w `camera.ts`). Wartość jest mała, bo uniesienie kosztuje paralaksę pod
- * kątem stycznym — ten sam kompromis co `MARKER_SURFACE_OFFSET_FACTOR` w `readabilityGate.ts`,
- * tylko że tu wystarczy sześć razy mniej, bo linia nie musi wystawać ponad krzywiznę kuli,
- * tylko ponad płaski wielobok jednej komórki.
+ * jak granice zoomu w `camera.ts`).
+ *
+ * ## Zakres, a nie tylko dolna granica (runda naprawcza 1)
+ *
+ * **Dół:** uniesienie musi przewyższyć STRZAŁKĘ płaskiego wieloboku komórki — zmierzone na tej
+ * planecie: najgłębszy punkt cięciwy środek→narożnik schodzi **0,050** jednostki pod sferę,
+ * a uniesienie wynosi **0,200**, czyli czterokrotność. Poniżej strzałki linia wraca do
+ * płaszczyzny terenu i miga.
+ *
+ * **Góra — i to jest realne ryzyko, nie teoretyczne:** ktoś w Zadaniu 3 podniesie tę stałą,
+ * żeby krata nie znikała pod budynkiem. Pod kątem STYCZNYM pozorne przesunięcie linii względem
+ * jej własnej komórki równa się właśnie uniesieniu w jednostkach świata, a przy limbie krata
+ * strony nocnej zaczyna NAWISAĆ nad stroną oświetloną — czyli rysować granicę tam, gdzie jej
+ * nie ma. Granica: **uniesienie poniżej 5% średnicy NAJMNIEJSZEJ komórki** (8,41 jednostki na
+ * tej planecie → 0,42); dziś 0,200, czyli 2,4%. Przy `0,09` uniesienie wyniosłoby 9 jednostek,
+ * ponad całą średnicę komórki — a testy pilnujące tylko dolnego progu to przepuszczały.
+ * Test 24 w `planetMesh.test.ts` mierzy obie strony okna.
+ *
+ * Dla porównania `MARKER_SURFACE_OFFSET_FACTOR` w `readabilityGate.ts` jest sześć razy
+ * większe — bo billboard znacznika musi wystawać ponad KRZYWIZNĘ KULI, a linia tylko ponad
+ * płaski wielobok jednej komórki.
  */
 export const OUTLINE_LIFT = 0.002; // [WYGLĄD]
 

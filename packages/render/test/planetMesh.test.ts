@@ -123,15 +123,26 @@ describe('buildCellOutlines — geometria kraty (Faza 2B, Zadanie 2)', () => {
   it('24. [KLUCZOWY] każdy wierzchołek obrysu leży WEWNĄTRZ swojej komórki i NAD terenem — to jest warunek nietykalności terminatora, nie estetyka', () => {
     // Obrys rysowany dokładnie po krawędziach dawałby na granicy pasm DWIE pokrywające się
     // linie w różnych kolorach: migotanie plus PRZYKRYCIE samej granicy (skok „obrys nocy ↔
-    // obrys zmierzchu" to 0,5546 zamiast 0,9005 — 62% tego, co jest dziś). Wciągnięcie do
-    // środka zostawia między obrysami sąsiadów pasek ICH wypełnień, więc granica pasm zostaje
-    // narysowana pełnym skokiem palety.
+    // obrys zmierzchu" to 0,5918 zamiast 0,9005 — 65,7% tego, co jest dziś; do rundy
+    // naprawczej 1 stało tu błędne 0,5546/62%, patrz komentarz przy OUTLINE_INSET).
+    // Wciągnięcie do środka zostawia między obrysami sąsiadów pasek ICH wypełnień, więc
+    // granica pasm zostaje narysowana pełnym skokiem palety.
+    //
+    // RUNDA NAPRAWCZA 1: do tej pory test mierzył WYŁĄCZNIE dolne progi obu stałych, więc
+    // `OUTLINE_INSET = 0,97` (krata kurczy się w punkcik) i `OUTLINE_LIFT = 0,09` (krata
+    // nawisa 0,9 średnicy komórki nad kulą) przechodziły komplet 167 testów. Obie stałe mają
+    // teraz OKNO: dolny próg broni przed zapadnięciem się kraty w teren, górny przed jej
+    // oderwaniem się od komórki.
     const outlines = buildCellOutlines(geo);
     const radius = planet.radius;
 
     let checked = 0;
     let minInsetWorld = Number.POSITIVE_INFINITY;
     let minLiftWorld = Number.POSITIVE_INFINITY;
+    let maxLiftWorld = 0;
+    let minKeptFraction = Number.POSITIVE_INFINITY;
+    let minCellDiameter = Number.POSITIVE_INFINITY;
+    let maxSagittaWorld = 0;
     for (let i = 0; i < planet.cells.length; i++) {
       const start = geo.cellVertexStart[i];
       const cornerCount = geo.cellVertexCount[i] - 1;
@@ -176,6 +187,24 @@ describe('buildCellOutlines — geometria kraty (Faza 2B, Zadanie 2)', () => {
         const lifted = Math.hypot(expected[0], expected[1], expected[2]);
         const flat = lifted / (1 + OUTLINE_LIFT);
         minLiftWorld = Math.min(minLiftWorld, lifted - flat);
+        maxLiftWorld = Math.max(maxLiftWorld, lifted - flat);
+
+        // WŁASNOŚĆ 3 (górna granica wciągnięcia): obrys ma nadal OBRYSOWYWAĆ komórkę, a nie
+        // kurczyć się w kropkę przy jej środku. Mierzone jako ułamek odległości narożnika od
+        // środka, jaki obrysowi zostaje.
+        const cornerRadius = Math.hypot(
+          corner[0] - center[0],
+          corner[1] - center[1],
+          corner[2] - center[2],
+        );
+        minCellDiameter = Math.min(minCellDiameter, 2 * cornerRadius);
+        minKeptFraction = Math.min(minKeptFraction, (cornerRadius - insetWorld) / cornerRadius);
+
+        // WŁASNOŚĆ 4 (dolna granica uniesienia, wyprowadzona z GEOMETRII, nie zgadnięta):
+        // najgłębszy punkt cięciwy środek→narożnik schodzi pod sferę o strzałkę; poniżej niej
+        // linia wraca w płaszczyznę terenu i miga.
+        const mid = [0, 1, 2].map((axis) => (center[axis] + corner[axis]) / 2);
+        maxSagittaWorld = Math.max(maxSagittaWorld, radius - Math.hypot(mid[0], mid[1], mid[2]));
 
         checked++;
       }
@@ -188,6 +217,27 @@ describe('buildCellOutlines — geometria kraty (Faza 2B, Zadanie 2)', () => {
     expect(radius).toBe(100); // kotwica: poniższe progi są w jednostkach TEJ planety
     expect(minInsetWorld).toBeGreaterThan(0.2);
     expect(minLiftWorld).toBeGreaterThan(0.15);
+
+    // --- GÓRNE GRANICE (runda naprawcza 1) ------------------------------------------------
+    // Kontrole pozytywne na sam pomiar: obie wielkości odniesienia są niezerowe i pochodzą z
+    // geometrii Fazy 2A, nie ze stałych, które ten test sprawdza.
+    expect(minCellDiameter).toBeGreaterThan(8); // zmierzone: 8,414 (najmniejsza komórka)
+    expect(maxSagittaWorld).toBeGreaterThan(0.01); // zmierzone: 0,0503
+
+    // UNIESIENIE — okno, nie próg. Dół: musi przewyższyć strzałkę płaskiego wieloboku,
+    // inaczej linia wraca w płaszczyznę terenu. Góra: pod kątem stycznym pozorne przesunięcie
+    // linii względem jej komórki RÓWNA SIĘ uniesieniu, a przy limbie krata strony nocnej
+    // zaczyna nawisać nad oświetloną — 5% średnicy najmniejszej komórki to granica, przy
+    // której to przesunięcie zostaje poniżej dwudziestej części komórki.
+    expect(minLiftWorld).toBeGreaterThan(maxSagittaWorld);
+    expect(maxLiftWorld).toBeLessThan(0.05 * minCellDiameter);
+    expect(maxLiftWorld).toBeCloseTo(0.2, 2); // zmierzone: 0,200 = 2,4% średnicy komórki
+
+    // WCIĄGNIĘCIE — góra. Obrys zachowuje co najmniej 75% odległości narożnika od środka
+    // komórki, czyli nadal jest OBRYSEM, a nie kropką przy jej środku. Przy `INSET = 0,48`
+    // zostaje 52%, przy `0,97` — 3%; oba przechodziły, dopóki test mierzył tylko dół.
+    expect(minKeptFraction).toBeGreaterThan(0.75);
+    expect(minKeptFraction).toBeCloseTo(0.93, 2); // zmierzone: dokładnie 1 − OUTLINE_INSET
   });
 
   it('25. buildCellOutlines rzuca RangeError na niezgodnych długościach i na zdegenerowanej komórce', () => {
@@ -303,6 +353,75 @@ describe('createPlanetMesh — krata jako DZIECKO siatki terenu', () => {
     // samej trójki, a 745 komórek nocy daje przy tym jeden kolor).
     expect(distinctCellColors(fill, geo.cellVertexStart)).toBeGreaterThan(100);
     expect(distinctCellColors(outline, outlines.cellVertexStart)).toBeGreaterThan(100);
+
+    planetMesh.dispose();
+  });
+});
+
+describe('createPlanetMesh — okablowanie geometrii kraty (runda naprawcza 1)', () => {
+  it('29. atrybut position kraty NIESIE prawdziwe obrysy: powłoka promieniowa, rozpiętość po całej kuli i zgodność co do wierzchołka z buildCellOutlines', () => {
+    // Przegląd zmierzył lukę: podmiana bufora pozycji obrysów na `new Float32Array(len)`
+    // (krata zapada się w jeden punkt w środku planety, czyli znika z ekranu CAŁKOWICIE)
+    // zostawiała komplet 167 testów zielonym. Testy 23-24 badały `buildCellOutlines` jako
+    // funkcję czystą, test 26 sprawdzał tylko ZGODNOŚĆ DŁUGOŚCI atrybutów. Nic nie sprawdzało,
+    // że do geometrii trafia WYNIK tej funkcji.
+    const planetMesh = createPlanetMesh(geo);
+    const pos = (planetMesh.outline.geometry.getAttribute('position') as BufferAttribute)
+      .array as Float32Array;
+    const radius = planet.radius;
+    expect(radius).toBe(100); // kotwica: progi niżej są w jednostkach TEJ planety
+
+    let rMin = Number.POSITIVE_INFINITY;
+    let rMax = 0;
+    const axisMin = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
+    const axisMax = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
+    const distinct = new Set<string>();
+    const vertexCount = pos.length / 3;
+    for (let v = 0; v < vertexCount; v++) {
+      const x = pos[v * 3];
+      const y = pos[v * 3 + 1];
+      const z = pos[v * 3 + 2];
+      const r = Math.hypot(x, y, z);
+      rMin = Math.min(rMin, r);
+      rMax = Math.max(rMax, r);
+      for (let axis = 0; axis < 3; axis++) {
+        axisMin[axis] = Math.min(axisMin[axis], pos[v * 3 + axis]);
+        axisMax[axis] = Math.max(axisMax[axis], pos[v * 3 + axis]);
+      }
+      distinct.add(`${x},${y},${z}`);
+    }
+    expect(vertexCount).toBe(8640 * 2); // kontrola: pętla przeszła cały bufor
+
+    // (1) POWŁOKA PROMIENIOWA. Wszystkie wierzchołki kraty leżą tuż nad kulą — w wąskim
+    //     pasie tuż pod `radius × (1 + OUTLINE_LIFT)` (wciągnięty punkt leży na cięciwie, więc
+    //     nieco bliżej środka). Bufor zer daje promień 0 i to oblewa na pierwszej asercji.
+    expect(rMin).toBeGreaterThan(100.1);
+    expect(rMax).toBeLessThan(radius * (1 + OUTLINE_LIFT) + 1e-3);
+    expect(rMax - rMin).toBeLessThan(0.05); // zmierzone: 100,1869 .. 100,1942
+
+    // (2) ROZPIĘTOŚĆ PO CAŁEJ KULI. Krata otacza planetę, a nie jedną łatę — każda oś sięga
+    //     obu biegunów. Wyklucza zarówno bufor zer, jak i „obrys jednej komórki powielony".
+    for (let axis = 0; axis < 3; axis++) {
+      expect(axisMin[axis], `oś ${axis}`).toBeLessThan(-0.99 * radius);
+      expect(axisMax[axis], `oś ${axis}`).toBeGreaterThan(0.99 * radius);
+    }
+
+    // (3) RÓŻNORODNOŚĆ. Każdy narożnik pojawia się dokładnie dwa razy (koniec jednego odcinka
+    //     i początek następnego), więc różnych pozycji jest tyle, ile narożników: 8640.
+    expect(distinct.size).toBe(8640);
+
+    // (4) OKABLOWANIE WPROST: bufor geometrii zgadza się co do wierzchołka z niezależnie
+    //     zbudowanym wynikiem `buildCellOutlines`. To jest asercja, która łapie podmianę
+    //     bufora na jakikolwiek inny o tej samej długości.
+    const expectedPositions = buildCellOutlines(geo).positions;
+    let compared = 0;
+    let mismatches = 0;
+    for (let i = 0; i < expectedPositions.length; i++) {
+      if (pos[i] !== expectedPositions[i]) mismatches++;
+      compared++;
+    }
+    expect(compared).toBe(expectedPositions.length); // kontrola: porównanie się odbyło
+    expect(mismatches).toBe(0);
 
     planetMesh.dispose();
   });
