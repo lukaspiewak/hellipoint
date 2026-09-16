@@ -930,7 +930,7 @@ describe('warstwa jako całość', () => {
 });
 
 describe('budżet klatki', () => {
-  it('16. update() nie alokuje NICZEGO: 600 wywołań przy komplecie 1442 budynków nie wychodzi ponad podłogę szumu odśmiecania', () => {
+  it('16. 600 wywołań update() przy komplecie 1442 budynków nie wychodzi ponad zmierzoną podłogę szumu odśmiecania', () => {
     // Ta warstwa przepisuje do 1442 × 3 macierze co klatkę — to jest dokładnie to miejsce,
     // w którym alokacja per budynek (jeden `Matrix4`, jeden `Vector3`, jedna tablica barwy)
     // byłaby niewidoczna w zegarze, a zauważalna w odśmiecaniu. Przyrząd i jego uzasadnienie:

@@ -652,7 +652,7 @@ describe('pojemność buforów i budżet klatki', () => {
     layer.dispose();
   });
 
-  it('13. update() nie alokuje NICZEGO: 600 wywołań przy PEŁNEJ pojemności nie wychodzi ponad podłogę szumu odśmiecania', () => {
+  it('13. 600 wywołań update() przy PEŁNEJ pojemności nie wychodzi ponad zmierzoną podłogę szumu odśmiecania', () => {
     // Jednostki przepisują macierze i barwy CO KLATKĘ — to jest jedyne miejsce w renderze,
     // w którym alokacja per obiekt jest niewidoczna w zegarze, a zauważalna w odśmiecaniu.
     // Przyrząd i jego uzasadnienie: patrz długi komentarz w `budget.test.ts`.

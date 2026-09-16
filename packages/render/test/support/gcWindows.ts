@@ -83,45 +83,57 @@ import { GCProfiler } from 'node:v8';
  * Podniesienie `rounds` NIE rozluźnia progu własności: próg to `max(idle) + 1`, a sprawdzana
  * wielkość to `max(measured)` — obie strony dostają tyle samo nowych próbek, więc rosną razem.
  *
- * ## ZNANE OGRANICZENIE tego przyrządu — ZMIERZONE, otwarte, do rozstrzygnięcia w Fazie 2C
+ * ## ZNANE OGRANICZENIE tego przyrządu — ODTWORZONE POZA VITEST, dług Fazy 2C
  *
  * `busyWait` niżej odpytuje `performance.now()` w najciaśniejszej możliwej pętli, a ta funkcja
  * zwraca liczbę ZMIENNOPRZECINKOWĄ — więc **samo okno bezczynne alokuje** (boksowanie
- * `HeapNumber` na wywołanie, przy oknie 500-700 ms to miliony wywołań). Skutek:
+ * `HeapNumber` na wywołanie; przy oknie 500-700 ms to miliony wywołań). Skutek:
  * `gcNoiseLimit` jest zawyżony o artefakt przyrządu, czyli **własność jest pilnowana luźniej,
- * niż ten moduł deklaruje.**
+ * niż deklaruje jej nazwa.** Wersja czekająca na liczbach CAŁKOWITYCH (zegar odpytywany raz na
+ * 100 000 iteracji) sprowadza okno bezczynne do zera i stoi w `packages/sim/test/light.test.ts`,
+ * gdzie była konieczna.
  *
- * Wersja czekająca na liczbach CAŁKOWITYCH (zegar odpytywany raz na 100 000 iteracji) sprowadza
- * okno bezczynne do 0/0/0 nawet pod ciężkim obciążeniem. Jest napisana i działa — stoi w
- * `packages/sim/test/light.test.ts`, gdzie była KONIECZNA: przy zawyżonym progu tamta asercja
- * przepuszczała implementację alokującą 5768 B na wywołanie, czyli byłaby ślepa.
+ * ### Co ten artefakt zasłania — zmierzone POZA vitest, osobnym procesem
  *
- * **Tutaj jej NIE wstawiono i to jest świadoma decyzja, nie przeoczenie.** Zmierzone przy
- * domykaniu gałęzi, uczciwe okno bezczynne, 8 procesów alokujących na 10 rdzeniach, trzy pełne
- * przebiegi pakietu — okno bezczynne **0/0/0 za każdym razem**, próg 1, a mierzone:
+ * Sonda: `GCProfiler`, okno bezczynne całkowitoliczbowe, warstwy z `dist`, 400 klatek
+ * rozgrzewki, trzy powtórzenia każdego okna
+ * (`.superpowers/sdd/2026-09-15-faza-2b-jednostki-i-budynki/wykonawca-gcprobe.mjs`):
  *
- *     writeCellColors × 2000        0/0/0/0/0/0     ← mieści się
- *     BuildingLayer.update × 600    0/0/0/0/0/0     ← mieści się
- *     PlanetMesh.updateColors×2000  0/0/0/0/0/0     ← mieści się
- *     UnitLayer.update × 600        0-1             ← mieści się, ale na styk
- *     PEŁNA SCENA × 2000 klatek     2/3/2/2/3/2     ← NIE mieści się, POWTARZALNIE
+ *                            2000 iteracji   8000 iteracji
+ *     updateColors               0/0/0           0/0/0
+ *     buildings.update           0/0/0           0/0/0
+ *     units.update             **1/1/1**       **5/5/5**
+ *     PEŁNA KLATKA               2/1/1           5/5/5
+ *     okno BEZCZYNNE (do 1200 ms)  0/0/0
  *
- * Czyli z uczciwym oknem odczyt mówi wprost: **pętla klatki alokuje odrobinę.** Tempo zgadza
- * się z `UnitLayer.update` (1 cykl na ok. 600 wywołań; pełna scena robi ich 2000, stąd 2-3) —
- * warstwa jednostek jest jedyną, która przy własnym pomiarze nie daje czystych zer. Sygnał jest
- * 50 razy poniżej kontroli (0,0015 cyklu na klatkę wobec 0,0735), więc to nie jest problem
- * budżetu 8 ms — ale twierdzenie „nie alokuje NICZEGO" jest silniejsze, niż pomiar potwierdza,
- * i dziś przechodzi WYŁĄCZNIE dzięki zawyżonemu progowi.
+ * Czyli: **alokuje wyłącznie `UnitLayer.update`**, liczba cykli rośnie LINIOWO z liczbą
+ * wywołań (4× iteracji → 5× cykli), a pełna klatka nie dokłada nic ponad warstwę jednostek.
+ * Druga sonda (4000 wywołań, różna populacja) pokazuje, że skaluje się z LICZBĄ JEDNOSTEK,
+ * nie z liczbą wywołań: `0 → 0/0/0`, `1 → 0/0/0`, `100 → 1/0/1`, `481 → 2/3/2`,
+ * `2048 → 11/10/10`. Rząd wielkości: jeden cykl na ok. 800 tysięcy przepisanych jednostek.
  *
- * Zamknięcie tego wymaga albo wskazania alokacji w `UnitLayer.update` (praca na kodzie
- * produkcyjnym), albo wykazania, że `GCProfiler` dolicza tu kroki znakowania przyrostowego
- * zaczęte poza oknem, i przeformułowania własności na TEMPO zamiast liczby bezwzględnej
- * (okna różnią się długością pięciokrotnie, a próg jest jeden). Obie drogi to własny pomiar.
- * Na końcu fazy z werdyktem SCALIĆ żadna nie jest do zrobienia bez zgadywania, a zmiana progu
- * „żeby przeszło" byłaby dokładnie tym, czego ta gałąź uczy nie robić. **Kalibracja progu
- * zostaje więc ta sama, co przy wszystkich pomiarach tej fazy** — zawyżona i tu opisana, a nie
- * cicha. Asercja CZUŁOŚCI już od niej nie zależy (patrz wyżej): jej odniesieniem jest okno
- * mierzone, więc artefakt okna bezczynnego nie przewraca jej ani pod obciążeniem, ani bez.
+ * **Czego NIE ustaliłem:** która linia `update` alokuje. Pętla pisze wyłącznie do buforów
+ * typowanych, a `writeInstance`, `writeUnitRimColor` i `writeUnitCoreColor` też. Wskazanie
+ * winowajcy wymaga profilowania sterty albo `--trace-gc`, i to jest praca na kodzie
+ * produkcyjnym — nie do zrobienia przy domykaniu gałęzi z werdyktem SCALIĆ.
+ *
+ * **Skala:** 0,0015 cyklu na klatkę wobec 0,0735 w kontroli tego samego testu, czyli 50 razy
+ * poniżej progu wykrywalności zdefiniowanego przez kontrolę pozytywną. To NIE jest problem
+ * budżetu 8 ms. Problemem jest wyłącznie to, że test twierdzi więcej, niż mierzy — i dlatego
+ * poprawione są TYTUŁY testów (mówią teraz „nie wychodzi ponad zmierzoną podłogę szumu"),
+ * a nie próg.
+ *
+ * **Kalibracja progu zostaje ta sama, co przy wszystkich pomiarach tej fazy.** Asercja
+ * CZUŁOŚCI już od niej nie zależy (patrz wyżej): jej odniesieniem jest okno mierzone, więc
+ * artefakt okna bezczynnego nie przewraca jej ani pod obciążeniem, ani bez.
+ *
+ * ### Uwaga dla następnego, kto to będzie mierzył: `PerformanceObserver` tu NIE DZIAŁA
+ *
+ * Sonda oparta na `new PerformanceObserver(...).observe({ entryTypes: ['gc'] })` zwraca
+ * **zero dla KAŻDEGO okna synchronicznego** — sprawdzone kontrolą pozytywną na pętli
+ * alokującej 115 MB śmieci: obserwator 0, `GCProfiler` 4 na tej samej pętli, i 0 także po
+ * oddaniu sterowania pętli zdarzeń (`wykonawca-gcprobe-kontrola.mjs`). Odczyt „same zera"
+ * z takiej sondy nie jest pomiarem braku alokacji, tylko przyrządem bez kontroli pozytywnej.
  *
  * ## Dlaczego próg stoi na OKNIE BEZCZYNNYM, a nie w połowie drogi do kontroli
  *

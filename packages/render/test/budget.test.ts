@@ -149,7 +149,7 @@ describe('writeCellColors — budżet 1442 komórek / 1000 wywołań (Zadanie 5,
    * faktycznych 121 MB, a jego własny szum na PUSTEJ pętli wynosił 6288 B. Licznik cykli GC
    * widzi oba rodzaje pamięci (`GCProfiler`: 0 / 9 dla tych samych dwóch wariantów).
    */
-  it('nie alokuje NICZEGO: 2000 wywołań nie wychodzi ponad podłogę szumu odśmiecania', () => {
+  it('2000 wywołań writeCellColors nie wychodzi ponad zmierzoną podłogę szumu odśmiecania', () => {
     const planet = createPlanet({ seed: 20260915 });
     const geo = buildPlanetGeometry(planet);
     const light = lightField(planet, sunDirection(0, 180));
@@ -240,7 +240,7 @@ describe('writeCellColors — budżet 1442 komórek / 1000 wywołań (Zadanie 5,
  * Przyrząd i jego uzasadnienie — patrz długi komentarz przy teście GC wyżej.
  */
 describe('PlanetMesh.updateColors — cała ścieżka klatki, po dołożeniu kraty (Faza 2B, Zadanie 2)', () => {
-  it('nie alokuje NICZEGO: 2000 wywołań nie wychodzi ponad podłogę szumu odśmiecania', () => {
+  it('2000 wywołań PlanetMesh.updateColors nie wychodzi ponad zmierzoną podłogę szumu odśmiecania', () => {
     const planet = createPlanet({ seed: 20260915 });
     const geo = buildPlanetGeometry(planet);
     const light = lightField(planet, sunDirection(0, 180));
@@ -366,7 +366,7 @@ describe('PlanetMesh.updateColors — cała ścieżka klatki, po dołożeniu kra
  *    testu używa `Matrix4`, który ucieczkę przeżywa — patrz `allocatingFrame`.)
  */
 describe('pełna scena — praca per klatka przy 481 jednostkach (Faza 2B, Zadanie 5, Krok 3)', () => {
-  it('nie alokuje NICZEGO: 2000 klatek pełnej sceny nie wychodzi ponad podłogę szumu odśmiecania', () => {
+  it('2000 klatek pełnej sceny nie wychodzi ponad zmierzoną podłogę szumu odśmiecania', () => {
     const planet = createPlanet({ seed: 20260915 });
     const geo = buildPlanetGeometry(planet);
     const light = lightField(planet, sunDirection(0, 180));
