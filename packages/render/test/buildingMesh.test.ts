@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { GCProfiler } from 'node:v8';
-import { Matrix4, Vector3, type Object3D, type Scene } from 'three';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { Matrix4, Vector3, type BufferAttribute, type BufferGeometry, type Object3D, type Scene } from 'three';
 import { BUILDINGS, createPlanet, type Building, type BuildingType } from '@heliopolis/sim';
 import { buildPlanetGeometry } from '../src/geometry.js';
 import {
@@ -25,9 +27,11 @@ import {
   CORE_SCALE_MIN,
   SHELL_COLOR,
   SHELL_TAPER,
+  SURFACE_LIFT_FACTOR,
 } from '../src/buildingMesh.js';
 import { DEFAULT_OUTLINE_PALETTE, DEFAULT_PALETTE, type Rgb } from '../src/shading.js';
-import { OUTLINE_INSET } from '../src/planetMesh.js';
+import { buildCellOutlines } from '../src/planetMesh.js';
+import { MAX_DISTANCE_FACTOR } from '../src/camera.js';
 import { createSceneWithRenderer, type SceneRenderer } from '../src/scene.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
 
@@ -93,6 +97,125 @@ function instanceColorAt(mesh: { instanceColor: { array: ArrayLike<number> } | n
   return [a.array[slot * 3], a.array[slot * 3 + 1], a.array[slot * 3 + 2]];
 }
 
+// --- Geometria komórki: wielkość, która NAPRAWDĘ ogranicza okrąg --------------------------
+
+const outlines = buildCellOutlines(geo);
+
+function unit(v: Vector3): Vector3 {
+  return v.clone().normalize();
+}
+
+function outlineVertex(index: number): Vector3 {
+  return new Vector3(outlines.positions[index * 3], outlines.positions[index * 3 + 1], outlines.positions[index * 3 + 2]);
+}
+
+/**
+ * Najmniejszy KĄT (mierzony od środka planety) między kierunkiem środka komórki a KRAWĘDZIĄ
+ * jej obrysu — minimum po wszystkich 1442 komórkach i wszystkich krawędziach.
+ *
+ * **To jest wielkość wiążąca dla każdego OKRĘGU rysowanego wokół środka komórki, i to jej
+ * nie mierzył test 8 do rundy naprawczej 1.** Poprzednia wersja brała `min|narożnik − środek|
+ * × (1 − OUTLINE_INSET)`, czyli promień OPISANY (3,9208). Obrys nie przechodzi przez
+ * narożniki — to zamknięta pętla po nich — więc okrąg mieści się w nim wtedy i tylko wtedy,
+ * gdy jest mniejszy od promienia WPISANEGO (3,1720). Na tej różnicy pierścień alarmu
+ * wychodził poza komórkę w 72 z 1442 komórek.
+ *
+ * Liczone KĄTOWO, nie w jednostkach świata, bo obrys leży na kuli, a pierścień w płaszczyźnie
+ * stycznej uniesionej ponad nią — porównanie odległości płaskich mieszałoby dwie różne
+ * powierzchnie. Odczyt idzie z FAKTYCZNEGO bufora obrysów (`buildCellOutlines`), tego samego,
+ * który rysuje kratę, a nie z przeliczenia narożników własnym wzorem.
+ *
+ * Krawędź jest próbkowana `EDGE_SAMPLES` razy (nieparzyście, więc jej środek — w którym
+ * minimum wypada — trafia w próbkę dokładnie). Przy 201 próbkach na krawędź o rozpiętości
+ * ok. 2° błąd próbkowania jest rzędu 10⁻⁸ rad, czyli 10⁻⁶ jednostki świata.
+ */
+const EDGE_SAMPLES = 201;
+function minOutlineEdgeAngle(): { angle: number; cellId: number } {
+  let best = Infinity;
+  let cellId = -1;
+  const p = new Vector3();
+  for (let i = 0; i < CELL_COUNT; i++) {
+    const center = unit(new Vector3(planet.cells[i].center.x, planet.cells[i].center.y, planet.cells[i].center.z));
+    const start = outlines.cellVertexStart[i];
+    const edges = outlines.cellVertexCount[i] / 2;
+    for (let e = 0; e < edges; e++) {
+      const a = outlineVertex(start + e * 2);
+      const b = outlineVertex(start + e * 2 + 1);
+      for (let s = 0; s < EDGE_SAMPLES; s++) {
+        const f = s / (EDGE_SAMPLES - 1);
+        p.copy(a).lerp(b, f).normalize();
+        const angle = Math.acos(Math.min(1, p.dot(center)));
+        if (angle < best) {
+          best = angle;
+          cellId = i;
+        }
+      }
+    }
+  }
+  return { angle: best, cellId };
+}
+
+/** Kąt (od środka planety), pod jakim widać okrąg o promieniu `r` leżący `lift` nad powierzchnią. */
+function ringAngle(r: number, lift: number): number {
+  return Math.atan2(r, planet.radius + lift);
+}
+
+/** Najmniejszy promień opisany komórki — wyłącznie do GÓRNEJ granicy uniesienia. */
+function smallestCellRadius(): number {
+  let smallest = Infinity;
+  for (const cell of planet.cells) {
+    for (const corner of cell.corners) {
+      smallest = Math.min(
+        smallest,
+        Math.hypot(corner.x - cell.center.x, corner.y - cell.center.y, corner.z - cell.center.z),
+      );
+    }
+  }
+  return smallest;
+}
+
+// --- Nawinięcie trójkątów ------------------------------------------------------------------
+
+/**
+ * Ile trójkątów geometrii jest nawiniętych ODWROTNIE niż kierunek, w który mają patrzeć, plus
+ * najgorszy (najmniejszy) iloczyn skalarny znormalizowanej normalnej z tym kierunkiem.
+ *
+ * Istnieje, bo **defekt nawinięcia w tym zadaniu naprawdę wystąpił** — pierścień alarmu nie
+ * renderował się w ogóle, bo `side: FrontSide` wycinał całą warstwę — i znalazły go dopiero
+ * oczy, po zielonym pakiecie. W raporcie Zadania 3 napisałem, że takiego testu nie da się
+ * tanio napisać bez GPU. **To była nieprawda i przegląd to pokazał, pisząc go.** Nawinięcie
+ * jest własnością czysto arytmetyczną bufora pozycji i indeksów.
+ *
+ * `reference` dostaje CENTROID trójkąta i zwraca kierunek, w który ta ściana ma patrzeć.
+ */
+function windingReport(
+  geometry: BufferGeometry,
+  reference: (centroid: Vector3) => Vector3,
+): { triangles: number; wrong: number; worstDot: number } {
+  const position = geometry.getAttribute('position') as BufferAttribute;
+  const index = geometry.getIndex();
+  if (!index) throw new Error('test: geometria bez bufora indeksów');
+  const a = new Vector3();
+  const b = new Vector3();
+  const c = new Vector3();
+  let wrong = 0;
+  let worstDot = Infinity;
+  const triangles = index.count / 3;
+  for (let t = 0; t < triangles; t++) {
+    a.fromBufferAttribute(position, index.getX(t * 3));
+    b.fromBufferAttribute(position, index.getX(t * 3 + 1));
+    c.fromBufferAttribute(position, index.getX(t * 3 + 2));
+    const normal = new Vector3().subVectors(b, a).cross(new Vector3().subVectors(c, a));
+    if (normal.lengthSq() === 0) continue; // trójkąt zdegenerowany — do policzenia osobno
+    normal.normalize();
+    const centroid = new Vector3().add(a).add(b).add(c).multiplyScalar(1 / 3);
+    const d = normal.dot(reference(centroid).normalize());
+    if (d <= 0) wrong++;
+    worstDot = Math.min(worstDot, d);
+  }
+  return { triangles, wrong, worstDot };
+}
+
 // --- Kontrast WCAG -----------------------------------------------------------------------
 // Stałe barw w tym projekcie są LINIOWE (patrz `Rgb` w `shading.ts`), więc luminancja
 // względna bierze je WPROST — bez dekodowania sRGB. Potraktowanie ich jako sRGB dałoby
@@ -106,6 +229,18 @@ function contrast(a: Rgb, b: Rgb): number {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
+/**
+ * Odległość euklidesowa barw po ZAKODOWANIU do sRGB — miara „jak bardzo to widać",
+ * w odróżnieniu od kontrastu WCAG, który bierze luminancję liniową wprost (`shading.ts`,
+ * komentarz przy `Rgb`). Potrzebna tam, gdzie luminancja z definicji nie wystarcza: dwie
+ * barwy o identycznej luminancji mają identyczny kontrast wobec każdego tła, a mimo to
+ * jedna może być czerwienią, a druga szarością.
+ */
+function srgbDistance(a: Rgb, b: Rgb): number {
+  const encode = (u: number): number => (u <= 0.0031308 ? u * 12.92 : 1.055 * Math.pow(u, 1 / 2.4) - 0.055);
+  return Math.hypot(encode(a[0]) - encode(b[0]), encode(a[1]) - encode(b[1]), encode(a[2]) - encode(b[2]));
+}
+
 /** Każde tło, na którym budynek może stanąć: trzy pasma wypełnień i trzy barwy kraty. */
 const BACKGROUNDS: readonly (readonly [string, Rgb])[] = [
   ['noc', DEFAULT_PALETTE[0]],
@@ -117,6 +252,47 @@ const BACKGROUNDS: readonly (readonly [string, Rgb])[] = [
 ];
 
 const WCAG_MIN = 3;
+
+// --- Progi BEZWZGLĘDNE (runda naprawcza 1) ------------------------------------------------
+//
+// Do rundy naprawczej 1 każda asercja „stan widać" była wyrażona przez TĘ SAMĄ stałą, którą
+// testowała (`toBeCloseTo(1 + ALERT_PULSE_AMPLITUDE)`, `toBeCloseTo(fullRadius * CORE_SCALE_MIN)`
+// …), więc zostawała z niej wyłącznie asercja kierunkowa — prawdziwa dla dowolnie małej
+// zmiany. Przegląd sprowadził tym każdy kanał stanu do niewidoczności przy zielonym pakiecie.
+//
+// Poniższe progi są WEJŚCIEM, nie wyprowadzeniem: żaden nie jest liczony ze stałej, której
+// pilnuje. Wszystkie w jednostkach świata dla `planet.radius === 100`.
+//
+// **Przy tych progach CELOWO nie ma kotwic na dzisiejszą wartość.** Kotwica `toBeCloseTo`
+// obok progu na TEJ SAMEJ wielkości oblewa przy każdej zmianie, więc próg nigdy nie zdąży
+// zadziałać i staje się ozdobnikiem — a przy okazji nie da się już pokazać, GDZIE stoi
+// (mutacja „tuż przed progiem" oblewałaby kotwicę, nie próg). Dzisiejsze wartości są
+// wypisane w komentarzach przy samych stałych w `buildingMesh.ts` i w raporcie zadania.
+// Kotwice zostają WYŁĄCZNIE tam, gdzie przypinają PRZYRZĄD (np. `maxRingRadius = 3,172`,
+// `depthResolution = 0,0292`), bo tam każda zmiana jest błędem pomiaru, nie strojeniem.
+//
+// Przelicznik na piksele, potrzebny żeby te liczby cokolwiek znaczyły: z widoku DOMYŚLNEGO
+// (`INITIAL_DISTANCE_FACTOR = 3`, czyli kamera 300 jednostek od środka planety) tarcza
+// zajmuje 2·asin(1/3) = 38,94° przy polu widzenia 50°, więc przy płótnie 900 px ma 700 px
+// średnicy — **3,5 piksela na jednostkę świata**. Używam zachowawczych **3,22** (pomiar
+// recenzenta), bo liczy się najgorszy przypadek, nie najlepszy.
+const PIXELS_PER_UNIT = 3.22;
+
+/** Najmniejsza widoczna obręcz alarmu poza bryłą NAJWIĘKSZEGO budynku — ok. 1,8 px. */
+const MIN_ALERT_RING_WORLD = 0.5;
+/** Szczytowa prędkość promieniowa krawędzi pierścienia — ok. 3,2 px/s, czyli ok. 1 px na rzut oka. */
+const MIN_PULSE_SPEED_UNITS_PER_SECOND = 1;
+/** Pole rdzenia przy `hp === 0` jako ułamek pola przy pełnym — musi spaść wyraźnie. */
+const MAX_CORE_AREA_AT_ZERO_HP = 0.36;
+/** Skok promienia rdzenia między pełnym a zerowym `hp`, dla NAJWIĘKSZEJ bryły — ok. 1,1 px. */
+const MIN_CORE_RADIUS_DROP_WORLD = 0.35;
+/** Odległość barw (sRGB) barwy krytycznej od SZAROŚCI o tej samej luminancji. */
+const MIN_CRITICAL_CHROMA = 0.3;
+/** Ciemna obwódka rdzenia: ułamek promienia bryły i wartość bezwzględna dla największej. */
+const MIN_RIM_RATIO = 0.15;
+const MIN_RIM_WORLD = 0.35;
+/** Najmniejszy dopuszczalny promień i wysokość bryły JAKIEGOKOLWIEK typu. */
+const MIN_SHAPE_WORLD = 0.5;
 
 describe('barwy budynku wobec trzech pasm terenu', () => {
   it('1. [SEDNO DOBORU] dwa tony budynku pokrywają KAŻDE tło progiem 3:1 — a ŻADEN z nich sam tego nie potrafi', () => {
@@ -177,25 +353,36 @@ describe('barwy budynku wobec trzech pasm terenu', () => {
       worst = Math.min(worst, contrast(tone, DEFAULT_PALETTE[0]));
     }
     expect(worst).toBeGreaterThanOrEqual(WCAG_MIN);
-    expect(worst).toBeCloseTo(4.25, 2); // minimum wypada na końcu krytycznym rampy
+    // Kotwicy na dzisiejszych 4,25 tu NIE MA — oblewałaby przed progiem i czyniła go
+    // ozdobnikiem (patrz komentarz przy progach na górze pliku).
   });
 
-  it('3. jasny rdzeń zawsze mieści się w ciemnym szczycie skorupy — inaczej traci obwódkę, na której stoi dzień', () => {
-    expect(CORE_RADIUS_FACTOR).toBeLessThan(SHELL_TAPER);
-    // I to samo na LICZBACH, które faktycznie trafiają do macierzy: promień rdzenia przy
-    // pełnym `hp` kontra promień szczytu skorupy, dla każdego typu.
+  it('3. ciemna obwódka wokół rdzenia jest SZEROKA, nie tylko niezerowa — to ona niesie budynek na dniu', () => {
+    // Do rundy naprawczej 1 stała tu wyłącznie ostra nierówność `CORE < TAPER`, więc
+    // `SHELL_TAPER = 0,56` przechodziło, a obwódka schodziła z 0,54 jednostki do 0,02.
+    // To jest zadeklarowany nośnik dwóch własności naraz: widoczności budynku na paśmie
+    // dnia (rdzeń ma tam kontrast 1,04) i oddzielenia czerwonego rdzenia od pomarańczu
+    // zmierzchu (odległość barw 0,195). Zerowa obwódka zabiera obie, nie oblewając nic.
+    expect(SHELL_TAPER - CORE_RADIUS_FACTOR).toBeGreaterThanOrEqual(MIN_RIM_RATIO);
+
     const layer = createBuildingLayer(planet, geo);
     const list = emptyBuildings();
     ALL_TYPES.forEach((type, k) => place(list, 100 + k * 7, type));
     layer.update(list);
+    let widestRim = 0;
     for (let slot = 0; slot < ALL_TYPES.length; slot++) {
       const shellRadius = basisColumn(matrixAt(layer.shell, slot), 0).length();
       const shellTopRadius = shellRadius * SHELL_TAPER;
       const coreRadius = basisColumn(matrixAt(layer.core, slot), 0).length();
       expect(coreRadius, ALL_TYPES[slot]).toBeLessThan(shellTopRadius);
+      widestRim = Math.max(widestRim, shellTopRadius - coreRadius);
     }
+    // Próg BEZWZGLĘDNY na największej bryle — sam stosunek przepuściłby bryły tak małe, że
+    // obwódka byłaby ułamkiem piksela mimo poprawnej proporcji.
+    expect(widestRim).toBeGreaterThanOrEqual(MIN_RIM_WORLD);
     layer.dispose();
   });
+
 });
 
 describe('osadzenie budynku na komórce', () => {
@@ -208,8 +395,11 @@ describe('osadzenie budynku na komórce', () => {
 
     cells.forEach((id, slot) => {
       const m = matrixAt(layer.shell, slot);
-      // Pozycja porównana z `planet.cells[id].center` — źródłem NIEZALEŻNYM od bufora,
-      // z którego warstwa czyta (`PlanetGeometry`).
+      // Pozycja porównana z `planet.cells[id].center`. To NIE jest źródło niezależne —
+      // `geometry.ts` kopiuje `cell.center` wprost do `positions[cellVertexStart[i]]`, więc
+      // to te same liczby inną drogą (przegląd rundy 1, znalezisko Z8; raport Zadania 3
+      // twierdził inaczej i był w tym za mocny). Ta asercja łapie BŁĄD INDEKSOWANIA —
+      // budynek narysowany na cudzej komórce — i tylko tego dotyczy.
       const cell = planet.cells[id];
       const t = translationOf(m);
       expect(t.x, `komórka ${id}`).toBeCloseTo(cell.center.x, 3);
@@ -245,7 +435,7 @@ describe('osadzenie budynku na komórce', () => {
     layer.dispose();
   });
 
-  it('5. dziesięć typów daje DZIESIĘĆ różnych brył — typ czyta się z sylwetki, nie z barwy', () => {
+  it('5. dziesięć typów daje DZIESIĘĆ różnych brył, i KAŻDA jest większa od progu widoczności', () => {
     const layer = createBuildingLayer(planet, geo);
     const list = emptyBuildings();
     ALL_TYPES.forEach((type, k) => place(list, 20 + k * 13, type));
@@ -253,6 +443,8 @@ describe('osadzenie budynku na komórce', () => {
     expect(layer.shell.count).toBe(10);
 
     const seen = new Map<string, BuildingType>();
+    let smallestRadius = Infinity;
+    let smallestHeight = Infinity;
     ALL_TYPES.forEach((type, slot) => {
       const m = matrixAt(layer.shell, slot);
       const radius = basisColumn(m, 0).length();
@@ -265,8 +457,16 @@ describe('osadzenie budynku na komórce', () => {
       const clash = seen.get(key);
       expect(clash, `${type} ma tę samą bryłę co ${clash}`).toBeUndefined();
       seen.set(key, type);
+      smallestRadius = Math.min(smallestRadius, radius);
+      smallestHeight = Math.min(smallestHeight, height);
     });
-    expect(seen.size).toBe(10);
+
+    // Próg BEZWZGLĘDNY. Do rundy naprawczej 1 tabela kształtów była przypięta wyłącznie do
+    // samej siebie, więc `PYLON` o promieniu 0,03 (bryła o średnicy 0,2 piksela — typ
+    // znikający z ekranu) przechodził komplet testów: asercje wyżej sprawdzają zgodność
+    // macierzy z tabelą i wzajemną różność par, a obie są prawdziwe dla dowolnie małych brył.
+    expect(smallestRadius, 'najmniejszy promień bryły').toBeGreaterThanOrEqual(MIN_SHAPE_WORLD);
+    expect(smallestHeight, 'najmniejsza wysokość bryły').toBeGreaterThanOrEqual(MIN_SHAPE_WORLD);
     layer.dispose();
   });
 });
@@ -309,7 +509,7 @@ describe('[MUTACJA] stan NIEZASILONY jest widoczny w wyjściu', () => {
     layer.dispose();
   });
 
-  it('7. pierścień alarmu PULSUJE — ten sam stan w dwóch chwilach daje różne macierze', () => {
+  it('7. pierścień alarmu PULSUJE dość szybko, żeby ruch było widać — próg na PRĘDKOŚCI, nie na amplitudzie', () => {
     const layer = createBuildingLayer(planet, geo);
     const list = emptyBuildings();
     place(list, 600, 'PYLON', { powered: false });
@@ -322,58 +522,86 @@ describe('[MUTACJA] stan NIEZASILONY jest widoczny w wyjściu', () => {
     // KIERUNKOWO: szczyt jest WIĘKSZY od minimum (nie "różny od" — różnica bez znaku
     // przeszłaby także dla pulsu odwróconego, czyli pierścienia wchodzącego pod skorupę).
     expect(peak).toBeGreaterThan(trough);
-    expect(peak / trough).toBeCloseTo(1 + ALERT_PULSE_AMPLITUDE, 6);
-    // Kotwica bezwzględna: minimum pulsu to promień spoczynkowy, nie przypadkowa liczba.
-    expect(trough).toBeCloseTo(planet.radius * ALERT_RADIUS_FACTOR, 6);
-    // Pełny okres wraca do minimum — puls jest okresowy, a nie rosnący w nieskończoność.
+
+    // --- PRÓG BEZWZGLĘDNY (runda naprawcza 1) -----------------------------------------
+    // Poprzednia wersja pinowała `peak / trough` do `1 + ALERT_PULSE_AMPLITUDE`, czyli do tej
+    // samej stałej, którą testowała — zostawała z niej wyłącznie asercja kierunkowa i
+    // przechodziła amplituda 0,004 ORAZ okres 90 s. Sama amplituda zresztą nie wystarcza jako
+    // miara: da się ją wyzerować okresem, bo to prędkość, nie przemieszczenie, czyni ruch
+    // widocznym. Wielkość, którą ograniczamy, to szczytowa prędkość promieniowa krawędzi —
+    // MIERZONA z macierzy różnicą skończoną, nie wyprowadzona ze wzoru modułu.
+    const dt = ALERT_PULSE_PERIOD_SECONDS / 2000;
+    let fastest = 0;
+    let previous = trough;
+    for (let i = 1; i <= 2000; i++) {
+      layer.update(list, i * dt);
+      const r = basisColumn(matrixAt(layer.alert, 0), 0).length();
+      fastest = Math.max(fastest, Math.abs(r - previous) / dt);
+      previous = r;
+    }
+    expect(fastest, 'szczytowa prędkość promieniowa krawędzi pierścienia').toBeGreaterThanOrEqual(
+      MIN_PULSE_SPEED_UNITS_PER_SECOND,
+    );
+
+    // Okresowość i determinizm — puls wraca do minimum i ten sam czas daje ten sam obraz.
     layer.update(list, ALERT_PULSE_PERIOD_SECONDS);
     expect(basisColumn(matrixAt(layer.alert, 0), 0).length()).toBeCloseTo(trough, 4);
-    // Ten sam czas daje ten sam obraz — puls nie jest szumem.
     layer.update(list, ALERT_PULSE_PERIOD_SECONDS / 2);
     expect(basisColumn(matrixAt(layer.alert, 0), 0).length()).toBeCloseTo(peak, 6);
     layer.dispose();
   });
 
-  it('8. pierścień alarmu ZOSTAJE w swojej komórce przez cały cykl pulsu — i mimo to wystaje poza najgrubszą bryłę', () => {
-    // DWIE granice naraz, bo obie da się złamać w przeciwne strony:
-    //  • za duży — wchodzi na kratę i na sąsiada, a przy terminatorze rysuje po samej
-    //    granicy dnia i nocy, która jest nadrzędna wobec wszystkiego, co ta faza dodaje;
-    //  • za mały — chowa się pod bryłą i alarmu nie widać wcale.
-    // Obie liczone z RZECZYWISTYCH macierzy, a górna granica dodatkowo z NIEZALEŻNEGO
-    // źródła: najmniejszego promienia komórki w `planet` i wciągnięcia obrysu z Zadania 2.
+  it('8. [NIEZMIENNIK] pierścień NIE wychodzi poza komórkę w ŻADNEJ z 1442 komórek i w żadnej fazie pulsu', () => {
+    // ## Co ten test mierzył ŹLE do rundy naprawczej 1
+    //
+    // Porównywał promień pierścienia z `min|narożnik − środek| × (1 − OUTLINE_INSET)`, czyli
+    // z promieniem OPISANYM komórki (3,9208). Obrys nie przechodzi przez narożniki — to
+    // zamknięta pętla po nich — więc okrąg mieści się w nim wtedy i tylko wtedy, gdy jest
+    // mniejszy od promienia WPISANEGO (3,1720). Pierścień o promieniu 3,808 przechodził ten
+    // test i JEDNOCZEŚNIE wychodził poza kratę w 12 komórkach w spoczynku i wchodził na
+    // sąsiada w 72 na szczycie pulsu (największe wyjście 0,6360). Dla budynku przy
+    // terminatorze znaczyło to bursztyn po granicy dnia i nocy.
+    //
+    // Teraz: minimum po WSZYSTKICH komórkach i WSZYSTKICH krawędziach, liczone kątowo od
+    // środka planety z FAKTYCZNEGO bufora obrysów, i obowiązujące dla SZCZYTU pulsu.
+    const { angle: edgeAngle, cellId } = minOutlineEdgeAngle();
+    expect(cellId, 'najciaśniejsza komórka to pięciokąt').toBe(0);
+
+    // Kąt przeliczony z powrotem na promień W PŁASZCZYŹNIE, w której leży pierścień (czyli
+    // uniesionej o `SURFACE_LIFT_FACTOR`) — od tej chwili wszystko jest w jednych jednostkach.
+    // Kotwica idzie na wielkość CZYSTO GEOMETRYCZNĄ (bez uniesienia) — inaczej byłaby
+    // czuła na `SURFACE_LIFT_FACTOR`, czyli na stałą, o której ten test nie orzeka.
+    expect(Math.tan(edgeAngle) * planet.radius, 'przyrząd: promień wpisany obrysu').toBeCloseTo(3.1673, 3);
+    const lift = planet.radius * SURFACE_LIFT_FACTOR;
+    const maxRingRadius = Math.tan(edgeAngle) * (planet.radius + lift);
+    // Dla porównania to, z czym test porównywał do rundy naprawczej 1 — promień OPISANY:
+    expect(smallestCellRadius() * (1 - 0.07)).toBeCloseTo(3.9126, 3);
+
     const layer = createBuildingLayer(planet, geo);
     const list = emptyBuildings();
     place(list, 300, 'CORE', { powered: false });
 
     let widest = 0;
     let narrowest = Infinity;
-    for (let i = 0; i <= 24; i++) {
-      layer.update(list, (i / 24) * ALERT_PULSE_PERIOD_SECONDS);
+    for (let i = 0; i <= 240; i++) {
+      layer.update(list, (i / 240) * ALERT_PULSE_PERIOD_SECONDS);
       const outer = basisColumn(matrixAt(layer.alert, 0), 0).length();
       widest = Math.max(widest, outer);
       narrowest = Math.min(narrowest, outer);
     }
 
-    let smallestCellRadius = Infinity;
-    for (const cell of planet.cells) {
-      for (const corner of cell.corners) {
-        smallestCellRadius = Math.min(
-          smallestCellRadius,
-          Math.hypot(corner.x - cell.center.x, corner.y - cell.center.y, corner.z - cell.center.z),
-        );
-      }
-    }
-    const smallestOutline = smallestCellRadius * (1 - OUTLINE_INSET);
-    expect(widest, 'szczyt pulsu wychodzi poza obrys najmniejszej komórki').toBeLessThan(smallestOutline);
+    // GÓRNA GRANICA — pierścień zostaje w komórce. Przy poprzednich stałych było tu 3,808.
+    expect(widest, 'szczyt pulsu wychodzi poza krawędź obrysu').toBeLessThan(maxRingRadius);
 
+    // Ta sama granica dotyczy BRYŁY: budynek też jest okrągły i też nie może wyjść z komórki.
     const biggestShell =
       planet.radius * BUILDING_RADIUS_FACTOR * Math.max(...ALL_TYPES.map((t) => BUILDING_SHAPES[t].radius));
-    // Widoczna obręcz na zewnątrz najgrubszej bryły — ZE ZNAKIEM, nie co do wielkości.
-    expect(narrowest - biggestShell).toBeGreaterThan(0.5);
-    // Wewnętrzna krawędź WOLNO chować się pod bryłą — to jest świadoma decyzja (komórka
-    // jest za mała na obręcz, która i wystaje, i nie wchodzi pod budynek), więc pinujemy
-    // ją, zamiast udawać, że jej nie ma.
-    expect(narrowest * ALERT_INNER_FACTOR).toBeLessThan(biggestShell);
+    expect(ringAngle(biggestShell, 0)).toBeLessThan(edgeAngle);
+
+    // DOLNA GRANICA — obręcz musi WYSTAWAĆ poza najgrubszą bryłę, i to o próg BEZWZGLĘDNY,
+    // nie o „cokolwiek dodatniego": to `promień pierścienia − promień bryły` decyduje o tym,
+    // ile alarmu widać, bo reszta chowa się pod budynkiem.
+    expect(narrowest - biggestShell, 'widoczna obręcz w spoczynku').toBeGreaterThanOrEqual(MIN_ALERT_RING_WORLD);
     layer.dispose();
   });
 });
@@ -399,13 +627,30 @@ describe('[MUTACJA] stan USZKODZONY jest widoczny w wyjściu', () => {
       expect(radii[i], `krok ${i}`).toBeLessThan(radii[i - 1]);
       expect(redness[i], `krok ${i}`).toBeGreaterThan(redness[i - 1]);
     }
-    // Kotwice bezwzględne obu końców — test kierunkowy sam nie wykluczyłby rampy o
-    // mikroskopijnym zakresie, której człowiek by nie zobaczył.
-    const fullRadius = planet.radius * BUILDING_RADIUS_FACTOR * BUILDING_SHAPES.CORE.radius * CORE_RADIUS_FACTOR;
-    expect(radii[0]).toBeCloseTo(fullRadius, 4);
-    expect(radii[radii.length - 1]).toBeCloseTo(fullRadius * CORE_SCALE_MIN, 4);
-    expect(redness[0]).toBeCloseTo(CORE_COLOR_HEALTHY[0] - CORE_COLOR_HEALTHY[1], 5);
-    expect(redness[redness.length - 1]).toBeCloseTo(CORE_COLOR_CRITICAL[0] - CORE_COLOR_CRITICAL[1], 5);
+
+    // --- PROGI BEZWZGLĘDNE (runda naprawcza 1) ----------------------------------------
+    // Poprzednia wersja kotwiczyła oba końce rampy do stałych, których pilnowała
+    // (`fullRadius * CORE_SCALE_MIN`, `CORE_COLOR_CRITICAL[0] − [1]`), więc zostawała
+    // wyłącznie monotoniczność — a ta jest prawdziwa dla dowolnie małej zmiany.
+    // `CORE_SCALE_MIN = 0,985` przechodziło komplet testów.
+    //
+    // Kanał geometryczny ograniczamy POLEM (to ono, nie promień, decyduje o tym, jak bardzo
+    // plama się skurczyła dla oka) oraz bezwzględnym skokiem promienia na największej bryle.
+    const areaRatio = (radii[radii.length - 1] / radii[0]) ** 2;
+    expect(areaRatio, 'pole rdzenia przy zerowym hp').toBeLessThanOrEqual(MAX_CORE_AREA_AT_ZERO_HP);
+    expect(radii[0] - radii[radii.length - 1], 'skok promienia rdzenia').toBeGreaterThanOrEqual(
+      MIN_CORE_RADIUS_DROP_WORLD,
+    );
+
+    // Kanał barwny musi być BARWNY, nie tylko monotoniczny: szarość o identycznej luminancji
+    // (0,378608) przechodziła wszystko, łącznie z testem 2, bo kontrast wobec każdego pasma
+    // zostawał bez zmiany. Mierzymy więc odległość barw od szarości o WŁASNEJ luminancji
+    // końca rampy — w sRGB, bo to ona odpowiada postrzeganiu.
+    const criticalTone = instanceColorAt(layer.core, 0);
+    const grey = luminance(criticalTone);
+    expect(srgbDistance(criticalTone, [grey, grey, grey]), 'nasycenie barwy krytycznej').toBeGreaterThanOrEqual(
+      MIN_CRITICAL_CHROMA,
+    );
     layer.dispose();
   });
 
@@ -507,16 +752,30 @@ describe('warstwa jako całość', () => {
     ).toThrow(RangeError);
   });
 
-  it('14. update() NICZEGO nie mutuje — ani listy budynków, ani planety', () => {
+  it('14. update() NICZEGO nie mutuje — ani listy budynków, ani buforów geometrii, z których czyta', () => {
+    // Do rundy naprawczej 1 druga połowa tego testu brzmiała `JSON.stringify(planet)` i NIE
+    // MOGŁA oblać: `createBuildingLayer` czyta z `planet` wyłącznie `radius` i `cells.length`
+    // w chwili budowy i nie trzyma do niego referencji, więc `update` nie ma go jak dotknąć.
+    // Strażnikiem udającym strażnika była więc połowa testu.
+    //
+    // Bufory `PlanetGeometry` to co innego: warstwa TRZYMA do nich referencję i czyta z nich
+    // w pętli renderu co klatkę. Pomyłka `target` ↔ `geo.positions` w `writeInstance`
+    // zniszczyłaby geometrię TERENU spod siatki planety, i to nieodwracalnie.
     const layer = createBuildingLayer(planet, geo);
     const list = emptyBuildings();
     ALL_TYPES.forEach((type, k) => place(list, 30 + k * 11, type, { hp: BUILDINGS[type].hp * 0.4, powered: k % 2 === 0 }));
     const buildingsBefore = JSON.stringify(list);
-    const planetBefore = JSON.stringify(planet);
+    const geometryBefore = [geo.positions, geo.normals, geo.indices, geo.cellVertexStart, geo.cellVertexCount].map(
+      (buffer) => createHash('sha256').update(Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength)).digest('hex'),
+    );
     layer.update(list, 0.37);
     layer.update(list, 0.74);
     expect(JSON.stringify(list)).toBe(buildingsBefore);
-    expect(JSON.stringify(planet)).toBe(planetBefore);
+    expect(
+      [geo.positions, geo.normals, geo.indices, geo.cellVertexStart, geo.cellVertexCount].map((buffer) =>
+        createHash('sha256').update(Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength)).digest('hex'),
+      ),
+    ).toEqual(geometryBefore);
     layer.dispose();
   });
 
@@ -691,13 +950,107 @@ describe('buildCellBases — funkcja czysta', () => {
 
   it('19. puls jest gładki, okresowy i ZACZYNA się w minimum', () => {
     expect(alertPulseScale(0)).toBeCloseTo(1, 12);
-    expect(alertPulseScale(ALERT_PULSE_PERIOD_SECONDS / 2)).toBeCloseTo(1 + ALERT_PULSE_AMPLITUDE, 12);
     expect(alertPulseScale(ALERT_PULSE_PERIOD_SECONDS)).toBeCloseTo(1, 12);
+    // Maksimum w połowie okresu — ZE ZNAKIEM i bez odwoływania się do amplitudy (poprzednia
+    // wersja pinowała tu `1 + ALERT_PULSE_AMPLITUDE`, czyli stałą, której pilnowała).
+    expect(alertPulseScale(ALERT_PULSE_PERIOD_SECONDS / 2)).toBeGreaterThan(alertPulseScale(0));
+    let highest = 0;
+    for (let i = 0; i <= 2000; i++) highest = Math.max(highest, alertPulseScale((i / 2000) * ALERT_PULSE_PERIOD_SECONDS));
+    expect(alertPulseScale(ALERT_PULSE_PERIOD_SECONDS / 2)).toBeCloseTo(highest, 9);
     // Nigdy poniżej minimum — pierścień nie wjeżdża pod skorupę w żadnej fazie.
     for (let i = 0; i <= 200; i++) {
       const s = alertPulseScale((i / 200) * ALERT_PULSE_PERIOD_SECONDS * 3);
       expect(s).toBeGreaterThanOrEqual(1 - 1e-12);
-      expect(s).toBeLessThanOrEqual(1 + ALERT_PULSE_AMPLITUDE + 1e-12);
+      expect(s).toBeLessThanOrEqual(highest + 1e-12);
     }
+  });
+});
+
+describe('nawinięcie trójkątów — nawrót defektu, który w tym zadaniu wystąpił (runda naprawcza 1)', () => {
+  it('20. KAŻDY trójkąt każdej z trzech warstw jest zwrócony NA ZEWNĄTRZ — inaczej odcinanie tylnych ścian zjada warstwę', () => {
+    // Pierścień alarmu nie renderował się w ogóle, bo jego trójkąty były nawinięte odwrotnie
+    // i `side: FrontSide` wycinał całą warstwę. Znalazły to dopiero oczy, po zielonym
+    // pakiecie, a raport Zadania 3 twierdził, że testu na to nie da się tanio napisać bez
+    // GPU. Przegląd pokazał, że to nieprawda — nawinięcie jest własnością arytmetyczną
+    // bufora pozycji i indeksów, nie własnością rasteryzacji.
+    //
+    // Geometrie brane ze SCENY (`layer.shell.geometry` …), a nie z osobno wywołanych
+    // funkcji budujących: sprawdzane jest to, co trafia do renderera.
+    const layer = createBuildingLayer(planet, geo);
+
+    // Skorupa: bryła wypukła wokół punktu (0, 0, 0.5) w przestrzeni lokalnej (podstawa w
+    // z = 0, szczyt w z = 1), więc każda ściana ma patrzeć OD tego punktu.
+    const insideShell = new Vector3(0, 0, 0.5);
+    const shell = windingReport(layer.shell.geometry, (centroid) => centroid.clone().sub(insideShell));
+    expect(shell.triangles, 'ścian bocznych + pokrywa').toBe(18);
+    expect(shell.wrong, 'skorupa: trójkąty zwrócone do wnętrza').toBe(0);
+    expect(shell.worstDot).toBeGreaterThan(0.5);
+
+    // Rdzeń i pierścień: płaskie, leżą w z = 0 i mają patrzeć wzdłuż +Z.
+    const up = new Vector3(0, 0, 1);
+    const core = windingReport(layer.core.geometry, () => up);
+    expect(core.triangles).toBe(6);
+    expect(core.wrong, 'rdzeń: trójkąty zwrócone w dół').toBe(0);
+    expect(core.worstDot).toBeCloseTo(1, 9);
+
+    const alert = windingReport(layer.alert.geometry, () => up);
+    expect(alert.triangles, 'dwa pasy × 24 boki × 2 trójkąty').toBe(96);
+    expect(alert.wrong, 'pierścień: trójkąty zwrócone w dół — DOKŁADNIE defekt z Zadania 3').toBe(0);
+    expect(alert.worstDot).toBeCloseTo(1, 9);
+
+    layer.dispose();
+  });
+});
+
+describe('uniesienie rdzenia ponad skorupę (runda naprawcza 1)', () => {
+  it('21. rdzeń stoi NAD pokrywą skorupy o więcej niż rozdzielczość bufora głębokości', () => {
+    // `SURFACE_LIFT_FACTOR = 0` przechodziło komplet testów, choć cała ta stała istnieje po
+    // to, żeby rdzeń nie leżał w TEJ SAMEJ płaszczyźnie co pokrywa skorupy. Skutkiem zera
+    // jest migotanie — widoczne wyłącznie na GPU, czyli NIGDY w CI, i objawiłoby się jako
+    // „budynki migoczą" w losowym późniejszym zadaniu, bez śladu prowadzącego tutaj.
+    //
+    // Próg liczony ze stałych `camera.ts`, NIE z testowanej stałej: przy 24-bitowym buforze
+    // głębokości rozdzielczość w odległości `z` wynosi `z²(far − near)/(near · far · 2²⁴)`.
+    const near = planet.radius * 0.01;
+    const far = planet.radius * MAX_DISTANCE_FACTOR * 2;
+    const furthest = planet.radius * (MAX_DISTANCE_FACTOR - 1); // kamera nad powierzchnią
+    const depthResolution = (furthest * furthest * (far - near)) / (near * far * 2 ** 24);
+    expect(depthResolution).toBeCloseTo(0.0292, 4); // kotwica na sam przyrząd
+
+    const layer = createBuildingLayer(planet, geo);
+    const list = emptyBuildings();
+    ALL_TYPES.forEach((type, k) => place(list, 100 + k * 7, type));
+    layer.update(list);
+    for (let slot = 0; slot < ALL_TYPES.length; slot++) {
+      // Mierzone na FAKTYCZNYCH macierzach: pokrywa skorupy to jej przesunięcie plus pełna
+      // trzecia kolumna bazy (wysokość), rdzeń to jego własne przesunięcie.
+      const shellMatrix = matrixAt(layer.shell, slot);
+      const shellTop = translationOf(shellMatrix).add(basisColumn(shellMatrix, 2));
+      const lift = translationOf(matrixAt(layer.core, slot)).sub(shellTop);
+      const normal = basisColumn(shellMatrix, 2).normalize();
+      // ZE ZNAKIEM: rdzeń ma stać NAD skorupą, nie pod nią. Wielkość bezwzględna
+      // przepuściłaby uniesienie ujemne, czyli rdzeń schowany we wnętrzu bryły.
+      expect(lift.dot(normal), ALL_TYPES[slot]).toBeGreaterThanOrEqual(depthResolution * 3);
+    }
+    // Górna granica, ta sama reguła co dla `OUTLINE_LIFT`: poniżej 5% średnicy najmniejszej
+    // komórki, żeby przy limbie nic nie nawisało nad sąsiadem.
+    expect(planet.radius * SURFACE_LIFT_FACTOR).toBeLessThan(0.05 * 2 * smallestCellRadius());
+    layer.dispose();
+  });
+});
+
+describe('konwencja [WYGLĄD] (runda naprawcza 1)', () => {
+  it('22. KAŻDA liczbowa stała modułu jest oznaczona `// [WYGLĄD]`', () => {
+    // `global-constraints.md`: „Każda liczba czysto wizualna oznaczona `// [WYGLĄD]`".
+    // Konwencji nie pilnował dotąd żaden test w repozytorium, i dwie stałe tego modułu
+    // (`SHELL_SIDES`, `ALERT_SIDES`) faktycznie jej nie spełniały. Strażnik jest wąski —
+    // dotyczy TEGO pliku — ale tani, a plik jest dziś największym skupiskiem takich liczb.
+    const source = readFileSync(new URL('../src/buildingMesh.ts', import.meta.url), 'utf8');
+    const declarations = [...source.matchAll(/^(?:export )?const ([A-Z_0-9]+)(?::[^=]+)? = (-?[\d.]+);(.*)$/gm)];
+    expect(declarations.length, 'żadna stała liczbowa nie została znaleziona — regex przestał pasować').toBeGreaterThan(
+      10,
+    );
+    const unmarked = declarations.filter((m) => !m[3].includes('[WYGLĄD]')).map((m) => m[1]);
+    expect(unmarked, `stałe bez markera: ${unmarked.join(', ')}`).toEqual([]);
   });
 });
