@@ -25,6 +25,17 @@ Wszystkie ograniczenia Fazy 2A obowiązują dalej. Powtarzam te, które ta faza 
 - **Materiał terenu pozostaje bez modelu oświetlenia.** `MeshBasicMaterial` z `vertexColors: true`. Jeśli dodasz materiał oświetlony dla jednostek albo budynków, **nie wolno mu wpłynąć na teren** — żadnych `THREE.Light` w scenie bez sprawdzenia, że pasma terenu nadal są płaskie.
 - **Czytelność terminatora jest nadrzędna wobec wszystkiego, co ta faza dodaje.** Każda zmiana wyglądu terenu i każdy nowy element na nim musi przejść bramkę z Zadania 1. To jest ograniczenie, nie sugestia — D1 niesie spawn, spalanie i całą ekonomię dnia i nocy.
 - **Brak alokacji w pętli renderu.** 2A wprowadziła tę dyscyplinę i ma test na liczbę cykli odśmiecania; jednostki ruszają się co klatkę, więc to tutaj jest realne ryzyko.
+- **Stałe koloru w `shading.ts` są LINIOWE, nie sRGB.** Three.js od r152 traktuje atrybut
+  `color` jako już w przestrzeni roboczej (linear-sRGB) i koduje go dopiero na wyjściu.
+  Zmierzone `gl.readPixels` na żywym płótnie w Zadaniu 2: pasmo dnia daje `[253, 246, 223]`,
+  czyli `encodeSrgb([0.98, 0.92, 0.74])`, a nie `[250, 235, 189]`. Skutki dla każdego nowego
+  koloru w Zadaniach 3-5: kontrast **WCAG** liczy się z luminancji liniowej, więc bierze te
+  trójki WPROST; „jak bardzo to widać" liczy się po **zakodowaniu do sRGB**. Prawdziwe
+  kontrasty palety terenu to noc↔zmierzch **5,38**, zmierzch↔dzień **1,79**, noc↔dzień
+  **9,62** — nie 5,6 / 2,90 / 16,2, które wychodzą z potraktowania tych samych trójek jako
+  sRGB. To był defekt w moim briefie Zadania 2, wykryty pomiarem, nie czytaniem; liczba
+  najważniejsza dla Zadań 3 i 4 to **1,79** — budynek albo jednostka dobrana tak, by
+  odcinać się od zmierzchu, ma bardzo mało zapasu wobec dnia.
 - Każda liczba czysto wizualna oznaczona `// [WYGLĄD]`.
 - Commit po każdym zadaniu.
 

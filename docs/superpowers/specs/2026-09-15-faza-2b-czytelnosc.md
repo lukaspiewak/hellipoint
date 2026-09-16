@@ -610,3 +610,131 @@ własny test (TP19b) i własną mutację (M15).
 
 Baseline przed tym zadaniem: 496 testów w 36 plikach. Po rundzie 0: 516 testów. Po korekcie
 rundy 1: **519 testów w 37 plikach**, `pnpm typecheck` czysty, `pnpm test` zielony.
+
+---
+
+## 12. Zadanie 2 — krata komórek wobec tej samej bramki
+
+Zadanie 2 dokłada widoczną kratę komórek. To pierwsza zmiana w tej fazie, która mogła
+zepsuć to, co §7 właśnie uznało za udowodnione, więc bramka z Zadania 1 była tu
+ograniczeniem nadrzędnym, nie kryterium estetycznym.
+
+### 12.1 Co zostało zrobione i dlaczego akurat tak
+
+Wybrany wariant: obrysy komórek jako **osobna geometria linii** (`LineSegments`, dziecko
+siatki terenu), kolorowana tą samą funkcją i tym samym `lightBand` co wypełnienia.
+**Wypełnienia komórek nietknięte** — więc odległość barw przez terminator jest zachowana
+Z KONSTRUKCJI, nie przez strojenie.
+
+Wariant „subtelne zróżnicowanie odcienia wewnątrz pasma" odrzucony i warto zapisać
+dlaczego, bo wygląda niewinnie: **obniża tę odległość z definicji**. Cokolwiek robi z
+odcieniami, najciemniejszy odcień pasma jaśniejszego leży bliżej pasma ciemniejszego niż
+leżał jego kolor bazowy. Zmierzone na mutacji odpowiadającej temu wariantowi: 0,9005 →
+**0,4614**.
+
+### 12.2 Pomiary — moje własne, nie przepisane z raportu
+
+| co | wartość | jak sprawdzone |
+|---|---|---|
+| odległość barw przez terminator, przed i po | **0,9005 → 0,9005** | własna sonda, 1636 prawdziwych par sąsiadów × 12 faz obrotu |
+| szczelina między obrysami dwóch sąsiadów | **9,4%–13,3% długości krawędzi komórki**, nigdy 0 | odczyt Z BUFORA obrysów, 4320 wspólnych krawędzi |
+| uniesienie obrysu ponad teren | 0,00187–0,00194 promienia | odczyt z bufora |
+| liczba odcinków | 8640 (12×5 + 1430×6) | odczyt z bufora |
+| koszt klatki | mediana 0,50 ms, p95 **0,855 ms** przy budżecie 8 ms | HUD na żywym płótnie, n=30 |
+
+Uwaga do ostatniego wiersza: pierwszy odczyt HUD pokazał p95 **11,9 ms przy n=10**, czyli
+ponad budżet. To rozgrzewka (kompilacja shaderów w pierwszych klatkach) — po n=30 spada do
+0,855 ms i tam zostaje. Kto będzie mierzył budżet w Zadaniu 5, ma prawo zobaczyć to samo i
+nie powinien z tego wyciągać wniosku o wydajności.
+
+### 12.3 Rzecz, która o mało nie przeszła: obrys po krawędzi zamiast wciągnięty
+
+Sąsiednie komórki dzielą krawędź. Obrys rysowany dokładnie po krawędziach dałby na niej
+**dwie pokrywające się linie, a na granicy pasm — w dwóch różnych kolorach**. Piksele
+terminatora przestałyby wtedy pokazywać skok wypełnień (0,9005), a pokazywałyby skok
+obrysów: zmierzone **0,5546**, czyli 62% dzisiejszego kontrastu.
+
+Bramka z Zadania 1 mierzy wypełnienia. **Przeszłaby na pomiarze, a oko dostałoby wersję
+gorszą o ponad jedną trzecią.** Stąd `OUTLINE_INSET` i asercja na szczelinę w jednostkach
+świata — to nie jest stała estetyczna, tylko warunek na to, żeby instrument nadal mierzył
+to, co pokazuje ekran. Zapisane tu, bo to ta sama rodzina co §10: pomiar zgodny z
+rzeczywistością tylko dopóki nic nie stanie między nimi.
+
+### 12.4 Szew: kolor planety mieszka teraz w DWÓCH buforach
+
+`readabilityGate` w trybie „smooth" pisał dotąd wprost do atrybutu `color` siatki terenu.
+Po dołożeniu obrysów zostawiłoby to wypełnienia gładkie, a **kratę nadal progowaną** —
+czyli widoczny terminator narysowany linią, w trybie, którego cała rola polega na
+pokazaniu, jak wygląda render BEZ progowania. Tryb idzie teraz przez
+`PlanetMesh.updateColorsSmooth`.
+
+Sprawdzone mutacją, której wykonawca nie zrobił: podmiana w ścieżce gładkiej samego
+kolorowania obrysu na progowe (`writeCellColorsSmooth` → `writeCellColors`). Oblewa test
+28 z odczytem `expected 3 to be greater than 100` — trzy barwy obrysu zamiast ponad stu.
+Test jest więc związany na właściwej własności, a nie tylko na „czy w ogóle odświeżył".
+
+### 12.5 Bramka po zmianie
+
+**Tryb progowany: PASS 15/15** (przebieg wykonawcy; pierwszy przebieg 13/15 z widoku całej
+tarczy, drugi 15/15 z przybliżenia roboczego — obie pominięte komórki sprawdzone z bliska,
+pierścień w obu obejmował komórkę pomarańczową, więc render był poprawny, a ograniczeniem
+była rozdzielczość podglądu).
+
+**Tryb kontrolny: FAIL** — kontrola nadal potrafi oblać, a krata **nie wprowadziła tam
+nowej wskazówki**: w trybie kontrolnym kraty NIE MA w ogóle. Obejrzałem to sam — gładka
+kula, ani jednej linii. Mechanizm jest dziedziczny (`visible` na rodzicu), nie osobno
+utrzymywany, i ma test.
+
+### 12.6 Resztkowy przeciek kontroli — zgłoszony, nieusunięty
+
+Wykonawca dostał w kontroli **12/15**, co nie jest przypadkiem (oczekiwane 7,5), i sam
+wskazał mechanizm: `setupTrial` celuje kamerą wzdłuż normalnej pytanej komórki, więc
+komórka zawsze ląduje **na środku tarczy**, a w trybie kontrolnym jasność jest monotoniczną
+nieprzyciętą funkcją `dot(normal, sunDir)` — więc bezwzględna jasność środka jest częściową
+wskazówką.
+
+Rozstrzygnięcie: **to nie podważa werdyktu z §7**, bo błąd idzie w stronę zachowawczą —
+kontrola, która przecieka, jest ŁATWIEJSZA, a mimo to daje 12/15 przeciw 15/15 progowania.
+Gdyby ją uszczelnić, kontrast byłby większy, nie mniejszy.
+
+Warto natomiast odnotować drugą rzecz, bo zmienia interpretację §7.3: **agent czytający
+piksele i człowiek patrzący na ekran to dwa różne instrumenty.** Właściciel projektu w tej
+samej kontroli nie potrafił odpowiedzieć w ogóle (stała odpowiedź, 8/15). Bramka jest
+instrumentem CZYTELNOŚCI DLA CZŁOWIEKA; wynik agenta mierzy, ile informacji zostało w
+obrazie, a nie ile z niej widać. Obie liczby są prawdziwe i mierzą co innego.
+
+Kandydat na naprawę, gdyby kontrola miała być czysta przed Zadaniem 5: przestać celować
+kamerą w pytaną komórkę w trybie kontrolnym. Nie zrobione — poza zakresem Zadania 2.
+
+### 12.7 Defekt znaleziony w moim briefie: liniowe czy sRGB
+
+Brief Zadania 2 podawał kontrasty palety jako 5,6 / 2,90 / 16,2, licząc stałe
+`DEFAULT_PALETTE` jako sRGB. **To jest błąd.** Three.js od r152 traktuje atrybut `color`
+jako już w przestrzeni roboczej (linear-sRGB). Zmierzone `gl.readPixels` na żywym płótnie:
+pasmo dnia daje `[253, 246, 223]`, dokładnie `encodeSrgb([0.98, 0.92, 0.74])` — gdyby te
+trójki były sRGB, byłoby `[250, 235, 189]`.
+
+Prawdziwe kontrasty WCAG: noc↔zmierzch **5,38**, zmierzch↔dzień **1,79**, noc↔dzień
+**9,62**. Przeliczyłem obie wersje własną sondą i obie się zgadzają: z palety jako liniowej
+wychodzi 5,38 / 1,79 / 9,62, z tej samej palety jako sRGB — 5,60 / 2,90 / 16,2, czyli
+dokładnie liczby z mojego briefu.
+
+Błąd szedł w stronę **niekorzystną**: najsłabszy bok palety (zmierzch↔dzień) jest naprawdę
+słabszy, niż pisałem — 1,79 przy progu 3:1, nie 2,90. Wzmacnia to wniosek o odrzuceniu
+wariantu 2, ale przede wszystkim jest ostrzeżeniem dla Zadań 3 i 4: **budynek albo
+jednostka dobrana tak, żeby odcinać się od zmierzchu, ma bardzo mało zapasu wobec dnia.**
+Wpisane do Global Constraints planu, żeby briefy to niosły.
+
+### 12.8 Wada znaleziona przez wykonawcę we własnym teście
+
+Pierwsza wersja testu 22 wołała `writeCellColors` dwukrotnie i porównywała pasma — dwa
+wywołania tej samej funkcji czystej na tym samym wejściu zgadzają się z definicji, więc
+**żadna mutacja nie mogła jej oblać**. Przepisana tak, by mierzyć przez
+`PlanetMesh.updateColors`, czyli przez okablowanie; łapie dwie mutacje.
+
+To jedenasta pozycja w katalogu testów, które nie mierzyły tego, co deklarowały. Wzorzec
+się nie zmienia: test porównujący wyjście z wyjściem tej samej funkcji jest tautologią.
+
+### 12.9 Stan po zadaniu
+
+`530 testów w 37 plikach`, `pnpm typecheck` czysty, `pnpm test` zielony. Commit `fa1ff80`.
