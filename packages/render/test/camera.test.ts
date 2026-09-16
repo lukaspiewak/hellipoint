@@ -6,12 +6,15 @@ import {
   createCamera,
   distanceLimits,
   focusPosition,
+  FIELD_OF_VIEW_DEGREES,
+  INITIAL_DISTANCE_FACTOR,
   MAX_DISTANCE_FACTOR,
   MIN_DISTANCE_FACTOR,
   ORBIT_ROTATE_SPEED,
   ORBIT_ZOOM_SPEED,
 } from '../src/camera.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
+import { CANVAS_HEIGHT_PX, pixelsPerUnit, silhouetteFrameFraction } from './support/pixelScale.js';
 
 // Ta sama planeta-fixture co geometry.test.ts/shading.test.ts (ten sam seed) — jedna
 // "prawdziwa planeta", o której mówią wszystkie pliki testowe tego pakietu.
@@ -51,6 +54,62 @@ const sharedDistance = radius * 2.7;
 // Reużywane w teście determinizmu (4): to samo dwa starty, ta sama `sharedDistance`.
 const antipodalStart: Vec3 = scale(targetDirection, -sharedDistance);
 const orthogonalStart: Vec3 = scale(orthogonalUnit(targetDirection), sharedDistance);
+
+describe('kadrowanie WIĄŻE progi czytelności Zadań 3 i 4 — skala px/jednostkę', () => {
+  it('[KOTWICA NA PRZYRZĄD] skala wynika z INITIAL_DISTANCE_FACTOR i FIELD_OF_VIEW_DEGREES, i wynosi dziś 3,41 px/j', () => {
+    // CAŁA metodologia czytelności Fazy 2B („minimum po populacji, w PIKSELACH") stoi na tej
+    // jednej liczbie, a jej przesłankami są DWIE stałe `[WYGLĄD]` z tego pliku. Do przeglądu
+    // gałęzi nic ich nie wiązało: `INITIAL_DISTANCE_FACTOR 3 → 4,5` i `FIELD_OF_VIEW_DEGREES
+    // 50 → 75` dawały 225/225 zielonych, przy skali fałszywej o 35-39 %. Ta kotwica jest po
+    // to, żeby zestrojenie kadrowania w Fazie 4 oblało TUTAJ, z nazwą przyczyny, a nie
+    // dopiero jako „obwódka ma 0,73 px" w pliku o budynkach.
+    //
+    // Ta kotwica NIE zabrania zmiany kadrowania. Mówi tylko: zmieniając je, przelicz progi
+    // czytelności obu warstw — bo one opisują ekran, a nie świat.
+    // Dwie kotwice o RÓŻNYCH zadaniach i dlatego o różnej ciasnocie — pierwsza wersja tego
+    // testu pinowała udział kadru do szóstej cyfry i połówka pary „ma PRZEJŚĆ" to złapała:
+    // przy takiej ciasnocie NIC nie przechodzi, czyli kotwica przestaje odróżniać „inny
+    // wzór" od „inne kadrowanie", a to jest dokładnie wzorzec, który ta runda usuwa z
+    // `unitMesh.test.ts`.
+    //
+    // (1) udział kadru — kotwica na WZÓR, nie na wartość stałych. Błędne wyprowadzenie różni
+    //     się o 6 % (patrz kontrola negatywna niżej), więc luźny próg w zupełności wystarcza.
+    expect(silhouetteFrameFraction()).toBeCloseTo(0.758198, 2);
+    // (2) skala — kotwica na POMIAR: to przy niej zmierzono wszystkie progi pikselowe Zadań 3
+    //     i 4, więc to ona ma oblewać przy zestrojeniu kadrowania. Ona jest tu wiążąca.
+    expect(pixelsPerUnit(radius)).toBeCloseTo(3.41, 2);
+    expect(radius).toBe(100); // przesłanka kotwicy: to promień planety-fixture, nie dowolny
+
+    // KONTROLA POZYTYWNA NA SAM PRZYRZĄD: skala ma REAGOWAĆ na oba wejścia. Bez tego
+    // „3,41" mogłoby pochodzić ze stałej przebranej za rachunek.
+    expect(pixelsPerUnit(radius * 2)).toBeCloseTo(pixelsPerUnit(radius) / 2, 9);
+    expect(pixelsPerUnit(radius)).toBeCloseTo(
+      (silhouetteFrameFraction() * CANVAS_HEIGHT_PX) / (2 * radius),
+      9,
+    );
+
+    // KONTROLA NEGATYWNA: wyprowadzenie obalone w `f71d499` — naiwne `R/d` zamiast
+    // `tan(asin(R/d))` — daje 0,714836 i 3,2168 px/j, czyli dokładnie tę liczbę (3,22), w
+    // której policzona jest cała dokumentacja pikselowa sprzed tej rundy. Dzielenie przez
+    // odległość SKOŚNĄ od kamery zamiast OSIOWEJ daje ją tak samo. Przypięte tutaj, żeby
+    // powrót do niej był zmianą, którą widać w diffie tego testu, a nie cichym regresem.
+    // Asercje RELACYJNE, nie przypięte liczby — bo naiwny wzór też zależy od tych samych
+    // stałych, więc kotwica na jego dzisiejszą wartość byłaby TRZECIM strażnikiem kadrowania
+    // przebranym za kontrolę wzoru (przy dzisiejszych stałych daje 0,714836 i 3,2168 px/j).
+    const naiveFraction = 1 / INITIAL_DISTANCE_FACTOR / Math.tan((FIELD_OF_VIEW_DEGREES * Math.PI) / 360);
+    expect(naiveFraction).toBeLessThan(silhouetteFrameFraction()); // ZANIŻA, czyli niezachowawczo
+    expect(naiveFraction).not.toBeCloseTo(silhouetteFrameFraction(), 2); // i to nie o zaokrąglenie
+    expect((naiveFraction * CANVAS_HEIGHT_PX) / (2 * radius)).toBeLessThan(pixelsPerUnit(radius));
+  });
+
+  it('pixelsPerUnit rzuca RangeError zamiast oddać cichy NaN', () => {
+    // Cichy `NaN` przeniósłby się na KAŻDY próg pikselowy obu plików, a `expect(NaN)`
+    // oblewa komunikatem o obwódce, nie o kamerze. Ten sam powód, co strażniki w `camera.ts`.
+    expect(() => pixelsPerUnit(0)).toThrow(RangeError);
+    expect(() => pixelsPerUnit(-1)).toThrow(RangeError);
+    expect(() => pixelsPerUnit(Number.NaN)).toThrow(RangeError);
+  });
+});
 
 describe('distanceLimits / clampDistance — matematyka zoomu (funkcje czyste)', () => {
   it('MIN_DISTANCE_FACTOR i MAX_DISTANCE_FACTOR mają sensowne, absolutne wartości', () => {

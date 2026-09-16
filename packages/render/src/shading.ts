@@ -1,10 +1,48 @@
-import type { PlanetGeometry } from './geometry.js';
-
 /**
  * Kolor w przestrzeni 0..1 na składową — tak jak oczekuje atrybut `color` na
  * `THREE.BufferGeometry` (Zadanie 4). Zero zależności od Three.js: to sama trójka liczb.
+ *
+ * ## Te liczby są LINIOWE, nie sRGB — zmierzone na żywym płótnie (Faza 2B, Zadanie 2)
+ *
+ * Three.js (od r152) ma zarządzanie barwą włączone domyślnie i traktuje atrybut `color`
+ * jako JUŻ w przestrzeni roboczej (linear-sRGB): koduje go do sRGB dopiero na wyjściu,
+ * nie dekoduje na wejściu. Odczytane `gl.readPixels` z `apps/client` (`#app`, pasmo dnia
+ * pośrodku tarczy): `[253, 246, 223]` — dokładnie `encodeSrgb([0.98, 0.92, 0.74]) × 255`.
+ * Gdyby te trójki były sRGB, na ekranie byłoby `[250, 235, 189]`.
+ *
+ * Ma to znaczenie przy KAŻDYM liczeniu kontrastu z tych stałych: kontrast WCAG liczy się
+ * z luminancji LINIOWEJ, więc bierze te liczby wprost, natomiast „jak bardzo te dwa kolory
+ * różnią się dla oka" (odległość barw postrzegana) trzeba liczyć po ZAKODOWANIU do sRGB.
+ * Zmierzone kontrasty WCAG tej palety: noc↔zmierzch **5,38**, zmierzch↔dzień **1,79**,
+ * noc↔dzień **9,62**. Policzone z tych samych trójek potraktowanych jako sRGB wyszłoby
+ * 5,6 / 2,90 / 16,2 — czyli LEPIEJ, niż jest naprawdę, i akurat na tym boku, który jest
+ * najsłabszy (zmierzch↔dzień). Przypina to test **23** w `shading.test.ts` — liczy kontrast
+ * OBIEMA drogami i pokazuje, że tylko liniowa daje te trzy liczby. Odsyłacz do testu 21 był
+ * tu do rundy naprawczej 1 i był błędny: test 21 mierzy odległość euklidesową w sRGB, nie
+ * kontrast WCAG, więc te trzy liczby nie były do tej pory pilnowane przez żaden test — a
+ * `global-constraints.md` opiera na nich dobór barw budynków (Zadanie 3) i jednostek (4).
  */
 export type Rgb = readonly [r: number, g: number, b: number];
+
+/**
+ * Minimalny kształt, jakiego potrzebuje pisanie koloru PER KOMÓRKA do bufora wierzchołków:
+ * bufor pozycji (tylko po to, żeby znać jego długość) i zakres `[start, start + count)`
+ * wierzchołków należących do komórki `i`.
+ *
+ * Wydzielone z `PlanetGeometry` w Fazie 2B, Zadanie 2 — bo obrysy komórek (`CellOutlines`
+ * w `planetMesh.ts`) mają DOKŁADNIE tę samą strukturę „komórka → zakres wierzchołków", tylko
+ * inny bufor i inną liczbę wierzchołków na komórkę (2 na krawędź zamiast 1 na narożnik + środek).
+ * Dzięki temu `writeCellColors` koloruje obrysy TĄ SAMĄ funkcją, z tą samą `light` i tym samym
+ * `lightBand` — więc własność „obrys komórki nigdy nie pokazuje innego pasma niż jej wypełnienie"
+ * zachodzi Z KONSTRUKCJI, a nie z powtórzonej, drugiej implementacji, którą trzeba by trzymać
+ * w zgodzie. `PlanetGeometry` spełnia ten kształt strukturalnie; nic po stronie Fazy 2A się
+ * nie zmienia.
+ */
+export interface CellVertexRanges {
+  readonly positions: Float32Array;
+  readonly cellVertexStart: Uint32Array;
+  readonly cellVertexCount: Uint32Array;
+}
 
 /**
  * Progi progowania światła — `[WYGLĄD]`. Rosnące, ściśle wewnątrz (0, 1). `lightBand`
@@ -36,16 +74,32 @@ export type Rgb = readonly [r: number, g: number, b: number];
  * Wybór progów: `saturate` w `lightAt` ścina CAŁĄ noc (`dot <= 0` — dokładnie połowa sfery
  * przy w miarę równomiernej triangulacji) do JEDNEJ wartości, `0.0` — więc pasmo 0 jest z
  * fizyki tej funkcji, nie z wyboru progu, i ZAWSZE obejmie mniej więcej połowę wszystkich
- * komórek plus wąski rąbek świtu poniżej pierwszego progu (pomiar w komentarzu przy
- * `DEFAULT_PALETTE`). Stąd pierwszy próg (0.05) jest NISKI — im niższy, tym bliżej granica
- * pasma 0/1 leży prawdziwej granicy geometrycznej `dot == 0`. Drugi próg (0.4) dzieli
- * pozostałą (dzienną) połowę na wąski pas "świtu/zmierzchu" tuż za terminatorem i szerszy
- * "dzień" — to już czysta estetyka: spec (§8.1, uwaga pod tabelą) mówi wprost, że trzy
- * pasma to najtańszy sposób ze spike'a, nie rekomendacja, i że Faza 4 może próbować innych
- * dróg (stroma `smoothstep`, wyraźne obrzeże, różnica temperatury barwy). Liczba i
- * położenie progów tutaj to jeden z wielu poprawnych wyborów, nie JEDYNY poprawny wybór.
+ * komórek. Drugi próg (0.4) dzieli pozostałą (dzienną) połowę na wąski pas "świtu/zmierzchu"
+ * tuż za terminatorem i szerszy "dzień" — to już czysta estetyka: spec (§8.1, uwaga pod
+ * tabelą) mówi wprost, że trzy pasma to najtańszy sposób ze spike'a, nie rekomendacja, i że
+ * Faza 4 może próbować innych dróg (stroma `smoothstep`, wyraźne obrzeże, różnica
+ * temperatury barwy). Położenie DRUGIEGO progu to jeden z wielu poprawnych wyborów.
+ *
+ * ## PIERWSZY PRÓG WYNOSI ZERO — i to NIE jest kwestia estetyki (Faza 2B, Zadanie 1, Krok 3)
+ *
+ * **Rozstrzygnięte przez właściciela projektu; nie podnosić bez przeczytania tego akapitu.**
+ * Do Fazy 2A pierwszy próg wynosił 0,05, czyli pasmo nocy znaczyło "noc PLUS wąski rąbek
+ * świtu, którego symulacja nie uznaje za noc". Symulacja pyta wszędzie o `light[cellId] > 0`
+ * (`spawning.ts`, `burning.ts`, `movement.ts`) — więc renderowana granica leżała gdzie
+ * indziej niż granica, po której symulacja decyduje. Zmierzone przez 12 faz pełnego obrotu:
+ * rozjeżdżały się o **8 do 38 komórek** (średnio 30,8), zawsze o dokładnie jeden krok grafu.
+ * Dla energii to szum poniżej 5%, ale spawn i spalanie są BINARNE — istniał więc
+ * jednokomórkowy pierścień, w którym **gracz widzi noc, a jednostki się palą i pentagony nie
+ * spawnują**. Zmierzone po zmianie, tymi samymi 12 fazami plus trzema fazami bramki:
+ * rozjazd **0 komórek w każdej fazie** (pomiar w dokumencie wyników Fazy 2B, §4).
+ *
+ * Zerowy próg daje tę zgodność Z KONSTRUKCJI, nie z dobrego trafienia: `lightBand` porównuje
+ * ŚCIŚLE (`light > próg`, patrz niżej), więc `lightBand(l) === 0` ⟺ `!(l > 0)` ⟺ `l === 0`
+ * — to jest TA SAMA formuła, której używa symulacja, zanegowana. Dowolny próg DODATNI, choćby
+ * mikroskopijny, tej własności NIE MA: najmniejsze dodatnie `light` zmierzone na tej planecie
+ * przez 12 faz wynosi **6,3·10⁻¹⁸**, więc nawet próg 10⁻⁷ zostawiłby komórki po złej stronie.
  */
-export const LIGHT_BANDS: readonly number[] = [0.05, 0.4]; // [WYGLĄD]
+export const LIGHT_BANDS: readonly number[] = [0, 0.4]; // [WYGLĄD] — ale [0] NIE: patrz akapit wyżej
 
 /**
  * Paleta kolorów: dokładnie `LIGHT_BANDS.length + 1` pozycji — jedna na pasmo poniżej
@@ -60,16 +114,21 @@ export type Palette = readonly Rgb[];
 /**
  * `[WYGLĄD]` Noc / zmierzch-świt (pas terminatora) / dzień.
  *
- * Zmierzone (Krok 5 briefu) przy `createPlanet({ seed: 20260915 })` (frequency 12
- * domyślne, 1442 komórki) i `sunDirection(0, 180)`:
+ * Zmierzone PONOWNIE po obniżeniu `LIGHT_BANDS[0]` do zera (Faza 2B, Zadanie 1, Krok 3) przy
+ * `createPlanet({ seed: 20260915 })` (frequency 12 domyślne, 1442 komórki) i
+ * `sunDirection(0, 180)`:
  *
- *   pasmo 0 (noc):           753 komórek (52,2%)
- *   pasmo 1 (zmierzch/świt): 256 komórek (17,8%)
- *   pasmo 2 (dzień):         433 komórki  (30,0%)
+ *   pasmo 0 (noc):           745 komórek (51,7%)   [było 753 przy progu 0,05]
+ *   pasmo 1 (zmierzch/świt): 264 komórki  (18,3%)  [było 256]
+ *   pasmo 2 (dzień):         433 komórki  (30,0%)  [bez zmian — drugi próg się nie ruszył]
+ *
+ * Osiem komórek przeszło z nocy do zmierzchu: dokładnie te, które wpadały w szczelinę
+ * `0 < light < 0,05` w TEJ fazie. Pasmo 0 liczy teraz DOKŁADNIE tyle komórek, ile symulacja
+ * uznaje za nieoświetlone (745 = 1442 − 697; pomiar `simLit` w dokumencie wyników §4).
  *
  * Pasmo 0 przekracza połowę — to FIZYKA `saturate` (cała noc to jedna wartość `0.0`, patrz
- * komentarz przy `LIGHT_BANDS`), NIE złe strojenie progów: żaden wybór progu > 0 może tego
- * uniknąć, bo noc i tak zawsze zajmuje dokładną połowę sfery. Co BYŁOBY złym strojeniem:
+ * komentarz przy `LIGHT_BANDS`), NIE złe strojenie progów: noc zawsze zajmuje dokładną
+ * połowę sfery (plus/minus dyskretyzację siatki). Co BYŁOBY złym strojeniem:
  * gdyby któreś z pozostałych, DZIENNYCH pasm (1 albo 2) samo przekroczyło połowę — to
  * pilnuje test #12 w `shading.test.ts` (kanarek z przypiętym rozkładem powyżej).
  *
@@ -86,21 +145,76 @@ export const DEFAULT_PALETTE: Palette = [
 ]; // [WYGLĄD]
 
 /**
- * Indeks pasma dla danej wartości `light` (0..1, jak zwraca `lightAt`/`lightField`): liczba
- * progów `LIGHT_BANDS`, które `light` przekroczyło lub im dorównało. Funkcja SCHODKOWA,
- * celowo — patrz uzasadnienie przy `LIGHT_BANDS`. Zakres wyniku: `0` (poniżej pierwszego
- * progu) do `LIGHT_BANDS.length` (od ostatniego progu wzwyż, włącznie).
+ * `[WYGLĄD]` Paleta OBRYSÓW komórek (Faza 2B, Zadanie 2) — po jednym kolorze na pasmo,
+ * dokładnie tak jak `DEFAULT_PALETTE`, bo obrysy koloruje TA SAMA funkcja `writeCellColors`
+ * z tym samym `light` i tym samym `lightBand` (patrz `CellVertexRanges`).
  *
- * Próg wliczany jest do pasma WYŻSZEGO (`light >= próg` ⇒ pasmo już podniesione) —
- * `lightBand(LIGHT_BANDS[i])` (dokładnie na progu) i `lightBand(LIGHT_BANDS[i] - ε)` (tuż
- * przed nim) różnią się więc o dokładnie jeden indeks, dla dowolnie małego dodatniego `ε`.
- * To jest cały sens tej funkcji — dowód nieciągłości, nie ozdobnik — i dokładnie to
- * sprawdza test #1 w `shading.test.ts`.
+ * ## Dlaczego obrys MUSI zależeć od pasma, a nie być jednym, stałym kolorem
+ *
+ * Zmierzone na pikselach płótna (`gl.readPixels`, patrz komentarz przy `Rgb`): pasma
+ * wyświetlają się jako sRGB `(0,190 0,248 0,381)` / `(0,931 0,680 0,437)` /
+ * `(0,991 0,964 0,876)` — czyli ciemny granat, ciepły pomarańcz i niemal biel. ŻADEN
+ * pojedynczy kolor linii nie jest widoczny na wszystkich trzech: linia ciemna ginie w nocy,
+ * linia jasna ginie w dniu. Jednolity obrys „naprawiłby" więc widoczność kraty wyłącznie po
+ * jednej stronie terminatora — a przy okazji sam stałby się WSKAZÓWKĄ, po której stronie
+ * granicy stoi komórka („widzę kratę ⇒ dzień"), czyli cue dołożonym do tego, co bramka
+ * Zadania 1 mierzy. Obrys zależny od pasma jest widoczny wszędzie i nie niesie ani bitu
+ * ponad to, co już niesie wypełnienie.
+ *
+ * ## Dobór wartości: krok obrysu ma być WIDOCZNY, ale WYRAŹNIE MNIEJSZY niż krok terminatora
+ *
+ * Każdy obrys jest przyciemnioną (pasma 1-2) albo rozjaśnioną (pasmo 0) wersją SWOJEGO
+ * pasma, dobraną tak, żeby odległość barw od własnego wypełnienia była dla oka mniej więcej
+ * ta sama we wszystkich pasmach — zmierzone w przestrzeni sRGB (bo to ona odpowiada
+ * postrzeganiu, patrz `Rgb`): **0,226 / 0,200 / 0,214**. Dla porównania skok przez
+ * terminator (pasmo 0 ↔ 1) wynosi w tej samej przestrzeni **0,860**, czyli 3,8 razy więcej.
+ * To jest właśnie ograniczenie, które te trzy trójki mają spełniać i którego pilnuje test
+ * 21 w `shading.test.ts`: krata ma dać punkt odniesienia, a NIE konkurować z granicą
+ * dnia i nocy. Gdyby obrysy stały się równie kontrastowe co terminator, tarcza z daleka
+ * zamieniłaby się w siatkę, w której granica jest jedną z tysięcy linii.
+ *
+ * Drugie ograniczenie, też sprawdzane testem: każdy obrys jest NAJBLIŻEJ wypełnienia
+ * WŁASNEGO pasma (margines 3,03× / 3,52× / 1,67× — od rundy naprawczej 1 przypięte
+ * asercją w teście 21, nie tylko tym zdaniem). Obrys, który dryfuje w stronę barwy
+ * pasma SĄSIEDNIEGO, czytałby się jak wąski pasek tamtego pasma — czyli rysowałby
+ * nieistniejącą granicę wewnątrz jednolitego obszaru. Najciaśniejszy margines ma dzień,
+ * bo to jego sąsiedztwo z pasmem zmierzchu jest w tej palecie najsłabsze (kontrast WCAG
+ * 1,79 — patrz `Rgb`).
+ */
+export const DEFAULT_OUTLINE_PALETTE: Palette = [
+  [0.084, 0.119, 0.223], // noc — granat ROZJAŚNIONY (na ciemnym tle tylko jaśniejsza linia jest widoczna)
+  [0.638, 0.274, 0.084], // terminator — pomarańcz przygaszony
+  [0.729, 0.674, 0.523], // dzień — biel przygaszona do ciepłego szarobeżu
+]; // [WYGLĄD]
+
+/**
+ * Indeks pasma dla danej wartości `light` (0..1, jak zwraca `lightAt`/`lightField`): liczba
+ * progów `LIGHT_BANDS`, które `light` przekroczyło ŚCIŚLE. Funkcja SCHODKOWA, celowo —
+ * patrz uzasadnienie przy `LIGHT_BANDS`. Zakres wyniku: `0` (na pierwszym progu lub niżej)
+ * do `LIGHT_BANDS.length` (powyżej ostatniego progu).
+ *
+ * **Porównanie jest ŚCISŁE (`light > próg`), nie `>=`, i to jest decyzja, nie szczegół.**
+ * Do Fazy 2A było `>=`, a pierwszy próg wynosił 0,05; Krok 3 Zadania 1 Fazy 2B obniżył go do
+ * zera, żeby pasmo nocy znaczyło DOKŁADNIE to samo, co noc symulacji. Przy `>=` próg zerowy
+ * dałby coś wprost przeciwnego: `0 >= 0` jest prawdą, więc pasmo 0 byłoby PUSTE, a cała noc
+ * wpadłaby do pasma zmierzchu. Przy `>` zachodzi natomiast
+ *
+ *     lightBand(l) === 0   ⟺   !(l > 0)   ⟺   l === 0
+ *
+ * czyli dokładnie negacja predykatu `light[cellId] > 0`, którym symulacja rozstrzyga spawn
+ * (`spawning.ts`), spalanie (`burning.ts`) i ruch (`movement.ts`). Zgodność jest więc
+ * ALGEBRAICZNA, nie empiryczna — nie da się jej zepsuć przesunięciem siatki ani fazy słońca.
+ * Sprawdza to test #18 w `shading.test.ts`, na wszystkich komórkach i dwunastu fazach obrotu.
+ *
+ * Skutek dla drugiego progu (0,4) jest mikroskopijny i celowo przyjęty: `light === 0.4`
+ * należy teraz do pasma NIŻSZEGO, nie wyższego. Nieciągłość pozostaje pełna — `lightBand(t)`
+ * i `lightBand(t + ε)` różnią się o jeden indeks dla dowolnie małego dodatniego `ε`, co
+ * sprawdza test #1.
  */
 export function lightBand(light: number): number {
   let band = 0;
   for (let i = 0; i < LIGHT_BANDS.length; i++) {
-    if (light >= LIGHT_BANDS[i]) band++;
+    if (light > LIGHT_BANDS[i]) band++;
   }
   return band;
 }
@@ -135,7 +249,7 @@ export function lightBand(light: number): number {
  *   `shading.test.ts`.
  */
 export function writeCellColors(
-  geo: PlanetGeometry,
+  geo: CellVertexRanges,
   light: Float32Array,
   out: Float32Array,
   palette: Palette,
@@ -202,8 +316,12 @@ export function writeCellColors(
  * (płaskie cieniowanie per komórka czyni granicę WIDZIALNĄ); progowanie z Zadania 3 czyni
  * ją WYGODNĄ. To dwie różne zasługi i dotąd przypisywaliśmy obie progowaniu.
  *
- * Kontrola pozytywna odtwarzająca RZECZYWISTY tryb awarii Fazy 0 jest do domknięcia w
- * Fazie 2B (spec §7.3.2).
+ * **Kontrola pozytywna mieszka teraz w `positiveControl.ts`** (Faza 2B, Zadanie 1, Krok 2) —
+ * geometria ze WSPÓŁDZIELONYMI wierzchołkami plus kolor liczony per wierzchołek, czyli
+ * rzeczywisty tryb awarii Fazy 0. Ta funkcja zostaje jako trzeci punkt odniesienia
+ * ("gładka paleta, ale płaskie komórki"), bo dopiero zestawienie WSZYSTKICH TRZECH trybów
+ * przypisuje zasługę właściwej warstwie: płaskie+progowane = czytelne, płaskie+gładkie =
+ * granica słaba ale obecna, współdzielone+gładkie = granicy nie ma wcale.
  *
  * Interpoluje liniowo, PER KOMÓRKA, między `palette[0]` ("noc") i
  * `palette[palette.length - 1]` ("dzień") wg `light[i]` (0..1, już `saturate(dot)` z
@@ -215,7 +333,7 @@ export function writeCellColors(
  * jest tu wymogiem.
  */
 export function writeCellColorsSmooth(
-  geo: PlanetGeometry,
+  geo: CellVertexRanges,
   light: Float32Array,
   out: Float32Array,
   palette: Palette = DEFAULT_PALETTE,

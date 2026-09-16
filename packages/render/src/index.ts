@@ -10,11 +10,13 @@ export const RENDER_VERSION = '0.0.0';
 // zostały usunięte zamiast zostać martwym, nieużywanym eksportem.
 export { buildPlanetGeometry, type PlanetGeometry } from './geometry.js';
 export {
+  DEFAULT_OUTLINE_PALETTE,
   DEFAULT_PALETTE,
   LIGHT_BANDS,
   lightBand,
   writeCellColors,
   writeCellColorsSmooth,
+  type CellVertexRanges,
   type Palette,
   type Rgb,
 } from './shading.js';
@@ -32,7 +34,64 @@ export {
   ORBIT_ZOOM_SPEED,
   type OrbitCamera,
 } from './camera.js';
-export { createPlanetMesh, type PlanetMesh } from './planetMesh.js';
+export {
+  alertPulse,
+  buildCellBases,
+  buildDiscGeometry,
+  coreScale,
+  createBuildingLayer,
+  healthFraction,
+  writeCoreColor,
+  ALERT_COLOR_DARK,
+  ALERT_COLOR_LIGHT,
+  ALERT_INNER_FACTOR,
+  ALERT_RADIUS_FACTOR,
+  ALERT_SPLIT_FACTOR,
+  BUILDING_HEIGHT_FACTOR,
+  BUILDING_RADIUS_FACTOR,
+  BUILDING_SHAPES,
+  CORE_COLOR_CRITICAL,
+  CORE_COLOR_HEALTHY,
+  CORE_RIM_FACTOR,
+  CORE_SCALE_MIN,
+  ALERT_PULSE_AMPLITUDE_FACTOR,
+  ALERT_PULSE_PERIOD_SECONDS,
+  SHELL_COLOR,
+  SHELL_TAPER,
+  SURFACE_LIFT_FACTOR,
+  type AlertPulseOffset,
+  type BuildingLayer,
+} from './buildingMesh.js';
+export {
+  burnCoreScale,
+  createUnitLayer,
+  exposureFraction,
+  unitShade,
+  writeUnitCoreColor,
+  writeUnitRimColor,
+  INITIAL_UNIT_CAPACITY,
+  UNIT_BAND_SHADE,
+  UNIT_BAND_SHADE_LEGAL,
+  UNIT_CORE_COLOR_COOL,
+  UNIT_CORE_COLOR_HOT,
+  UNIT_CORE_LIFT_FACTOR,
+  UNIT_CORE_SCALE_MIN,
+  UNIT_LIFT_FACTOR,
+  UNIT_RADIUS_FACTOR,
+  UNIT_RIM_COLOR,
+  UNIT_RIM_FACTOR,
+  UNIT_SHAPES,
+  type UnitLayer,
+  type UnitShadingMode,
+} from './unitMesh.js';
+export {
+  buildCellOutlines,
+  createPlanetMesh,
+  OUTLINE_INSET,
+  OUTLINE_LIFT,
+  type CellOutlines,
+  type PlanetMesh,
+} from './planetMesh.js';
 export {
   cappedPixelRatio,
   CLEAR_COLOR,
@@ -44,16 +103,36 @@ export {
 export { createRollingWindow, median, percentile, type RollingWindow } from './frameStats.js';
 export {
   buildGateTrials,
+  findBoundaryCells,
   findTerminatorPairs,
-  selectSpreadPairs,
+  selectSpread,
+  type BoundaryCells,
   type GateTrial,
   type TerminatorPair,
 } from './terminatorPairs.js';
 export {
+  buildSmearedGeometry,
+  writeSmearedColors,
+  type SmearedGeometry,
+} from './positiveControl.js';
+export {
+  aimDirection,
+  buildCameraOffsets,
   createReadabilityGate,
   formatGateResultsMarkdown,
   markerPosition,
+  markerRingRadius,
+  writeMarkerPosition,
+  CAMERA_OFFSET_MAX_DEGREES,
+  CAMERA_OFFSET_MIN_DEGREES,
+  CAMERA_OFFSET_SEED,
+  GATE_MODES,
+  MARKER_SCALE_FACTOR,
+  type CameraOffset,
   type GateAnswerRecord,
   type GateMode,
+  type GateOptions,
+  type GatePlans,
+  type GateWorld,
   type ReadabilityGate,
 } from './readabilityGate.js';

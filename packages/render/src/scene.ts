@@ -1,8 +1,10 @@
 import { PerspectiveCamera, Scene, WebGLRenderer } from 'three';
-import type { Planet, Vec3 } from '@heliopolis/sim';
+import type { Building, Planet, Unit, Vec3 } from '@heliopolis/sim';
+import { alertPulse, createBuildingLayer } from './buildingMesh.js';
 import { createCamera, type OrbitCamera } from './camera.js';
 import { buildPlanetGeometry } from './geometry.js';
 import { createPlanetMesh } from './planetMesh.js';
+import { createUnitLayer, type UnitShadingMode } from './unitMesh.js';
 
 /**
  * Scena widoczna na ekranie: planeta (Zadanie 2 + 3) + kamera K1 (ten plik). `render`
@@ -21,6 +23,45 @@ export interface PlanetScene {
    * podpis się nie zmieniał, gdy ta potrzeba się pojawi.
    */
   render(light: Float32Array, sunDir: Vec3): void;
+  /**
+   * Przepisuje warstwę budynków (Faza 2B, Zadanie 3) z bieżącego `SimState.buildings`.
+   * OSOBNO od `render`, a nie jako jego kolejny argument, z dwóch powodów: (1) `render`
+   * ma podpis wymagany briefem Zadania 4 Fazy 2A i nie ma powodu go łamać; (2) budynki
+   * zmieniają się rzadko (komenda gracza, trafienie, brownout), a `light` co klatkę —
+   * wołający, który jeszcze nie ma symulacji (Faza 2C wnosi `Sim`), po prostu tego nie woła
+   * i widzi planetę bez budynków, zamiast musieć wymyślać pustą tablicę na każdą klatkę.
+   *
+   * `alertPulseSeconds` — **CZAS W SEKUNDACH** dla pulsu pierścienia alarmu (runda naprawcza 2
+   * Zadania 5, puls jest domyślnym wyglądem gry). Pominięty ⇒ pierścień w spoczynku; to jest
+   * wyjście dla wywołującego, który zegara nie ma (np. test albo zrzut pojedynczej klatki), a
+   * nie deklaracja, że produkcja nie pulsuje. Fazę liczy `alertPulse` — funkcja czysta, żeby
+   * warstwa pozostała funkcją swojego wejścia.
+   *
+   * **Uwaga na bliźniaka:** `GateWorld.updateBuildings` (`readabilityGate.ts`) ma ten sam
+   * kształt, ale bierze GOTOWE WYCHYLENIE (`AlertPulseOffset`), nie sekundy — bo bramka musi
+   * móc wymusić spoczynek niezależnie od zegara. Tamten podpis jest markowany typem właśnie po
+   * to, żeby pomylenie obu było błędem kompilacji; ta metoda bierze goły `number`, bo sekundy
+   * przychodzą tu wprost z zegara ściennego wywołującego.
+   *
+   * Że produkcja NAPRAWDĘ przekazuje warstwie niezerowe wychylenie, wiąże test w
+   * `scene.test.ts` — bez niego podmiana ciała na `buildings.update(list, 0)` była zielona.
+   */
+  updateBuildings(buildings: readonly (Building | null)[], alertPulseSeconds?: number): void;
+  /**
+   * Przepisuje warstwę jednostek (Faza 2B, Zadanie 4) z bieżącego `SimState.units`.
+   * OSOBNO od `render` z tego samego powodu formalnego co `updateBuildings` — podpis
+   * `render` jest wymagany briefem Zadania 4 Fazy 2A i nie ma powodu go łamać — ale z
+   * PRZECIWNYM uzasadnieniem merytorycznym: jednostki zmieniają się co klatkę, więc
+   * wywołujący ma wołać to co klatkę, tuż przed `render`, tym samym `light`.
+   *
+   * `light` jest tu drugi raz (po `render`) i to jest świadome: warstwa jednostek czyta
+   * je wyłącznie po to, żeby dało się przełączyć tryb cieniowania Kroku 3 briefu
+   * (`setUnitShading`), a scena nie trzyma kopii pola oświetlenia między wywołaniami —
+   * trzymanie go byłoby czwartym miejscem, w którym ta sama tablica musiałaby być aktualna.
+   */
+  updateUnits(units: readonly Unit[], light: Float32Array): void;
+  /** Tryb cieniowania jednostek światłem — patrz `UnitShadingMode` (Zadanie 4, Krok 3). */
+  setUnitShading(mode: UnitShadingMode): void;
   readonly camera: OrbitCamera;
   /**
    * Przelicza proporcje kamery i `devicePixelRatio` renderera na podstawie bieżących
@@ -100,6 +141,21 @@ export function createSceneWithRenderer(
   const planetMesh = createPlanetMesh(geo);
   const camera = createCamera(canvas, planet.radius);
 
+  // Budynki są DZIECKIEM siatki terenu, nie rodzeństwem — dokładnie tak samo jak krata
+  // komórek z Zadania 2 i z tego samego powodu: `visible` w Three.js jest dziedziczne, więc
+  // wszystko, co pokazuje stan POJEDYNCZYCH KOMÓREK, ma znikać razem z planetą. Ktokolwiek
+  // schowa planetę (dziś: tryb kontroli pozytywnej bramki czytelności), schowa i to, bez
+  // wiedzy o tej warstwie — patrz test 33 w `readabilityGate.test.ts`.
+  const buildings = createBuildingLayer(planet, geo);
+  planetMesh.mesh.add(buildings.object);
+
+  // Jednostki — TAK SAMO dzieckiem siatki terenu i z tego samego powodu (Zadanie 4).
+  // Rozstrzygnięcie jest tu nawet mocniejsze niż przy budynkach: jednostka pokazuje, po
+  // której stronie terminatora stoi (pali się albo nie), więc zostawiona widoczna w trybie
+  // kontroli pozytywnej bramki byłaby WPROST podpowiedzią do pytania, które bramka zadaje.
+  const units = createUnitLayer(planet);
+  planetMesh.mesh.add(units.object);
+
   const threeScene = new Scene();
   threeScene.add(planetMesh.mesh);
 
@@ -140,12 +196,25 @@ export function createSceneWithRenderer(
       planetMesh.updateColors(light);
       renderer.render(threeScene, camera.object);
     },
+    updateBuildings(list: readonly (Building | null)[], alertPulseSeconds?: number): void {
+      // Brak zegara ⇒ chwila 0, a `alertPulse(r, 0)` to dokładne zero (`1 − cos 0`) — czyli
+      // spoczynek, wyprowadzony z tej samej funkcji czystej, nie wpisany osobną gałęzią.
+      buildings.update(list, alertPulse(planet.radius, alertPulseSeconds ?? 0));
+    },
+    updateUnits(list: readonly Unit[], light: Float32Array): void {
+      units.update(list, light);
+    },
+    setUnitShading(mode: UnitShadingMode): void {
+      units.setShadingMode(mode);
+    },
     dispose(): void {
       if (typeof window !== 'undefined') {
         window.removeEventListener('resize', resize);
       }
       camera.dispose();
       planetMesh.dispose();
+      buildings.dispose();
+      units.dispose();
       renderer.dispose();
     },
   };

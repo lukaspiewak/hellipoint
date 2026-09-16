@@ -25,6 +25,17 @@ Wszystkie ograniczenia Fazy 2A obowiązują dalej. Powtarzam te, które ta faza 
 - **Materiał terenu pozostaje bez modelu oświetlenia.** `MeshBasicMaterial` z `vertexColors: true`. Jeśli dodasz materiał oświetlony dla jednostek albo budynków, **nie wolno mu wpłynąć na teren** — żadnych `THREE.Light` w scenie bez sprawdzenia, że pasma terenu nadal są płaskie.
 - **Czytelność terminatora jest nadrzędna wobec wszystkiego, co ta faza dodaje.** Każda zmiana wyglądu terenu i każdy nowy element na nim musi przejść bramkę z Zadania 1. To jest ograniczenie, nie sugestia — D1 niesie spawn, spalanie i całą ekonomię dnia i nocy.
 - **Brak alokacji w pętli renderu.** 2A wprowadziła tę dyscyplinę i ma test na liczbę cykli odśmiecania; jednostki ruszają się co klatkę, więc to tutaj jest realne ryzyko.
+- **Stałe koloru w `shading.ts` są LINIOWE, nie sRGB.** Three.js od r152 traktuje atrybut
+  `color` jako już w przestrzeni roboczej (linear-sRGB) i koduje go dopiero na wyjściu.
+  Zmierzone `gl.readPixels` na żywym płótnie w Zadaniu 2: pasmo dnia daje `[253, 246, 223]`,
+  czyli `encodeSrgb([0.98, 0.92, 0.74])`, a nie `[250, 235, 189]`. Skutki dla każdego nowego
+  koloru w Zadaniach 3-5: kontrast **WCAG** liczy się z luminancji liniowej, więc bierze te
+  trójki WPROST; „jak bardzo to widać" liczy się po **zakodowaniu do sRGB**. Prawdziwe
+  kontrasty palety terenu to noc↔zmierzch **5,38**, zmierzch↔dzień **1,79**, noc↔dzień
+  **9,62** — nie 5,6 / 2,90 / 16,2, które wychodzą z potraktowania tych samych trójek jako
+  sRGB. To był defekt w moim briefie Zadania 2, wykryty pomiarem, nie czytaniem; liczba
+  najważniejsza dla Zadań 3 i 4 to **1,79** — budynek albo jednostka dobrana tak, by
+  odcinać się od zmierzchu, ma bardzo mało zapasu wobec dnia.
 - Każda liczba czysto wizualna oznaczona `// [WYGLĄD]`.
 - Commit po każdym zadaniu.
 
@@ -56,6 +67,11 @@ Dwa warianty, oba tanie. Zaimplementuj **ten, który lepiej uzasadnisz**, i zapi
 
 Bramka jest bezwartościowa, jeśli nie umie wyprodukować odpowiedzi „nie widzę". Nowa kontrola musi odtwarzać **rzeczywisty tryb awarii z Fazy 0**: kolor **interpolowany po powierzchni**, czyli geometria ze współdzielonymi wierzchołkami albo kolor liczony per wierzchołek z pozycji, a nie per komórka.
 
+> **Kontrola potrzebuje WŁASNYCH komórek — przeoczone w pierwszej wersji tego planu.**
+> Bramka i kontrola muszą mieć **rozłączne plany prób**. Kontrola pytająca o komórki już
+> pokazane w przebiegu ocenianym mierzy **pamięć, nie czytelność** — czyli traci zdolność
+> oblania dokładnie tam, gdzie leży cała jej wartość.
+
 **To nie jest to samo co `writeCellColorsSmooth` z 2A** — tamta zmienia mapowanie palety, zostawiając komórki płaskimi, i dlatego nie potrafi oblać. Zbuduj wariant geometrii ze współdzielonymi wierzchołkami wyłącznie na potrzeby tej kontroli; nie musi być wydajny ani ładny, ma **rozmazywać**.
 
 Dowód, że kontrola działa: **przejdź sam kilka prób w trybie kontrolnym i zaraportuj, czy potrafiłeś odpowiedzieć.** Jeśli potrafiłeś — kontrola nadal nie odtwarza awarii i trzeba ją poprawić, a nie zaraportować jako gotową.
@@ -65,6 +81,16 @@ Dowód, że kontrola działa: **przejdź sam kilka prób w trybie kontrolnym i z
 **Rozstrzygnięte, nie do ponownej dyskusji; uzasadnienie zapisuję, żeby nikt tego nie cofnął bez powodu.** Zmierzone w 2A: przy progu 0,05 granica renderowana i **symulowana** rozjeżdżają się o 8–38 komórek (średnio 30,8), zawsze o **dokładnie jeden krok grafu**. Dla energii to szum poniżej 5 %, ale **spawn i spalanie są binarne** — więc istnieje jednokomórkowy pierścień, w którym **gracz widzi noc, a jednostki się palą i pentagony nie spawnują**.
 
 Próg zerowy sprawia, że pasmo nocy znaczy dokładnie `light === 0`, czyli **dokładnie to samo, co symulacja**. Granica staje się pełnym skokiem palety na linii fizycznej — czytelniejsza, nie mniej.
+
+> **UWAGA: „obniż próg do zera" dosłownie daje SKUTEK ODWROTNY. Wykonawca to zmierzył.**
+> `lightBand` porównywał **nieostro** (`light >= próg`), więc próg zerowy czyni pasmo nocy
+> **pustym** — cała noc wpada do półmroku i powstaje planeta bez nocy. Właściwą zmianą jest
+> **porównanie ostre** (`light > próg`), bo wtedy zgodność z predykatem symulacji `light > 0`
+> jest **algebraiczna, a nie skutkiem szczęśliwie dobranej liczby**.
+>
+> Obejście przez „zostaw `>=` i daj próg mikroskopijnie dodatni" **nie działa i też jest
+> zmierzone**: najmniejsze dodatnie `light` na tej planecie przez dwanaście faz wynosi
+> **6,3·10⁻¹⁸**, więc nawet 10⁻⁷ zostawiłoby komórki po złej stronie.
 
 Zmierz i zaraportuj po zmianie: rozkład komórek po pasmach i **liczbę komórek rozjeżdżających się między renderem a symulacją** (powinna wynieść zero przy każdej fazie słońca — jeśli nie wynosi, coś jest nie tak i zgłoś to zamiast zaokrąglać).
 
@@ -158,19 +184,41 @@ Zaimplementuj oba, obejrzyj oba w ruchu i **zaraportuj, co widzisz**. Nie zgaduj
 ### Task 5: Bramka pełnego obrazu
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-09-15-faza-2b-czytelnosc.md`
+- Modify: `packages/render/src/readabilityGate.ts` (Krok 1 — uszczelnienie kontroli)
+- Modify: `packages/render/test/readabilityGate.test.ts`
+- Modify: `apps/client/gate.html` i towarzyszące źródła panelu (Krok 2 — pełna scena, pięć pytań)
+- Modify: `packages/render/test/budget.test.ts` (Krok 3 — budżet przy pełnej scenie)
+- Modify: `docs/superpowers/specs/2026-09-15-faza-2b-czytelnosc.md` (zapis wyników)
 
-Bramka z Zadania 1 badała sam teren. Ta bada **scenę, którą gracz naprawdę zobaczy**: teren plus siatka plus budynki plus jednostki, w ruchu.
+Bramka z Zadania 1 badała sam teren. Ta bada **scenę, którą gracz naprawdę zobaczy**: teren plus krata plus budynki plus jednostki, w ruchu.
 
-- [ ] **Krok 1: Trzy pytania, każde do osobnego werdyktu człowieka**
+- [ ] **Krok 1: uszczelnij kontrolę — PRZED jakimkolwiek przebiegiem — kamera nie może celować w pytaną komórkę**
+
+Znalezione w Zadaniu 2 i **nienaprawione tam świadomie**: `setupTrial` celuje kamerą wzdłuż normalnej pytanej komórki, więc komórka zawsze ląduje na środku tarczy. W trybie kontrolnym jasność jest monotoniczną, nieprzyciętą funkcją `dot(normal, sunDir)`, a tarcza pokazuje oba końce zakresu — więc **bezwzględna jasność środka jest częściową wskazówką**. Wykonawca Zadania 2 dostał w kontroli 12/15 przy oczekiwanych 7,5.
+
+Dlaczego to nie unieważniło Zadania 1: przeciek czyni kontrolę **łatwiejszą**, więc kontrast „15/15 progowania przeciw 12/15 kontroli" jest zaniżony, nie zawyżony. Dlaczego trzeba to naprawić tutaj: to jest bramka, która orzeka o całej fazie, i ma orzekać czystym instrumentem.
+
+Naprawa: **kamera celuje w punkt przesunięty względem pytanej komórki o losowy, zasiany offset** — ten sam offset dla odpowiadającej próby w KAŻDYM trybie. Nie „przestań celować tylko w kontroli": asymetria protokołu między trybami sama jest confoundem, bo zmienia trudność zadania z powodu niezwiązanego z cieniowaniem. Komórka ma nadal być widoczna i jednoznacznie wskazana pierścieniem; chodzi wyłącznie o to, żeby tarcza wyglądała tak samo niezależnie od tego, gdzie leży odpowiedź.
+
+Po naprawie **powtórz kontrolę** i zapisz oba wyniki — przed i po. Jeśli kontrola po uszczelnieniu nadal daje istotnie więcej niż przypadek, zapisz to jako wynik, nie szukaj trzeciej poprawki: znaczyłoby to, że gładkie cieniowanie niesie więcej informacji, niż Faza 0 zmierzyła, i to jest ustalenie o grze, nie o instrumencie.
+
+- [ ] **Krok 2: Pięć pytań, każde do osobnego werdyktu CZŁOWIEKA**
+
+Tych pytań **nie rozstrzyga wykonawca zadania ani przegląd** — rozstrzyga je człowiek patrzący na ekran. Zadaniem wykonawcy jest zbudować przebieg i panel tak, żeby dało się na nie odpowiedzieć, przeprowadzić własny przebieg jako sprawdzenie przyrządu (**wyraźnie oznaczony jako NIE werdykt**), i przekazać bramkę do przejścia.
 
 1. **Czy terminator nadal jest czytelny** przy pełnej scenie? Regresja wobec Zadania 1 jest tu najgroźniejszym możliwym wynikiem i **musi zostać zapisana, nie obejdzona**.
 2. **Czy widać, który budynek jest niezasilony**, bez najeżdżania kursorem?
 3. **Czy widać, że jednostka się pali**, zanim zginie?
+4. **Czy widać cieniowanie jednostki czynnikiem 0,8464?** Zadanie 4 rozstrzygnęło pomiarem, że jednostki nie są cieniowane światłem — i dla trybu **progowego** rozstrzygnięcie jest mocne: stroboskopowanie do 20 zmian pasma na sekundę u jednostek stojących dokładnie na terminatorze, potwierdzone dwoma niezależnymi pomiarami. Ale drugie ogniwo argumentu — „łagodnego cieniowania gładkiego i tak nie widać" — **nie zostało obejrzane w granicach legalnych**. Maksymalne legalne cieniowanie zmienia rdzeń o **18/255 sRGB**; obserwacja wzrokowa, na której oparto wniosek, była przy czynniku 0,55, czyli Δ **59/255**. Ani wykonawca, ani recenzent nie rozstrzygnęli tego wzrokiem. Weź **0,8464**, nie 0,8463 ani 0,846334: granica jest **kresem dolnym, nie osiągalnym minimum** — `passesAt` zwraca `false` dla samej liczby 0,846334, a `true` dopiero od 0,8464, więc pokazanie 0,8463 pokazałoby wariant leżący o włos **poniżej** progu 3:1, czyli poza budżetem, którego ma dowodzić. (Wcześniejsza wersja tego akapitu mówiła 0,8463 — mój błąd, wykryty przy domykaniu Zadania 4.) Pokaż człowiekowi jednostkę bez cieniowania i z cieniowaniem 0,8464, na wszystkich trzech pasmach, i **zapisz odpowiedź jako wynik** — jeśli różnicy nie widać, argument domyka się i `flat` zostaje bez zastrzeżeń; jeśli widać, jest to ustalenie do Fazy 4, nie powód do zmiany teraz.
 
-- [ ] **Krok 2: Zmierz budżet klatki przy pełnej scenie**
+5. **Czy widać, że pierścień alarmu pulsuje?** Zadanie 3 potwierdziło puls mechanicznie, ale wzrokowo dopiero po podniesieniu amplitudy do 1,0 — przy docelowej szczyt wynosi 3,808 przy obrysie najmniejszej komórki 3,913, więc sufitem jest ROZMIAR KOMÓRKI, nie dobór wartości. Wykonawca uznał puls za kanał drugi, a za pierwszy obecność pierścienia, która sufitu nie ma. **To rozstrzyga człowiek, nie pomiar**: jeśli pulsu nie widać, zapisz to jako wynik i zostaw pierścień bez pulsu, zamiast podnosić amplitudę ponad rozmiar komórki.
+
+
+- [ ] **Krok 3: Zmierz budżet klatki przy pełnej scenie**
 
 2A mierzyła 0,200 ms mediany przy samym terenie, przy budżecie 8 ms. Zmierz przy szczycie z Fazy 1C — **481 jednostek i kilkadziesiąt budynków** — i zapisz maszynę, na której mierzyłeś.
+
+Wzorzec migający w testach cykli odśmiecania (`expect(Math.min(...okna)).toBe(0)`) **został już naprawiony w Zadaniu 4**, w czterech miejscach, przyrządem wyniesionym do `packages/render/test/support/gcWindows.ts`. Nie naprawiaj go ponownie — **użyj go**. Próg stoi na oknie bezczynnym plus jeden cykl, a nie na zerze i nie na kontroli pozytywnej: kontrola to „mierzona praca plus jedna alokacja na element", więc rośnie razem z defektem i podnosi próg przed nim. Kontrola zostaje jako asercja czułości.
 
 ---
 
@@ -178,9 +226,12 @@ Bramka z Zadania 1 badała sam teren. Ta bada **scenę, którą gracz naprawdę 
 
 - [ ] `pnpm test` zielony, `pnpm typecheck` bez błędów, strażnik zero-zależności `packages/sim` nadal przechodzi
 - [ ] **Bramka z Zadania 1 potrafi OBLAĆ** — dowiedzione przejściem prób w trybie kontrolnym
+- [ ] **Kontrola uszczelniona** — kamera nie celuje w pytaną komórkę, wynik kontroli zapisany przed i po
 - [ ] `LIGHT_BANDS[0] = 0`, a liczba komórek rozjeżdżających się między renderem a symulacją wynosi **zero**
 - [ ] Siatka komórek widoczna, a odległość barw przez terminator **nie spadła**
 - [ ] Dziesięć typów budynków na ekranie, stan `powered` i uszkodzenie czytelne bez UI
+- [ ] Rozstrzygnięte przez człowieka, czy cieniowanie jednostki czynnikiem 0,8464 jest widoczne
+- [ ] Rozstrzygnięte przez człowieka, czy puls pierścienia alarmu jest widoczny przy docelowej amplitudzie
 - [ ] Trzy typy jednostek, płynny ruch, spalanie widoczne
 - [ ] Budżet klatki zmierzony przy 481 jednostkach, z zapisaną maszyną
 - [ ] Render nadal nie mutuje `SimState` ani `Planet`

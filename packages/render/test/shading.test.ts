@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createPlanet, sunDirection, lightField } from '@heliopolis/sim';
 import { buildPlanetGeometry, type PlanetGeometry } from '../src/geometry.js';
+import { BufferAttribute } from 'three';
+import { buildCellOutlines, createPlanetMesh } from '../src/planetMesh.js';
 import {
+  DEFAULT_OUTLINE_PALETTE,
   DEFAULT_PALETTE,
   LIGHT_BANDS,
   lightBand,
@@ -10,7 +13,7 @@ import {
   type Palette,
   type Rgb,
 } from '../src/shading.js';
-import { findTerminatorPairs, selectSpreadPairs } from '../src/terminatorPairs.js';
+import { findTerminatorPairs, selectSpread } from '../src/terminatorPairs.js';
 
 // Ta sama planeta-fixture co `geometry.test.ts` (ten sam seed) — oba pliki testowe w tym
 // pakiecie mówią więc o TEJ SAMEJ "prawdziwej planecie", nie o dwóch różnych.
@@ -40,16 +43,20 @@ describe('lightBand', () => {
   it('1. jest monotoniczna i schodkowa: przy KAŻDYM progu dwie wartości różniące się o mniej niż 0,01 dają różne pasma', () => {
     for (let i = 0; i < LIGHT_BANDS.length; i++) {
       const t = LIGHT_BANDS[i];
-      const justBelow = t - 1e-6;
+      // Porównanie w `lightBand` jest ŚCISŁE (`light > próg`), więc skok leży TUŻ NAD progiem,
+      // nie NA nim — patrz uzasadnienie przy `lightBand` w `shading.ts`. Dla progu zerowego
+      // to jest cała istota zmiany Fazy 2B: `lightBand(0) === 0` znaczy „noc to dokładnie
+      // `light === 0`", czyli dokładnie to, co dla symulacji.
+      const justAbove = t + 1e-6;
 
       // Kontrola pozytywna na sam test: dowód, że para faktycznie różni się o mniej niż
       // 0,01 (i że różnica jest dodatnia, nie przypadkiem zerowa) — inaczej poniższe dwa
       // `expect` mogłyby sprawdzać coś dalekiego od progu, nie "nieciągłość NA progu".
-      expect(t - justBelow).toBeLessThan(0.01);
-      expect(t - justBelow).toBeGreaterThan(0);
+      expect(justAbove - t).toBeLessThan(0.01);
+      expect(justAbove - t).toBeGreaterThan(0);
 
-      expect(lightBand(justBelow)).toBe(i);
-      expect(lightBand(t)).toBe(i + 1);
+      expect(lightBand(t)).toBe(i);
+      expect(lightBand(justAbove)).toBe(i + 1);
     }
 
     // Monotoniczność globalna: pasmo nigdy nie maleje wraz ze wzrostem light, na gęstej
@@ -66,9 +73,13 @@ describe('lightBand', () => {
 
   it('2. jest STAŁA w obrębie jednego pasma mimo różnych wejść — asercja, która obala mutację "brak progowania" (lightBand zwraca light bez zmian)', () => {
     const edges = [0, ...LIGHT_BANDS, 1];
+    let sampledBands = 0;
     for (let band = 0; band < edges.length - 1; band++) {
       const lo = edges[band];
       const hi = edges[band + 1];
+      // Pasmo 0 jest po obniżeniu pierwszego progu do zera JEDNOPUNKTOWE (`light === 0`), więc
+      // nie da się z niego wziąć trzech różnych wejść. Sprawdzane jest osobno, niżej.
+      if (!(hi > lo)) continue;
       const quarter = lo + (hi - lo) / 4;
       const mid = lo + (hi - lo) / 2;
       const threeQuarters = lo + (3 * (hi - lo)) / 4;
@@ -76,15 +87,25 @@ describe('lightBand', () => {
       // Kontrola pozytywna: trzy wejścia RÓŻNE między sobą — gdyby `lightBand` było
       // identycznością, poniższe trzy `toBe(band)` nie mogłyby przejść (band to mała liczba
       // całkowita 0/1/2…, a quarter/mid/threeQuarters to różne ułamki). Dokładnie o to pytał
-      // brief: "czy jakikolwiek test przeszedłby, gdyby lightBand po prostu zwracało light
-      // bez zmian?" — ten ma nie przejść.
+      // brief Fazy 2A: "czy jakikolwiek test przeszedłby, gdyby lightBand po prostu zwracało
+      // light bez zmian?" — ten ma nie przejść.
       expect(quarter).not.toBe(mid);
       expect(mid).not.toBe(threeQuarters);
 
       expect(lightBand(quarter)).toBe(band);
       expect(lightBand(mid)).toBe(band);
       expect(lightBand(threeQuarters)).toBe(band);
+      sampledBands++;
     }
+    // Kontrola pozytywna na sam test: pętla faktycznie coś sprawdziła. Bez tego zdegenerowana
+    // tablica progów (np. same zera) dałaby zero iteracji i zielony test o niczym. Liczba jest
+    // zarazem kotwicą na „pierwszy próg wynosi zero": pasm o DODATNIEJ szerokości jest tyle,
+    // ile progów, dokładnie wtedy, gdy pasmo 0 jest jednopunktowe.
+    expect(sampledBands).toBe(LIGHT_BANDS.length);
+
+    // Pasmo 0 — jednopunktowe, i to jest jego cała treść: TYLKO dokładne zero.
+    expect(lightBand(0)).toBe(0);
+    expect(lightBand(Number.MIN_VALUE)).toBe(1);
   });
 
   it('3. dokładne zero daje pasmo najciemniejsze (0), dokładna jedynka pasmo najjaśniejsze (LIGHT_BANDS.length)', () => {
@@ -260,27 +281,31 @@ describe('writeCellColors', () => {
       expect(counts[i]).toBeLessThan(planet.cells.length / 2);
     }
 
-    // Przypięte przy `seed: 20260915`, `frequency` domyślne (12): 753 / 256 / 433. Zmierzone
-    // i uzasadnione w komentarzu przy `DEFAULT_PALETTE` w shading.ts — ten test jest
-    // kanarkiem: gdyby ktoś (Faza 4) przesunął progi tak, że pasmo dzienne przejęłoby
-    // większość komórek, powyższa pętla by to złapała; ten dokładny odcisk łapie DOWOLNĄ
+    // Przypięte przy `seed: 20260915`, `frequency` domyślne (12): 745 / 264 / 433 — zmierzone
+    // PO obniżeniu `LIGHT_BANDS[0]` do zera (Faza 2B, Zadanie 1, Krok 3; wcześniej było
+    // 753 / 256 / 433). Osiem komórek przeszło z nocy do zmierzchu: dokładnie te, które w tej
+    // fazie wpadały w szczelinę `0 < light < 0,05`. Ten test jest kanarkiem: łapie DOWOLNĄ
     // zmianę progów, nawet drobną.
-    expect(counts).toEqual([753, 256, 433]);
+    expect(counts).toEqual([745, 264, 433]);
   });
 
-  it('13. [dodatek] LIGHT_BANDS: niepusta, ściśle rosnąca, każdy próg ściśle wewnątrz (0,1)', () => {
+  it('13. [dodatek] LIGHT_BANDS: niepusta, ściśle rosnąca, progi w [0,1); pierwszy DOKŁADNIE zero', () => {
     // Bez tego: LIGHT_BANDS = [] jest technicznie zgodne z typem `readonly number[]` i —
-    // zmierzone w tabeli mutacji raportu — sprawia, że KAŻDY test powyżej w tym pliku
+    // zmierzone w tabeli mutacji raportu Fazy 2A — sprawia, że KAŻDY test powyżej w tym pliku
     // przechodzi (jedno pasmo, brak progu do złapania), mimo że cały sens zadania (granica)
     // by zniknął.
     expect(LIGHT_BANDS.length).toBeGreaterThan(0);
     for (const t of LIGHT_BANDS) {
-      expect(t).toBeGreaterThan(0);
+      expect(t).toBeGreaterThanOrEqual(0);
       expect(t).toBeLessThan(1);
     }
     for (let i = 1; i < LIGHT_BANDS.length; i++) {
       expect(LIGHT_BANDS[i]).toBeGreaterThan(LIGHT_BANDS[i - 1]);
     }
+    // Pierwszy próg jest DECYZJĄ, nie strojeniem (patrz `shading.ts`): tylko przy zerze pasmo
+    // nocy znaczy to samo, co noc symulacji. Test #18 mierzy skutek; ten pilnuje przyczyny,
+    // żeby podniesienie progu oblało GŁOŚNO i w miejscu, gdzie zapisana jest decyzja.
+    expect(LIGHT_BANDS[0]).toBe(0);
   });
 });
 
@@ -321,7 +346,7 @@ describe('writeCellColorsSmooth — tryb gładki na PRAWDZIWYCH parach terminato
 
     // Pary z `findTerminatorPairs` — DOKŁADNIE te, których używa harness bramki, a nie
     // osobno wymyślone na potrzeby tego testu.
-    const pairs = selectSpreadPairs(findTerminatorPairs(planet.cells, light), 5);
+    const pairs = selectSpread(findTerminatorPairs(planet.cells, light), 5);
     expect(pairs.length).toBe(5); // kontrola pozytywna: pętla niżej ma na czym pracować
 
     let checked = 0;
@@ -410,6 +435,7 @@ describe('writeCellColorsSmooth — tryb gładki na PRAWDZIWYCH parach terminato
     }
   });
 
+
   it('17. rzuca RangeError dla out/light o złej długości — ten sam wzorzec strażników co writeCellColors', () => {
     const out = new Float32Array(geo.positions.length);
     expect(() => writeCellColorsSmooth(geo, light, out, DEFAULT_PALETTE)).not.toThrow();
@@ -422,5 +448,310 @@ describe('writeCellColorsSmooth — tryb gładki na PRAWDZIWYCH parach terminato
     );
     expect(() => writeCellColorsSmooth(geo, light, out, [])).toThrow(RangeError);
     expect(() => writeCellColorsSmooth(geo, light, out, [DEFAULT_PALETTE[0]])).toThrow(RangeError);
+  });
+});
+
+describe('granica renderu kontra granica symulacji (Faza 2B, Zadanie 1, Krok 3)', () => {
+  it('18. [KROK 3 FAZY 2B] pasmo 0 renderu pokrywa się DOKŁADNIE z nocą symulacji — zero rozjazdu na 1442 komórkach × 12 fazach obrotu', () => {
+    // Powód istnienia tego testu, zmierzony w Fazie 2A: przy `LIGHT_BANDS[0] = 0,05` granica
+    // renderowana i granica symulowana rozjeżdżały się o 8 do 38 komórek w każdej fazie
+    // (średnio 30,8), zawsze o dokładnie jeden krok grafu. Spawn i spalanie są BINARNE, więc
+    // istniał jednokomórkowy pierścień, w którym gracz widzi noc, a jednostki się palą i
+    // pentagony nie spawnują. Przy progu zerowym obie granice pokrywają się z KONSTRUKCJI.
+    //
+    // Predykat symulacji jest tu wpisany DOSŁOWNIE (`light > 0` — ten sam, co w `spawning.ts`,
+    // `burning.ts` i `movement.ts`), nie wyprowadzony z `LIGHT_BANDS`. Gdyby oba brzegi
+    // porównania pochodziły ze stałej, którą test sprawdza, asercja poruszałaby się razem z nią
+    // i nie mogłaby oblać — kształt defektu, który ta gałąź już popełniła.
+    const PHASES = 12;
+    let totalDisagreements = 0;
+    let checkedCells = 0;
+    let litSomewhere = 0;
+    let darkSomewhere = 0;
+    for (let k = 0; k < PHASES; k++) {
+      const phaseLight = lightField(planet, sunDirection((k / PHASES) * 180, 180));
+      let disagreements = 0;
+      for (let i = 0; i < phaseLight.length; i++) {
+        const simulationSaysLit = phaseLight[i] > 0;
+        const renderSaysLit = lightBand(phaseLight[i]) >= 1;
+        if (simulationSaysLit !== renderSaysLit) disagreements++;
+        if (simulationSaysLit) litSomewhere++;
+        else darkSomewhere++;
+        checkedCells++;
+      }
+      expect(disagreements, `faza ${k}/${PHASES}`).toBe(0);
+      totalDisagreements += disagreements;
+    }
+    expect(checkedCells).toBe(planet.cells.length * PHASES);
+    expect(totalDisagreements).toBe(0);
+
+    // KONTROLA POZYTYWNA na sam pomiar. „Zero rozjazdu" nic nie znaczy, jeśli obie strony
+    // porównania są zawsze takie same z byle powodu (np. wszystkie komórki oświetlone, albo
+    // `lightBand` zdegenerowane do stałej). Dwa dowody, że przyrząd widzi obie odpowiedzi:
+    expect(litSomewhere).toBeGreaterThan(0);
+    expect(darkSomewhere).toBeGreaterThan(0);
+    // …i że TEN SAM licznik daje NIEZEROWY odczyt dla progu, który faktycznie rozjeżdża
+    // granice — czyli dla progu sprzed tej zmiany.
+    const bandWithOldThreshold = (l: number): number => (l >= 0.05 ? 1 : 0);
+    let oldDisagreements = 0;
+    const referenceLight = lightField(planet, sunDirection(0, 180));
+    for (let i = 0; i < referenceLight.length; i++) {
+      if (referenceLight[i] > 0 !== bandWithOldThreshold(referenceLight[i]) >= 1) oldDisagreements++;
+    }
+    expect(oldDisagreements).toBe(8); // zmierzone w Fazie 2A dla sunDirection(0, 180)
+  });
+});
+
+describe('krata komórek a terminator (Faza 2B, Zadanie 2)', () => {
+  /**
+   * Kodowanie liniowe → sRGB (ta sama krzywa, którą stosuje Three.js na wyjściu — zmierzone
+   * na pikselach płótna, patrz komentarz przy `Rgb` w `shading.ts`). Potrzebne, bo „jak
+   * bardzo te dwa kolory różnią się DLA OKA" nie jest odległością w przestrzeni liniowej:
+   * ta sama różnica liniowa 0,1 jest wielkim skokiem przy 0,03 i ledwie widoczna przy 0,9.
+   */
+  const encodeSrgb = (v: number): number => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+  const toSrgb = (c: Rgb): Rgb => [encodeSrgb(c[0]), encodeSrgb(c[1]), encodeSrgb(c[2])];
+  const distance = (a: Rgb, b: Rgb): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+  it('19. DEFAULT_OUTLINE_PALETTE ma dokładnie LIGHT_BANDS.length + 1 pozycji — ta sama kotwica na SAMĄ STAŁĄ co test 9 dla palety wypełnień', () => {
+    expect(DEFAULT_OUTLINE_PALETTE.length).toBe(LIGHT_BANDS.length + 1);
+  });
+
+  it('20. [KLUCZOWY] odległość barw przez terminator wynosi DOKŁADNIE 0,9005 na KAŻDEJ prawdziwej parze sąsiadów, w 12 fazach obrotu — wartość BEZWZGLĘDNA, nie „różnią się"', () => {
+    // To jest test, który pilnuje CAŁEGO zadania. Krata komórek weszła jako osobna geometria
+    // linii właśnie dlatego, że wypełnienia komórek zostają wtedy co do bitu takie, jakie
+    // były — a więc ta liczba też. Wariant „subtelne zróżnicowanie w obrębie pasma" musiałby
+    // ją OBNIŻYĆ z definicji: gdyby odcienie pasma jaśniejszego schodziły choć trochę w dół,
+    // najciemniejszy z nich stykałby się z pasmem ciemniejszym słabszym skokiem niż 0,9005.
+    //
+    // Asercja jest na WARTOŚĆ BEZWZGLĘDNĄ, zmierzoną przed zmianą (0,9005), a nie na
+    // „odległość obu kolorów palety" — bo ta druga poruszałaby się razem z paletą i nie
+    // mogłaby oblać dla palety, która zaciera granicę. To ten sam kształt defektu, który ta
+    // faza ma już na koncie trzykrotnie.
+    const PHASES = 12;
+    const out = new Float32Array(geo.positions.length);
+    const colorAt = (cellId: number): Rgb => {
+      const o = geo.cellVertexStart[cellId] * 3;
+      return [out[o], out[o + 1], out[o + 2]];
+    };
+
+    let d1Pairs = 0;
+    let d1Min = Number.POSITIVE_INFINITY;
+    let d1Max = 0;
+    let innerPairs = 0;
+    let innerMin = Number.POSITIVE_INFINITY;
+    let innerMax = 0;
+
+    for (let k = 0; k < PHASES; k++) {
+      const phaseLight = lightField(planet, sunDirection((k / PHASES) * 180, 180));
+      writeCellColors(geo, phaseLight, out, DEFAULT_PALETTE);
+      for (const cell of planet.cells) {
+        const bandA = lightBand(phaseLight[cell.id]);
+        for (const n of cell.neighbors) {
+          if (n <= cell.id) continue; // każda para raz
+          const bandB = lightBand(phaseLight[n]);
+          if (bandA === bandB) continue;
+          const d = distance(colorAt(cell.id), colorAt(n));
+          if (Math.min(bandA, bandB) === 0) {
+            d1Pairs++;
+            d1Min = Math.min(d1Min, d);
+            d1Max = Math.max(d1Max, d);
+          } else {
+            innerPairs++;
+            innerMin = Math.min(innerMin, d);
+            innerMax = Math.max(innerMax, d);
+          }
+        }
+      }
+    }
+
+    // KONTROLA POZYTYWNA: pętla miała na czym pracować, i to po OBU rodzajach granicy.
+    // Bez tego `Infinity`/`0` przeszłoby przez asercje niżej, gdyby żadna para się nie
+    // znalazła (np. `lightBand` zdegenerowane do stałej — wtedy granic nie ma wcale).
+    expect(d1Pairs).toBe(1636); // zmierzone: 12 faz × prawdziwe sąsiedztwa
+    expect(innerPairs).toBe(1508);
+
+    // WŁASNOŚĆ. Granica D1 (noc ↔ oświetlone) — ta, na której stoi spawn, spalanie i cała
+    // ekonomia dnia i nocy. Jedna wartość, bo progowanie daje skok między dwoma STAŁYMI
+    // kolorami, niezależnie od tego, jak blisko progu leży konkretna komórka.
+    expect(d1Min).toBeCloseTo(0.9005, 4);
+    expect(d1Max).toBeCloseTo(0.9005, 4);
+    // Granica wewnętrzna strony oświetlonej (zmierzch ↔ dzień) — słabsza, i to jest znane.
+    expect(innerMin).toBeCloseTo(0.7767, 4);
+    expect(innerMax).toBeCloseTo(0.7767, 4);
+  });
+
+  it('21. [KLUCZOWY] obrys jest WIDOCZNY na swoim paśmie, ale WYRAŹNIE słabszy niż skok przez terminator — i najbliżej barwy WŁASNEGO pasma', () => {
+    // Trzy własności palety obrysów, wszystkie na wartościach BEZWZGLĘDNYCH, wszystkie
+    // mierzone w sRGB — bo to jest przestrzeń, w której liczby odpowiadają temu, co widzi
+    // oko (patrz `encodeSrgb` wyżej i komentarz przy `Rgb` w `shading.ts`).
+    const fill = DEFAULT_PALETTE.map(toSrgb);
+    const outline = DEFAULT_OUTLINE_PALETTE.map(toSrgb);
+    const terminatorStep = distance(fill[0], fill[1]);
+
+    // Kontrola pozytywna na sam pomiar: skok przez terminator W TEJ SAMEJ przestrzeni i tym
+    // samym przyrządem, którym mierzone są kroki obrysu. Bez tego progi niżej byłyby trzema
+    // liczbami bez skali.
+    expect(terminatorStep).toBeCloseTo(0.8598, 4);
+
+    // Skok OBRYS↔OBRYS przez granicę pasm — liczba, którą uzasadniony jest `OUTLINE_INSET`
+    // (patrz `planetMesh.ts`) i która trafiła do specu fazy, a do rundy naprawczej 1 nie była
+    // przypięta niczym (i była tam zapisana błędnie jako 0,5546). To jest kontrast, jaki
+    // miałby terminator, gdyby obrysy leżały NA wspólnej krawędzi i ją przykrywały — czyli
+    // jedyne uzasadnienie liczbowe wciągnięcia. Wartości bezwzględne, w obu przestrzeniach.
+    const outlineStepAcross = distance(DEFAULT_OUTLINE_PALETTE[0], DEFAULT_OUTLINE_PALETTE[1]);
+    const fillStepAcross = distance(DEFAULT_PALETTE[0], DEFAULT_PALETTE[1]);
+    expect(fillStepAcross).toBeCloseTo(0.9005, 4); // kontrola: odniesienie to TA SAMA liczba, co w teście 20
+    expect(outlineStepAcross).toBeCloseTo(0.5918, 4);
+    expect(outlineStepAcross / fillStepAcross).toBeCloseTo(0.657, 3);
+    expect(distance(outline[0], outline[1])).toBeCloseTo(0.5632, 4); // ta sama rzecz w sRGB
+
+    // Marginesy „obrys jest bliżej WŁASNEGO pasma niż najbliższego obcego", zmierzone i
+    // wpisane wprost (runda naprawcza 1 — komentarz przy `DEFAULT_OUTLINE_PALETTE` je podawał,
+    // ale żadna asercja ich nie trzymała; asercja (3) niżej wynika w większości par z
+    // nierówności trójkąta i asercji (2), więc sama ich nie zastępuje).
+    const EXPECTED_MARGINS = [3.03, 3.52, 1.67]; // zmierzone: 3,0268 / 3,5248 / 1,6709
+
+    let checked = 0;
+    for (let band = 0; band < DEFAULT_PALETTE.length; band++) {
+      const step = distance(outline[band], fill[band]);
+      const label = `pasmo ${band}`;
+
+      // (1) Krata jest WIDOCZNA: linia, która nie odróżnia się od swojego wypełnienia, nie
+      //     jest kratą. Zmierzone: 0,226 / 0,200 / 0,214.
+      expect(step, label).toBeGreaterThan(0.12);
+
+      // (2) Krata NIE KONKURUJE z terminatorem. Gdyby obrysy były równie kontrastowe co
+      //     granica dnia i nocy, tarcza z daleka zamieniłaby się w siatkę, w której granica
+      //     jest jedną z tysięcy linii — czyli dokładnie to, przed czym ostrzega brief.
+      //     Próg 0,2866 to jedna trzecia zmierzonego skoku terminatora, wpisana jako liczba,
+      //     żeby nie poruszał się razem z paletą.
+      expect(step, label).toBeLessThan(0.2866);
+
+      // (3) Obrys jest NAJBLIŻEJ wypełnienia WŁASNEGO pasma. Obrys dryfujący w stronę barwy
+      //     pasma sąsiedniego czytałby się jak wąski pasek TAMTEGO pasma — czyli rysowałby
+      //     nieistniejącą granicę wewnątrz jednolitego obszaru.
+      let nearestOther = Number.POSITIVE_INFINITY;
+      for (let other = 0; other < fill.length; other++) {
+        if (other === band) continue;
+        const toOther = distance(outline[band], fill[other]);
+        expect(toOther, `${label} kontra wypełnienie ${other}`).toBeGreaterThan(step);
+        nearestOther = Math.min(nearestOther, toOther);
+      }
+      // (4) Margines przypięty LICZBĄ, nie tylko nierównością: o ile dalej obrysowi do
+      //     najbliższego obcego wypełnienia niż do własnego. Najciaśniejszy ma dzień (1,67×),
+      //     bo to jego sąsiedztwo z pasmem zmierzchu jest w tej palecie najsłabsze.
+      expect(nearestOther / step, `${label} margines`).toBeGreaterThan(EXPECTED_MARGINS[band] - 0.02);
+      expect(nearestOther / step, `${label} margines`).toBeLessThan(EXPECTED_MARGINS[band] + 0.02);
+      checked++;
+    }
+    expect(checked).toBe(DEFAULT_PALETTE.length); // pętla przeszła wszystkie pasma, nie zero
+
+  });
+
+  it('23. [PRZYPIĘCIE] kontrasty WCAG palety — czyli SAMA LUMINANCJA, bez odcienia — to 5,38 / 1,79 / 9,62, i wychodzą tak tylko przy potraktowaniu jej wartości jako LINIOWYCH', () => {
+    // Dwa powody istnienia tego testu, oba z przeglądu rundy naprawczej 1:
+    //
+    // (1) Te trzy liczby siedzą w `global-constraints.md` jako podstawa doboru barw budynków
+    //     (Zadanie 3) i jednostek (Zadanie 4) — a NIC ich nie pilnowało. Zmiana palety
+    //     przesunęłaby je bez jednego czerwonego testu. Komentarz przy `Rgb` w `shading.ts`
+    //     odsyłał do testu 21, który liczy odległość euklidesową w sRGB, a nie kontrast WCAG.
+    //
+    // (2) Sam FAKT, że paleta jest liniowa, jest ustaleniem empirycznym (odczyt `gl.readPixels`
+    //     z żywego płótna) i już raz kosztował błąd: brief fazy podawał 5,6 / 2,90 / 16,2,
+    //     bo liczył kontrast, traktując te same trójki jako sRGB. Test liczy OBIEMA drogami i
+    //     przypina obie, więc następna osoba zobaczy, która jest która, zamiast wybierać.
+    //
+    // CZEGO TEN TEST NIE ZŁAPIE, i to nie jest jego wada (runda naprawcza 2). Kontrast WCAG
+    // Z DEFINICJI zależy wyłącznie od luminancji, więc obrót ODCIENIA zachowujący luminancję
+    // (np. zamiana pasma zmierzchu z ciepłego pomarańczu na zimny błękit o tej samej jasności)
+    // zostawia wszystkie sześć liczb niżej bez zmian. Ten test przypina JASNOŚCI palety i
+    // przestrzeń barw, i tyle. Przed zmianą palety zachowującą luminancję bronią testy
+    // **19/20/21**, które mierzą odległość EUKLIDESOWĄ (a więc widzą odcień): 20 przypina skok
+    // przez terminator na 0,9005, 21 kroki obrysów i marginesy, 19 długość palety obrysów.
+    // ŻADEN z nich sam nie wystarcza: 20 i 21 są ślepe na przesunięcie zachowujące odległości,
+    // a ten — na przesunięcie zachowujące luminancję. Zmiana palety musi przejść przez oba
+    // sita naraz.
+    const luminance = (c: Rgb): number => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const contrast = (a: Rgb, b: Rgb): number => {
+      const la = luminance(a);
+      const lb = luminance(b);
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    };
+    // Odwrotność `encodeSrgb` z testu 21: gdyby paleta BYŁA zapisana w sRGB, kontrast WCAG
+    // liczyłoby się dopiero po jej zdekodowaniu do przestrzeni liniowej.
+    const decodeSrgb = (v: number): number => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    const asIfSrgb = (c: Rgb): Rgb => [decodeSrgb(c[0]), decodeSrgb(c[1]), decodeSrgb(c[2])];
+
+    const [night, dawn, day] = DEFAULT_PALETTE;
+
+    // WŁASNOŚĆ. Wartości bezwzględne, zmierzone; paleta jest LINIOWA, więc idą do wzoru wprost.
+    expect(contrast(night, dawn)).toBeCloseTo(5.38, 2);
+    expect(contrast(dawn, day)).toBeCloseTo(1.79, 2);
+    expect(contrast(night, day)).toBeCloseTo(9.62, 2);
+
+    // Granica D1 — jedyna, która niesie spawn, spalanie i ekonomię dnia i nocy — przechodzi
+    // próg 3:1 z zapasem. Granica wewnętrzna (zmierzch↔dzień) go NIE przechodzi i to jest
+    // znane: stąd wniosek Zadania 2, że zróżnicowanie odcieni po stronie oświetlonej jest
+    // znacznie bardziej ryzykowne niż przy nocy.
+    expect(contrast(night, dawn)).toBeGreaterThan(3);
+    expect(contrast(dawn, day)).toBeLessThan(3);
+
+    // FAKT O PRZESTRZENI BARW. Ta sama paleta potraktowana jako sRGB daje ISTOTNIE INNE
+    // liczby — dokładnie te, które podał brief fazy. Gdyby obie drogi dawały to samo, test
+    // powyżej nie mówiłby nic o przestrzeni i można by go spełnić przypadkiem.
+    expect(contrast(asIfSrgb(night), asIfSrgb(dawn))).toBeCloseTo(5.6, 1);
+    expect(contrast(asIfSrgb(dawn), asIfSrgb(day))).toBeCloseTo(2.9, 1);
+    expect(contrast(asIfSrgb(night), asIfSrgb(day))).toBeCloseTo(16.24, 2);
+    // Kontrola pozytywna na sam rozdział: najsłabszy bok palety wychodzi w złej interpretacji
+    // o ponad 60% LEPIEJ, niż jest naprawdę — czyli pomyłka przestrzeni nie jest kosmetyczna.
+    expect(contrast(asIfSrgb(dawn), asIfSrgb(day)) / contrast(dawn, day)).toBeGreaterThan(1.6);
+  });
+
+  it('22. obrys KAŻDEJ komórki niesie DOKŁADNIE to pasmo, co jej wypełnienie — przez PlanetMesh.updateColors, 1442 komórki × 12 faz', () => {
+    // Mierzone przez `PlanetMesh.updateColors`, a NIE przez dwa własne wywołania
+    // `writeCellColors` — bo dwa wywołania tej samej czystej funkcji z tym samym `light`
+    // zgadzają się z definicji i taki test sprawdzałby własność swojego WEJŚCIA, nie kodu.
+    // Ryzyko jest w OKABLOWANIU: to `createPlanetMesh` decyduje, czy oba bufory dostają to
+    // samo `light` w tej samej klatce. Kolejne fazy przelatują tu przez JEDNĄ siatkę, więc
+    // pominięcie odświeżenia obrysu (krata sprzed klatki, przy odwróconym już słońcu) oblewa.
+    const planetMesh = createPlanetMesh(geo);
+    const outlines = buildCellOutlines(geo);
+    const fillAttr = planetMesh.mesh.geometry.getAttribute('color') as BufferAttribute;
+    const outlineAttr = planetMesh.outline.geometry.getAttribute('color') as BufferAttribute;
+
+    const indexOf = (palette: Palette, c: Rgb): number =>
+      palette.findIndex((p) => {
+        const q = froundRgb(p);
+        return q[0] === c[0] && q[1] === c[1] && q[2] === c[2];
+      });
+
+    const PHASES = 12;
+    let checked = 0;
+    const bandsSeen = new Set<number>();
+    for (let k = 0; k < PHASES; k++) {
+      planetMesh.updateColors(lightField(planet, sunDirection((k / PHASES) * 180, 180)));
+      const fillArr = fillAttr.array as Float32Array;
+      const outlineArr = outlineAttr.array as Float32Array;
+      for (let i = 0; i < planet.cells.length; i++) {
+        const f = geo.cellVertexStart[i] * 3;
+        const o = outlines.cellVertexStart[i] * 3;
+        const fillBand = indexOf(DEFAULT_PALETTE, [fillArr[f], fillArr[f + 1], fillArr[f + 2]]);
+        const outlineBand = indexOf(DEFAULT_OUTLINE_PALETTE, [outlineArr[o], outlineArr[o + 1], outlineArr[o + 2]]);
+        // Kontrola: oba kolory MUSZĄ pochodzić ze swojej palety. `-1` znaczyłoby, że któryś
+        // bufor niesie kolor spoza palety (np. został niezapisany, czyli same zera) — i bez
+        // tej pary asercji `-1 === -1` przeszłoby jako „zgodne pasma".
+        expect(fillBand, `komórka ${i}, faza ${k}`).toBeGreaterThanOrEqual(0);
+        expect(outlineBand, `komórka ${i}, faza ${k}`).toBeGreaterThanOrEqual(0);
+        expect(outlineBand, `komórka ${i}, faza ${k}`).toBe(fillBand);
+        bandsSeen.add(fillBand);
+        checked++;
+      }
+    }
+    expect(checked).toBe(planet.cells.length * PHASES);
+    // KONTROLA POZYTYWNA: przyrząd widział WSZYSTKIE pasma, nie jedno powtórzone 17 tysięcy
+    // razy — „zawsze zgodne" nic nie znaczy, gdy porównuje się dwa razy to samo pasmo 0.
+    expect(bandsSeen.size).toBe(DEFAULT_PALETTE.length);
+    planetMesh.dispose();
   });
 });

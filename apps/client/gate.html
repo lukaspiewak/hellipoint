@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Heliopolis — bramka czytelności (Zadanie 5)</title>
+    <title>Heliopolis — bramka czytelności terminatora (Faza 2B)</title>
     <style>
       html,
       body {
@@ -21,10 +21,10 @@
         position: fixed;
         top: 12px;
         right: 12px;
-        width: min(360px, 42vw);
+        width: min(380px, 44vw);
         max-height: calc(100vh - 24px);
         overflow-y: auto;
-        background: rgba(10, 14, 20, 0.85);
+        background: rgba(10, 14, 20, 0.88);
         color: #e8f0ff;
         border: 1px solid rgba(232, 240, 255, 0.2);
         border-radius: 8px;
@@ -78,6 +78,27 @@
       button:not(:disabled):hover {
         background: rgba(232, 240, 255, 0.16);
       }
+      button.active {
+        background: rgba(120, 200, 255, 0.28);
+        border-color: rgba(160, 220, 255, 0.8);
+      }
+      #answers button {
+        font-weight: 600;
+        padding: 8px 14px;
+      }
+      .note {
+        margin-top: 8px;
+        padding: 8px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.05);
+        border-left: 3px solid rgba(232, 240, 255, 0.3);
+      }
+      .note.evaluated {
+        border-left-color: #58d68d;
+      }
+      .note.control {
+        border-left-color: #e23d3d;
+      }
       #final {
         margin-top: 10px;
       }
@@ -106,41 +127,49 @@
   <body>
     <canvas id="gate-canvas"></canvas>
     <div id="panel">
-      <h1>Bramka czytelności terminatora — Zadanie 5</h1>
+      <h1>Bramka czytelności terminatora — Faza 2B</h1>
       <div id="instructions">
-        Piętnaście prób (3 fazy słońca × 5 par). Każda para to dwie SĄSIADUJĄCE komórki, jedna
-        naprawdę oświetlona, druga naprawdę nie — oznaczone dwoma IDENTYCZNYMI, neutralnymi
-        znacznikami na planecie. Kliknij ten, który Twoim zdaniem leży na oświetlonej stronie.
-        Po kliknięciu zobaczysz prawdę (zielony = oświetlona, czerwony = ciemna) i przejdziesz
-        dalej. Możesz swobodnie obracać i przybliżać kamerę (K1) przed odpowiedzią.
+        Piętnaście osądów (3 fazy słońca × 5 komórek). Za każdym razem <strong>jedna</strong>
+        komórka jest otoczona pierścieniem. Powiedz, po której stronie granicy dnia i nocy
+        leży. Wszystkie komórki przylegają do granicy, więc pytanie nigdy nie jest trywialne;
+        połowa jest oświetlona, połowa nie, więc stała odpowiedź nic nie daje. Obracaj i
+        przybliżaj kamerę (K1) ile potrzeba PRZED odpowiedzią.
+        <br /><br />
+        <strong>Praktyczna uwaga z przebiegu kontrolnego:</strong> oceniaj z widoku, w którym
+        widać CAŁĄ tarczę i przebieg granicy. Przy mocnym przybliżeniu w kadrze zostaje kilka
+        komórek, pierścień jest wtedy wielkości komórki i łatwo pomylić się co do tego, którą
+        łatę obejmuje — dwa z dwóch błędów w przebiegu wykonawcy padły właśnie tak, a te same
+        komórki oglądane z widoku całej tarczy były jednoznaczne.
+        <br /><br />
+        <strong>Czym to się różni od bramki z Fazy 2A:</strong> tamta pokazywała DWIE
+        sąsiadujące komórki i pytała, która jest jaśniejsza. To pytanie lokalne — daje się
+        odpowiedzieć przy dowolnej monotonicznej palecie, także przy cieniowaniu, które Faza 0
+        zmierzyła jako nieczytelne, więc bramka przechodziła niezależnie od tego, co miała
+        mierzyć. Pojedyncza komórka odbiera strategię „wskaż jaśniejszą”: bez drugiej komórki
+        w kadrze odpowiedź wymaga wiedzy, GDZIE biegnie granica.
       </div>
       <h2>Stan</h2>
       <div id="status"></div>
       <div id="prompt"></div>
+      <div id="answers">
+        <button id="answer-lit">Oświetlona</button>
+        <button id="answer-dark">Ciemna (noc)</button>
+      </div>
       <div id="tally"></div>
       <button id="next-btn" disabled>Dalej →</button>
-      <h2>Tryb porównawczy (to NIE jest kontrola pozytywna)</h2>
-      <div style="opacity: 0.85">
-        Jeśli granica jest niewidoczna nawet w cieniowaniu progowanym, to jest realny wynik —
-        zapisz go, nie próbuj go obejść. Klik w trybie porównawczym się nie liczy.
-        <br /><br />
-        <strong>Uwaga, jeśli znasz poprzednią wersję tego panelu:</strong> ten przycisk był tu
-        opisany jako kontrola pozytywna, czyli dowód, że bramka potrafi wyprodukować odpowiedź
-        „nie widzę". <strong>Nie potrafi</strong>, i to zdanie zostało usunięte jako fałszywe.
-        Tryb gładki zmienia mapowanie palety, a nie interpolację: nadal maluje każdą komórkę
-        jednym płaskim kolorem, bo każda ma własne wierzchołki. Awaria zmierzona w Fazie 0 była
-        inna — tam kolor rozmazywał się PO POWIERZCHNI między wierzchołkami współdzielonymi.
-        Tej awarii ta architektura nie umie odtworzyć. Zmierzone: w trybie gładkim komórka
-        oświetlona nadal jest jaśniejsza od ciemnej (0,030–0,081 na kanał), więc komplet
-        trafień jest tu osiągalny przez samo wskazywanie jaśniejszej.
-        <br /><br />
-        Co ten przycisk pokazuje NAPRAWDĘ: ile kontrastu dokłada progowanie ponad to, co dowozi
-        sama geometria. Odległość barwna pary rośnie z około 0,07–0,12 do 0,90, czyli 7–13 razy.
-        Czytelność granicy dowozi geometria (płaskie komórki); progowanie czyni ją wygodną.
+      <h2>Tryb cieniowania</h2>
+      <button id="mode-threshold">Progowany (oceniany)</button>
+      <button id="mode-smooth">Gradient, płaskie komórki</button>
+      <button id="mode-control">Kontrola pozytywna</button>
+      <div id="mode-note" class="note"></div>
+      <div style="opacity: 0.8; margin-top: 8px">
+        Każdy tryb ma <strong>własny, rozłączny</strong> zestaw komórek — po odsłonięciu prawdy
+        znasz odpowiedź, więc kontrola na tych samych komórkach mierzyłaby Twoją pamięć, nie
+        czytelność renderu. Przełączenie trybu przenosi więc kamerę na inną komórkę; to jest
+        cena rozłączności i jest zamierzona.
       </div>
-      <button id="mode-toggle"></button>
       <div id="final" hidden>
-        <h2>Koniec</h2>
+        <h2>Koniec przebiegu</h2>
         <div id="verdict"></div>
         <div>Do wklejenia w dokument wyników:</div>
         <textarea id="export" readonly></textarea>

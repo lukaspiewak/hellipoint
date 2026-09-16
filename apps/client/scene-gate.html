@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Heliopolis — bramka pełnego obrazu (Faza 2B, Zadanie 5)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        font-family: system-ui, sans-serif;
+      }
+      #gate-canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+      /*
+        UKŁAD PANELU — runda naprawcza 1, i to nie jest kosmetyka.
+
+        Pierwsza wersja miała trzy akapity metodologii NAD kontrolkami. Człowiek przewinął
+        przez prozę, zobaczył przyciski faz i do przełączników pytań 2-5 NIGDY NIE DOTARŁ:
+        odpowiedział na pytania 2, 3 i 4 z głównej aplikacji, a na 5 wpisał „nie da się
+        rozstrzygnąć", co znaczyło „nie znalazłem przełącznika". Kolejność jest teraz
+        odwrotna — PRZYRZĄDY, potem pytania, a uzasadnienia w zwijanych `<details>`.
+
+        Wysokość odniesienia to okno ~480 px, nie pełny ekran: przy 1080 px defekt jest
+        niewidoczny, a to właśnie przy 480 px instrument jest używany.
+      */
+      #panel {
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        width: min(400px, 46vw);
+        max-height: calc(100vh - 16px);
+        overflow-y: auto;
+        background: rgba(10, 14, 20, 0.92);
+        color: #e8f0ff;
+        border: 1px solid rgba(232, 240, 255, 0.2);
+        border-radius: 8px;
+        padding: 8px 12px 12px;
+        box-sizing: border-box;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      #panel h1 {
+        font-size: 13px;
+        margin: 0 0 6px;
+      }
+      #panel h2 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        opacity: 0.75;
+        margin: 10px 0 2px;
+      }
+      #panel h2:first-of-type {
+        margin-top: 4px;
+      }
+      #status {
+        font-weight: 600;
+      }
+      #prompt {
+        margin-top: 4px;
+        padding: 5px 6px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      #tally {
+        margin-top: 4px;
+      }
+      button {
+        font: inherit;
+        cursor: pointer;
+        border: 1px solid rgba(232, 240, 255, 0.3);
+        background: rgba(232, 240, 255, 0.08);
+        color: inherit;
+        border-radius: 5px;
+        padding: 4px 8px;
+        margin: 3px 4px 0 0;
+      }
+      button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      button:not(:disabled):hover {
+        background: rgba(232, 240, 255, 0.16);
+      }
+      button.active {
+        background: rgba(120, 200, 255, 0.3);
+        border-color: rgba(160, 220, 255, 0.85);
+      }
+      #answers button {
+        font-weight: 600;
+        padding: 6px 12px;
+      }
+      .note {
+        margin-top: 5px;
+        padding: 5px 6px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.05);
+        border-left: 3px solid rgba(232, 240, 255, 0.3);
+      }
+      .note.evaluated {
+        border-left-color: #58d68d;
+      }
+      .note.control {
+        border-left-color: #e23d3d;
+      }
+      /* Ostrzeżenie — nie „note". Ma się różnić od objaśnienia, bo mówi, że odpowiedź
+         udzielona gdzie indziej NIE JEST odpowiedzią na to pytanie. */
+      .warn {
+        margin-top: 5px;
+        padding: 5px 6px;
+        border-radius: 5px;
+        background: rgba(226, 61, 61, 0.14);
+        border-left: 3px solid #e23d3d;
+      }
+      .readout {
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        margin-top: 4px;
+        opacity: 0.95;
+      }
+      details {
+        margin-top: 8px;
+        opacity: 0.9;
+      }
+      details > summary {
+        cursor: pointer;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        opacity: 0.75;
+      }
+      details > div {
+        margin-top: 5px;
+      }
+      .question {
+        margin-top: 7px;
+        padding: 6px 7px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.05);
+        border-left: 3px solid rgba(160, 220, 255, 0.55);
+      }
+      .question-title {
+        font-weight: 700;
+      }
+      .question-body {
+        opacity: 0.85;
+        margin-top: 3px;
+      }
+      .question-note,
+      #export {
+        width: 100%;
+        box-sizing: border-box;
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        background: #05070a;
+        color: #cde;
+        border: 1px solid rgba(232, 240, 255, 0.25);
+        border-radius: 5px;
+        padding: 5px;
+        margin-top: 5px;
+      }
+      .question-note {
+        height: 46px;
+      }
+      #export {
+        height: 220px;
+      }
+      #machine {
+        font: inherit;
+        width: 100%;
+        box-sizing: border-box;
+        background: #05070a;
+        color: #cde;
+        border: 1px solid rgba(232, 240, 255, 0.25);
+        border-radius: 5px;
+        padding: 5px;
+        margin-top: 5px;
+      }
+      #hud {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        padding: 4px 8px;
+        background: rgba(0, 0, 0, 0.55);
+        color: #e8f0ff;
+        font: 11px/1.35 ui-monospace, monospace;
+        white-space: pre;
+        pointer-events: none;
+        z-index: 10;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gate-canvas"></canvas>
+    <div id="hud">klatka: zbieranie danych…</div>
+    <div id="panel">
+      <h1>Bramka pełnego obrazu — Faza 2B, Zadanie 5</h1>
+
+      <h2>Faza</h2>
+      <button id="phase-trials">Próby (pytanie 1)</button>
+      <button id="phase-free">Swobodny (pytania 2–5)</button>
+
+      <!-- ===================== PRZYRZĄDY — nad prozą, zawsze ===================== -->
+      <div id="free-panel" hidden>
+        <!--
+          Cztery grupy kontrolek, po jednej na pytanie 2-5, NAJPIERW — mają się zmieścić bez
+          przewijania w oknie ~480 px. Objaśnienia idą pod nimi; przy przełączniku cieniowania
+          zostaje jednolinijkowe OSTRZEŻENIE, bo to jest pułapka, w którą człowiek już wpadł.
+        -->
+        <h2>Słońce (pytanie 2)</h2>
+        <button id="sun-speed">Tempo: ×1 (gra)</button>
+        <button id="sun-toggle">Słońce: orbituje</button>
+        <div id="sun-readout" class="readout"></div>
+
+        <h2>Cieniowanie jednostek (pytanie 4) — klawisze 1–4</h2>
+        <div id="shading-buttons"></div>
+        <div class="warn">
+          <strong>Tylko TE przyciski dają 0,8464.</strong> Klawisze 1/2/3 w głównej aplikacji
+          (<code>/</code>) dają <strong>0,55</strong> — wariant <strong>POZA budżetem</strong>.
+        </div>
+
+        <h2>Puls pierścienia alarmu (pytanie 5)</h2>
+        <button id="pulse-toggle">Puls: WŁĄCZONY (produkcja)</button>
+
+        <h2>Spalanie (pytanie 3)</h2>
+        <div id="burn-readout" class="readout"></div>
+
+        <details>
+          <summary>Co dokładnie pokazują te cztery przełączniki</summary>
+          <div>
+            <div id="shading-note" class="note"></div>
+            <div class="warn">
+              <strong>Pytanie 4 — pełne ostrzeżenie.</strong> Klawisze 1/2/3 w głównej aplikacji
+              (<code>/</code>) używają <code>UNIT_BAND_SHADE</code> = <strong>0,55</strong>, czyli
+              wariantu, który ta faza zmierzyła jako <strong>poza budżetem</strong> kontrastu 3:1.
+              Widać go bez trudu (Δ&nbsp;59/255) i wiadomo o tym od Zadania 4. Pytanie 4 dotyczy
+              <strong>0,8464</strong> (Δ&nbsp;18/255) — jedynej rzeczy, której nikt jeszcze nie
+              obejrzał — więc odpowiedź udzielona z głównej aplikacji
+              <strong>nie jest odpowiedzią na to pytanie</strong>.
+            </div>
+            <div class="note">
+              <strong>Pytanie 5 — puls.</strong> Amplituda to <strong>cały</strong> zapas między
+              pierścieniem (3,0300) a krawędzią najmniejszej komórki (3,1720): 0,13 jednostki,
+              czyli <strong>0,44 px</strong> z widoku domyślnego, przy progu widoczności 1 px.
+              Większej nie ma — sufitem jest rozmiar komórki, nie dobór wartości.
+              <br /><br />
+              <strong>Po rundzie naprawczej 2 puls jest WŁĄCZONY domyślnie</strong>, także w
+              grze: człowiek zobaczył go przy 0,44 px, co obaliło przesłankę Zadania 3. Próg
+              1 px pochodzi z obejrzenia cechy NIERUCHOMEJ — <strong>ruch jest wykrywalny
+              poniżej niego</strong>. Przełącznik służy teraz do porównania „z pulsem ⇄ bez".
+            </div>
+            <div class="note">
+              <strong>Pytanie 3 — spalanie.</strong> Jednostki <strong>giną naprawdę</strong>;
+              licznik wyżej rośnie przy każdej śmierci od słońca, a populacja jest dosypywana do
+              481, więc na ekranie są ciągle nowe. Czego szukać: jednostka wchodząca w pasmo
+              jasne ma <strong>kurczący się jasny rdzeń</strong> (do połowy promienia) i
+              <strong>rosnącą ciemną obwódkę</strong>, a barwa rdzenia idzie z fioletu w
+              rozżarzenie; potem <strong>znika</strong>. Odniesienie: „linijka” koło komórki
+              startowej — 3 typy × 5 poziomów ekspozycji, NIERUCHOMA i niepodlegająca spalaniu,
+              więc pokazuje całą rampę naraz, w tym stan tuż przed śmiercią.
+            </div>
+            <div class="note">
+              <strong>Pytanie 2 — słońce.</strong> Pełny obrót trwa w grze 180 s, więc ruch przez
+              kilka sekund jest niedostrzegalny; odczyt „obrót: …%” pokazuje, ile z niego minęło.
+              „Tempo ×8” skraca obrót do 22,5 s ekranowych i <strong>jest odnotowywane w
+              eksporcie</strong> — przyspieszony obrót nie jest tempem gry.
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div id="trials-panel">
+        <h2>Stan</h2>
+        <div id="status"></div>
+        <div id="prompt"></div>
+        <div id="answers">
+          <button id="answer-lit">Oświetlona</button>
+          <button id="answer-dark">Ciemna (noc)</button>
+        </div>
+        <div id="tally"></div>
+        <button id="next-btn" disabled>Dalej →</button>
+        <h2>Tryb cieniowania terenu</h2>
+        <button id="mode-threshold">Progowany (oceniany)</button>
+        <button id="mode-smooth">Gradient, płaskie komórki</button>
+        <button id="mode-control">Kontrola pozytywna</button>
+        <div id="mode-note" class="note"></div>
+      </div>
+
+      <!-- ===================== PYTANIA ===================== -->
+      <h2>Pięć pytań — werdykt człowieka</h2>
+      <div id="questions"></div>
+
+      <h2>Do wklejenia w dokument wyników</h2>
+      <input id="machine" placeholder="Maszyna (model, procesor, GPU)" />
+      <textarea id="export" readonly></textarea>
+
+      <!-- ===================== PROZA — na dole, zwinięta ===================== -->
+      <details>
+        <summary>Jak to czytać — metoda i zakres</summary>
+        <div>
+          Ta strona pokazuje <strong>scenę, którą gracz naprawdę zobaczy</strong>: teren, kratę,
+          budynki i jednostki razem, w ruchu. Bramka terenowa (<code>/gate.html</code>) bada
+          <strong>sam teren</strong> i zostaje nietknięta — to ona jest instrumentem, którym
+          zmierzono 15/15, więc pełna scena dostaje <strong>osobny przebieg</strong>, a nie
+          rozluźnienie tamtej.
+          <br /><br />
+          <strong>Pięciu pytań nie rozstrzyga ani ta strona, ani jej autor.</strong> Rozstrzygasz
+          je Ty, patrząc na ekran. Agent czytający piksele i oko to dwa różne instrumenty — w tej
+          fazie dały już w tej samej kontroli dwa różne wyniki i oba były prawdziwe.
+          <br /><br />
+          <strong>Oceniaj na obu skalach.</strong> Z widoku całej tarczy i z bliska — w tej fazie
+          te dwie skale trzykrotnie dały różne odpowiedzi, a dwie wady znalazły oczy przy
+          zielonym pakiecie testów.
+          <br /><br />
+          <strong>Faza PRÓBY jest zamrożona</strong> w fazie słońca bieżącej próby — jedyną
+          rzeczą, która ma się różnić wobec bramki terenowej, jest obecność pełnej sceny.
+          Komórki, o które bramka pyta, są <strong>wolne od budynków i jednostek</strong> (obiekt
+          stojący na pytanej komórce zasłania to, o co pytanie dotyczy); ich sąsiedzi już nie.
+          <br /><br />
+          <strong>Przy mocnym przybliżeniu</strong> pytana komórka może wyjść poza kadr, bo
+          kamera celuje OBOK niej (uszczelnienie kontroli). Cofnij zoom.
+        </div>
+      </details>
+    </div>
+    <script type="module" src="/src/sceneGate.ts"></script>
+  </body>
+</html>

@@ -24,7 +24,13 @@ Otwiera serwer deweloperski Vite pod `http://localhost:5180/`.
 ## Strony
 
 - **`/`** (`index.html`) — normalny widok: planeta, kamera K1, orbitujące słońce.
-- **`/gate.html`** (Zadanie 5) — bramka czytelności terminatora: harness, w którym
-  człowiek ocenia piętnaście par sąsiadujących komórek po dwóch stronach granicy
-  światła. Protokół i miejsce na werdykt: `docs/superpowers/specs/
-  2026-09-15-faza-2a-czytelnosc.md`, §7.
+- **`/gate.html`** — bramka czytelności terminatora **na SAMYM TERENIE**: piętnaście
+  osądów „czy zaznaczona komórka leży po stronie oświetlonej". To jest instrument, którym
+  Faza 2B zmierzyła 15/15, i jego scena **nie zmienia się razem z grą** — inaczej tamten
+  wynik przestałby opisywać cokolwiek. Protokół i werdykt:
+  `docs/superpowers/specs/2026-09-15-faza-2b-czytelnosc.md`, §5–§7.
+- **`/scene-gate.html`** (Faza 2B, Zadanie 5) — bramka **PEŁNEGO OBRAZU**: ta sama
+  mechanika prób, ale na scenie, którą gracz naprawdę widzi (teren + krata + budynki +
+  jednostki). Dwie fazy: PRÓBY (pytanie 1, scena zamrożona) i SWOBODNY (pytania 2–5,
+  słońce orbituje, jednostki idą i płoną). Protokół, wyniki i pięć pytań do wypełnienia:
+  ten sam dokument, §13.
