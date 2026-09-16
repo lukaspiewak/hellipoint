@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Heliopolis — bramka pełnego obrazu (Faza 2B, Zadanie 5)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        font-family: system-ui, sans-serif;
+      }
+      #gate-canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+      #panel {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        width: min(420px, 46vw);
+        max-height: calc(100vh - 24px);
+        overflow-y: auto;
+        background: rgba(10, 14, 20, 0.9);
+        color: #e8f0ff;
+        border: 1px solid rgba(232, 240, 255, 0.2);
+        border-radius: 8px;
+        padding: 14px 16px;
+        box-sizing: border-box;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      #panel h1 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      #panel h2 {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        opacity: 0.7;
+        margin: 14px 0 4px;
+      }
+      #intro {
+        opacity: 0.85;
+      }
+      #status {
+        font-weight: 600;
+        margin-top: 4px;
+      }
+      #prompt {
+        margin-top: 8px;
+        padding: 8px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      #tally {
+        margin-top: 8px;
+      }
+      button {
+        font: inherit;
+        cursor: pointer;
+        border: 1px solid rgba(232, 240, 255, 0.3);
+        background: rgba(232, 240, 255, 0.08);
+        color: inherit;
+        border-radius: 6px;
+        padding: 6px 10px;
+        margin-top: 6px;
+        margin-right: 6px;
+      }
+      button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      button:not(:disabled):hover {
+        background: rgba(232, 240, 255, 0.16);
+      }
+      button.active {
+        background: rgba(120, 200, 255, 0.28);
+        border-color: rgba(160, 220, 255, 0.8);
+      }
+      #answers button {
+        font-weight: 600;
+        padding: 8px 14px;
+      }
+      .note {
+        margin-top: 8px;
+        padding: 8px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.05);
+        border-left: 3px solid rgba(232, 240, 255, 0.3);
+      }
+      .note.evaluated {
+        border-left-color: #58d68d;
+      }
+      .note.control {
+        border-left-color: #e23d3d;
+      }
+      .question {
+        margin-top: 12px;
+        padding: 10px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.05);
+        border-left: 3px solid rgba(160, 220, 255, 0.55);
+      }
+      .question-title {
+        font-weight: 700;
+      }
+      .question-body {
+        opacity: 0.85;
+        margin-top: 4px;
+      }
+      .question-note,
+      #export {
+        width: 100%;
+        box-sizing: border-box;
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        background: #05070a;
+        color: #cde;
+        border: 1px solid rgba(232, 240, 255, 0.25);
+        border-radius: 6px;
+        padding: 6px;
+        margin-top: 6px;
+      }
+      .question-note {
+        height: 54px;
+      }
+      #export {
+        height: 260px;
+      }
+      #machine {
+        font: inherit;
+        width: 100%;
+        box-sizing: border-box;
+        background: #05070a;
+        color: #cde;
+        border: 1px solid rgba(232, 240, 255, 0.25);
+        border-radius: 6px;
+        padding: 6px;
+        margin-top: 6px;
+      }
+      #hud {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        padding: 4px 8px;
+        background: rgba(0, 0, 0, 0.55);
+        color: #e8f0ff;
+        font: 12px/1.4 ui-monospace, monospace;
+        white-space: pre;
+        pointer-events: none;
+        z-index: 10;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gate-canvas"></canvas>
+    <div id="hud">klatka: zbieranie danych…</div>
+    <div id="panel">
+      <h1>Bramka pełnego obrazu — Faza 2B, Zadanie 5</h1>
+      <div id="intro">
+        Ta strona pokazuje <strong>scenę, którą gracz naprawdę zobaczy</strong>: teren, kratę,
+        budynki i jednostki razem, w ruchu. Bramka terenowa (<code>/gate.html</code>) bada
+        <strong>sam teren</strong> i zostaje nietknięta — to ona jest instrumentem, którym
+        zmierzono 15/15, więc pełna scena dostaje <strong>osobny przebieg</strong>, a nie
+        rozluźnienie tamtej.
+        <br /><br />
+        <strong>Pięciu pytań niżej nie rozstrzyga ani ta strona, ani jej autor.</strong>
+        Rozstrzygasz je Ty, patrząc na ekran. Agent czytający piksele i oko to dwa różne
+        instrumenty — w tej fazie dały już w tej samej kontroli dwa różne wyniki i oba były
+        prawdziwe.
+        <br /><br />
+        <strong>Oceniaj na obu skalach.</strong> Z widoku całej tarczy i z bliska — w tej fazie
+        te dwie skale trzykrotnie dały różne odpowiedzi, a dwie wady znalazły oczy przy zielonym
+        pakiecie testów.
+      </div>
+
+      <h2>Faza</h2>
+      <button id="phase-trials">Próby (pytanie 1)</button>
+      <button id="phase-free">Swobodny (pytania 2–5)</button>
+
+      <div id="trials-panel">
+        <h2>Stan</h2>
+        <div id="status"></div>
+        <div id="prompt"></div>
+        <div id="answers">
+          <button id="answer-lit">Oświetlona</button>
+          <button id="answer-dark">Ciemna (noc)</button>
+        </div>
+        <div id="tally"></div>
+        <button id="next-btn" disabled>Dalej →</button>
+        <h2>Tryb cieniowania terenu</h2>
+        <button id="mode-threshold">Progowany (oceniany)</button>
+        <button id="mode-smooth">Gradient, płaskie komórki</button>
+        <button id="mode-control">Kontrola pozytywna</button>
+        <div id="mode-note" class="note"></div>
+        <div style="opacity: 0.8; margin-top: 8px">
+          Scena w tej fazie jest <strong>zamrożona</strong> w fazie słońca bieżącej próby —
+          jedyną rzeczą, która ma się różnić wobec bramki terenowej, jest obecność pełnej sceny.
+          Komórki, o które bramka pyta, są <strong>wolne od budynków i jednostek</strong>
+          (obiekt stojący na pytanej komórce zasłania to, o co pytanie dotyczy); ich sąsiedzi
+          już nie.
+        </div>
+      </div>
+
+      <div id="free-panel" hidden>
+        <h2>Słońce</h2>
+        <button id="sun-toggle">Słońce: orbituje</button>
+        <div class="note">
+          Zatrzymanie dotyczy <strong>wyłącznie słońca</strong> — jednostki idą i płoną dalej.
+          Pytanie 4 wymaga porównania dwóch wariantów cieniowania na <strong>tym samym</strong>
+          tle; przy ruchomym terminatorze tło zmienia się między jednym a drugim spojrzeniem i
+          porównanie przestaje być porównaniem.
+        </div>
+        <h2>Cieniowanie jednostek (pytanie 4) — klawisze 1–4</h2>
+        <div id="shading-buttons"></div>
+        <div id="shading-note" class="note"></div>
+        <h2>Puls pierścienia alarmu (pytanie 5)</h2>
+        <button id="pulse-toggle">Puls: brak (produkcja)</button>
+        <div class="note">
+          Amplituda to <strong>cały</strong> zapas, jaki został między pierścieniem (3,0300) a
+          krawędzią najmniejszej komórki (3,1720): 0,13 jednostki, czyli <strong>0,44 px</strong>
+          z widoku domyślnego, przy progu widoczności 1 px. Większej nie ma — sufitem jest
+          rozmiar komórki, nie dobór wartości. Zadanie 3 usunęło z tego powodu cały kanał i to
+          była właściwa odpowiedź, a nie porażka.
+        </div>
+      </div>
+
+      <h2>Pięć pytań — werdykt człowieka</h2>
+      <div id="questions"></div>
+
+      <h2>Do wklejenia w dokument wyników</h2>
+      <input id="machine" placeholder="Maszyna (model, procesor, GPU) — wpisz, zanim skopiujesz" />
+      <textarea id="export" readonly></textarea>
+    </div>
+    <script type="module" src="/src/sceneGate.ts"></script>
+  </body>
+</html>

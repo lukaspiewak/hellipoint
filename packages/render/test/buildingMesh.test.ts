@@ -14,6 +14,7 @@ import {
   ALERT_COLOR_DARK,
   ALERT_COLOR_LIGHT,
   ALERT_INNER_FACTOR,
+  ALERT_PULSE_AMPLITUDE_FACTOR,
   ALERT_RADIUS_FACTOR,
   BUILDING_HEIGHT_FACTOR,
   BUILDING_RADIUS_FACTOR,
@@ -656,6 +657,26 @@ describe('[MUTACJA] stan NIEZASILONY jest widoczny w wyjściu', () => {
       widestShell = Math.max(widestShell, basisColumn(matrixAt(layer.shell, slot), 0).length());
     }
     expect(widestRing, `pierścień (${widestRing.toFixed(4)}) wychodzi poza krawędź obrysu`).toBeLessThan(maxRingRadius);
+
+    // ...I TO SAMO NA SZCZYCIE PULSU (Zadanie 5, pytanie 5 bramki). Puls jest domyślnie
+    // wyłączony, ale `update` przyjmuje wychylenie do `ALERT_PULSE_AMPLITUDE_FACTOR` — więc
+    // niezmiennik „pierścień nie wychodzi z komórki" musi obowiązywać przy MAKSYMALNYM
+    // wychyleniu, nie tylko w spoczynku. Para mutacji na samej stałej jest w teście 23.
+    const maxPulse = planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR;
+    layer.update(list, maxPulse);
+    let widestPulsedRing = 0;
+    for (let slot = 0; slot < ALL_TYPES.length; slot++) {
+      widestPulsedRing = Math.max(widestPulsedRing, basisColumn(matrixAt(layer.alert, slot), 0).length());
+    }
+    expect(widestPulsedRing, 'szczyt pulsu musi być WIĘKSZY od spoczynku').toBeGreaterThan(widestRing);
+    expect(
+      widestPulsedRing,
+      `pierścień na szczycie pulsu (${widestPulsedRing.toFixed(4)}) wychodzi poza krawędź obrysu (${maxRingRadius.toFixed(4)})`,
+    ).toBeLessThan(maxRingRadius);
+    // Amplituda ponad sufit musi RZUCAĆ, a nie po cichu wyprowadzić pierścień z komórki.
+    expect(() => layer.update(list, maxPulse * 1.0001)).toThrow(RangeError);
+    expect(() => layer.update(list, -1e-9)).toThrow(RangeError);
+    layer.update(list); // powrót do spoczynku — reszta testu mierzy konfigurację produkcyjną
     // Ta sama granica dotyczy BRYŁY: budynek też jest okrągły i też nie może wyjść z komórki.
     expect(widestShell).toBeLessThan(Math.tan(edgeAngle) * planet.radius);
 
@@ -1092,6 +1113,57 @@ describe('nawinięcie trójkątów — nawrót defektu, który w tym zadaniu wys
     expect(alert.wrong, 'pierścień: trójkąty zwrócone w dół — DOKŁADNIE defekt z Zadania 3').toBe(0);
     expect(alert.worstDot).toBeCloseTo(1, 9);
 
+    layer.dispose();
+  });
+});
+
+describe('puls pierścienia alarmu — materiał do pytania 5 bramki (Zadanie 5)', () => {
+  it('23. [PARA MUTACJI] maksymalne LEGALNE wychylenie mieści się w komórce, o 0,0002 większe JUŻ NIE — i jest poniżej progu widoczności', () => {
+    // Pytanie 5 bramki brzmi „czy widać, że pierścień alarmu pulsuje". Zadanie 3 puls
+    // usunęło POMIAREM; brief Zadania 5 mówi wprost, że rozstrzyga to człowiek. Żeby mógł,
+    // musi zobaczyć puls — ale wyłącznie taki, który dałoby się wysłać na ekran.
+    //
+    // Ten test ustala dwie rzeczy naraz i obie są treścią odpowiedzi, którą człowiek zapisze:
+    // (1) ile wychylenia w ogóle zostało, (2) że to mniej niż piksel.
+    const { angle: edgeAngle } = minOutlineEdgeAngle();
+    const maxRingRadius = Math.tan(edgeAngle) * (planet.radius + planet.radius * SURFACE_LIFT_FACTOR);
+    const restingRadius = planet.radius * ALERT_RADIUS_FACTOR;
+    const amplitude = planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR;
+
+    // PARA TUŻ PRZY GRANICY. „Ma przejść": dzisiejsza amplituda mieści się w komórce.
+    expect(restingRadius + amplitude, 'szczyt pulsu wychodzi poza komórkę').toBeLessThan(maxRingRadius);
+    // „Ma oblać": amplituda większa o 0,02 jednostki już nie — czyli stała stoi TUŻ pod
+    // sufitem narzuconym rozmiarem komórki, a nie gdziekolwiek poniżej niego.
+    expect(restingRadius + amplitude + 0.02).toBeGreaterThan(maxRingRadius);
+
+    // WYNIK, nie próg: całe wychylenie to 0,44 piksela z widoku domyślnego, przy progu
+    // widoczności 1 px. Sufitem jest ROZMIAR KOMÓRKI, nie dobór wartości — i dlatego
+    // odpowiedź na pytanie 5 zapada wzrokiem, a nie przez podniesienie tej liczby.
+    expect(px(amplitude)).toBeLessThan(MIN_VISIBLE_PX);
+    console.log(
+      `[BRAMKA/P5] maksymalne legalne wychylenie pulsu: ${amplitude.toFixed(4)} j. = ${px(amplitude).toFixed(3)} px` +
+        ` (spoczynek ${restingRadius.toFixed(4)}, sufit komórki ${maxRingRadius.toFixed(4)}, próg widoczności ${MIN_VISIBLE_PX} px)`,
+    );
+  });
+
+  it('24. [NIEZMIENNIK] `update` bez wychylenia daje macierze IDENTYCZNE co do bitu jak przed Zadaniem 5', () => {
+    // Puls jest opcją bramki, nie zmianą produktu. Gdyby domyślna ścieżka choć o bit różniła
+    // się od poprzedniej, Zadanie 5 po cichu zmieniłoby wygląd gry — a wszystkie pomiary
+    // pasów obręczy z Zadania 3 przestałyby opisywać to, co jest na ekranie.
+    const layer = createBuildingLayer(planet, geo);
+    const list = emptyBuildings();
+    ALL_TYPES.forEach((type, k) => place(list, 100 + k * 7, type, { powered: false }));
+
+    layer.update(list);
+    const implicit = Array.from(layer.alert.instanceMatrix.array);
+    layer.update(list, 0);
+    const explicitZero = Array.from(layer.alert.instanceMatrix.array);
+    expect(explicitZero).toEqual(implicit);
+
+    // Kontrola pozytywna na sam pomiar: niezerowe wychylenie te macierze ZMIENIA — inaczej
+    // „identyczne" byłoby prawdą dla implementacji, która ignoruje argument w ogóle.
+    layer.update(list, planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR);
+    expect(Array.from(layer.alert.instanceMatrix.array)).not.toEqual(implicit);
     layer.dispose();
   });
 });

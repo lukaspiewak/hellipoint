@@ -12,6 +12,7 @@ import {
   writeUnitRimColor,
   INITIAL_UNIT_CAPACITY,
   UNIT_BAND_SHADE,
+  UNIT_BAND_SHADE_LEGAL,
   UNIT_CORE_COLOR_COOL,
   UNIT_CORE_COLOR_HOT,
   UNIT_CORE_LIFT_FACTOR,
@@ -952,6 +953,75 @@ describe('Krok 3: cieniowanie jednostki światłem', () => {
     expect(instanceColorAt(layer.core, 0)).toEqual(flatColor);
     layer.update([unit('SWARM', 1)], light); // komórka 1 jest ciemna
     expect(instanceColorAt(layer.core, 0)[0]).toBeLessThan(flatColor[0]);
+    layer.dispose();
+  });
+
+  it('22. [PARA MUTACJI] wariant LEGALNY (0,8464) mieści się w budżecie kontrastu, a 0,8463 już NIE — i warstwa go faktycznie stosuje', () => {
+    // Pytanie 4 bramki Zadania 5 pokazuje człowiekowi jednostkę przyciemnioną czynnikiem
+    // **0,8464**, bo drugie ogniwo argumentu Zadania 4 („łagodnego cieniowania gładkiego i
+    // tak nie widać") zostało oparte na obserwacji przy 0,55, czyli przy zmianie rdzenia o
+    // 59/255 — a legalne maksimum zmienia go o 18/255 i tego nikt nie obejrzał.
+    //
+    // Ten test pilnuje JEDNEJ rzeczy: że liczba pokazywana człowiekowi naprawdę leży w
+    // budżecie 3:1, a nie o włos poniżej. Granica jest KRESEM DOLNYM, nie osiągalnym
+    // minimum — `passesAt(0,846334)` jest fałszem — więc pokazanie 0,8463 pokazywałoby
+    // wariant POZA budżetem, którego ma dowodzić.
+    const buffer = new Float32Array(3);
+    const passesAt = (shade: number): boolean =>
+      BACKGROUNDS.every(([, background]) => {
+        let worst = Infinity;
+        for (let i = 0; i <= 20; i++) {
+          writeUnitRimColor(shade, buffer, 0);
+          const rim: Rgb = [buffer[0], buffer[1], buffer[2]];
+          writeUnitCoreColor(i / 20, shade, buffer, 0);
+          const core: Rgb = [buffer[0], buffer[1], buffer[2]];
+          worst = Math.min(worst, Math.max(contrast(rim, background), contrast(core, background)));
+        }
+        return worst >= WCAG_MIN;
+      });
+
+    // PARA TUŻ PRZY GRANICY, obie połówki. „Ma przejść" jest tu ważniejsza: to ona łapie
+    // pomyłkę o jedną cyfrę w drugą stronę (przepisanie granicy 0,846334 jako wartości).
+    expect(passesAt(0.8464), '0,8464 musi MIEŚCIĆ SIĘ w budżecie 3:1').toBe(true);
+    expect(passesAt(0.8463), '0,8463 musi WYPAŚĆ poza budżet 3:1').toBe(false);
+    expect(passesAt(0.846334), 'sama wypisana granica leży PONIŻEJ progu').toBe(false);
+
+    // WŁASNOŚĆ, nie kotwica na dzisiejszą liczbę: czynnik wariantu legalnego ma być
+    // NAJMNIEJSZYM, który jeszcze przechodzi — bo pytanie 4 bramki ma pokazać człowiekowi
+    // MAKSYMALNE legalne przyciemnienie, a nie dowolne legalne. Sprawdzane minimalnością przy
+    // rozdzielczości czterech cyfr, więc przechodzi dla każdej poprawnie dobranej stałej i
+    // oblewa zarówno dla 0,8463 (poza budżetem), jak i dla 0,8465 (legalne, ale nie maksymalne).
+    const legal = Math.min(...UNIT_BAND_SHADE_LEGAL);
+    expect(passesAt(legal), 'wariant legalny NIE mieści się w budżecie').toBe(true);
+    expect(passesAt(legal - 0.0001), 'istnieje MNIEJSZY czynnik, który też przechodzi').toBe(false);
+    // Kontrola pozytywna na sam przyrząd: wariant Zadania 4 budżetu NIE spełnia — czyli
+    // `passesAt` nie jest funkcją, która zawsze mówi „tak".
+    expect(passesAt(Math.min(...UNIT_BAND_SHADE))).toBe(false);
+
+    // ...i warstwa faktycznie liczy barwy TYMI czynnikami, a nie stałą modułu: barwa rdzenia
+    // na paśmie NOCY (czynnik `bands[0]`) musi wyjść dokładnie `flat × 0,8464`.
+    const layer = createUnitLayer(planet);
+    const light = darkField(); // komórka 0 ciemna ⇒ pasmo 0
+    layer.update([unit('SWARM', 0)], light);
+    const flatColor = instanceColorAt(layer.core, 0);
+    expect(layer.shadingBands()).toEqual([...UNIT_BAND_SHADE]);
+
+    layer.setShadingBands(UNIT_BAND_SHADE_LEGAL);
+    layer.setShadingMode('threshold');
+    layer.update([unit('SWARM', 0)], light);
+    const legalColor = instanceColorAt(layer.core, 0);
+    for (let k = 0; k < 3; k++) {
+      expect(legalColor[k]).toBeCloseTo(flatColor[k] * 0.8464, 5);
+    }
+    // Kontrola pozytywna: podmiana czynników NAPRAWDĘ coś zmienia (inaczej równość wyżej
+    // byłaby prawdziwa dla czynnika 1,0 i test nie mierzyłby niczego).
+    expect(legalColor[0]).toBeLessThan(flatColor[0]);
+
+    // Strażnik kształtu tablicy: zła długość dałaby po cichu `undefined`, czyli barwę `NaN`
+    // na najwyższym paśmie; czynnik 0 — jednostkę zgaszoną do czerni.
+    expect(() => layer.setShadingBands([0.9, 1.0])).toThrow(RangeError);
+    expect(() => layer.setShadingBands([0, 0.9, 1.0])).toThrow(RangeError);
+    expect(() => layer.setShadingBands([0.9, 1.0, 1.2])).toThrow(RangeError);
     layer.dispose();
   });
 });

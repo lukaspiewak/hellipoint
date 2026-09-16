@@ -280,6 +280,28 @@ const UNIT_SIDES = 16; // [WYGLĄD]
 export const UNIT_BAND_SHADE: readonly number[] = [0.55, 0.78, 1.0]; // [WYGLĄD]
 
 /**
+ * `[WYGLĄD]` Czynniki jasności w wariancie **LEGALNYM** — największe przyciemnienie, jakie
+ * mieści się w budżecie kontrastu 3:1 wobec każdego tła. Materiał do pytania 4 bramki
+ * Zadania 5, NIEUŻYWANY w trybie domyślnym (`'flat'`).
+ *
+ * Powód istnienia: drugie ogniwo argumentu Zadania 4 — „łagodnego cieniowania gładkiego i
+ * tak nie widać" — **nie zostało obejrzane w granicach legalnych**. Obserwacja wzrokowa, na
+ * której je oparto, była przy czynniku 0,55, czyli przy zmianie rdzenia o **59/255** w sRGB;
+ * maksymalne legalne przyciemnienie zmienia rdzeń o **18/255**, a tego nie widział nikt.
+ * Bramka Zadania 5 pokazuje człowiekowi DOKŁADNIE ten wariant.
+ *
+ * **0,8464, nie 0,8463 ani 0,846334.** Granica wyliczona bisekcją (test 17) to kres DOLNY,
+ * nie osiągalne minimum: `passesAt` zwraca `false` dla samej liczby 0,846334 i `true` dopiero
+ * od 0,8464. Czynnik ustawiony na wypisanej granicy leżałby o włos PONIŻEJ progu 3:1, czyli
+ * poza budżetem, którego ma dowodzić. Parę „tuż przed / tuż za" przypina test 22.
+ *
+ * Środkowa pozycja to średnia arytmetyczna skrajnych — pasmo zmierzchu nie ma własnego
+ * wymogu, a rampa równomierna jest jedynym wyborem, który nie wprowadza trzeciej liczby do
+ * uzasadnienia.
+ */
+export const UNIT_BAND_SHADE_LEGAL: readonly number[] = [0.8464, 0.9232, 1.0]; // [WYGLĄD]
+
+/**
  * `[WYGLĄD]` Pojemność początkowa buforów instancji — liczba jednostek, które warstwa
  * rysuje bez ani jednej alokacji.
  *
@@ -351,14 +373,40 @@ export type UnitShadingMode = 'flat' | 'threshold' | 'smooth';
  * Czynnik jasności, przez który mnożone są OBA tony jednostki. Funkcja czysta — to jest
  * całe rozstrzygane Krokiem 3 pytanie, sprowadzone do jednej liczby, żeby dało się je
  * zmierzyć (test 17), a nie tylko obejrzeć.
+ *
+ * `bands` jest parametrem, a nie odczytem stałej modułu, WYŁĄCZNIE po to, żeby bramka
+ * Zadania 5 mogła pokazać wariant legalny (`UNIT_BAND_SHADE_LEGAL`) obok tego, na którym
+ * stanął werdykt Zadania 4. Domyślna wartość jest tą samą stałą co wcześniej, więc każde
+ * istniejące wywołanie znaczy dokładnie to samo, co znaczyło.
  */
-export function unitShade(mode: UnitShadingMode, light: number): number {
+export function unitShade(mode: UnitShadingMode, light: number, bands: readonly number[] = UNIT_BAND_SHADE): number {
   if (mode === 'flat') return 1;
-  if (mode === 'threshold') return UNIT_BAND_SHADE[lightBand(light)];
-  const first = UNIT_BAND_SHADE[0];
-  const last = UNIT_BAND_SHADE[UNIT_BAND_SHADE.length - 1];
+  if (mode === 'threshold') return bands[lightBand(light)];
+  const first = bands[0];
+  const last = bands[bands.length - 1];
   const t = light < 0 ? 0 : light > 1 ? 1 : light;
   return first + (last - first) * t;
+}
+
+/**
+ * Sprawdza, że tablica czynników jasności ma tyle pozycji, ile pasm, i że każda leży w
+ * `(0, 1]`. Wywoływana przy KONSTRUKCJI i przy podmianie — nie w pętli renderu.
+ *
+ * @throws {RangeError} — czynnik 0 dałby jednostkę zgaszoną do czerni (czyli niewidoczną na
+ *   nocy), czynnik > 1 rozjaśniłby ją ponad zadeklarowane barwy, a zła długość tablicy
+ *   dałaby po cichu `undefined`, czyli barwę `NaN` na najwyższym paśmie.
+ */
+function validateShadingBands(bands: readonly number[], where: string): void {
+  if (bands.length !== LIGHT_BANDS.length + 1) {
+    throw new RangeError(
+      `${where}: bands.length (${bands.length}) must equal LIGHT_BANDS.length + 1 (${LIGHT_BANDS.length + 1})`,
+    );
+  }
+  for (let i = 0; i < bands.length; i++) {
+    if (!(bands[i] > 0 && bands[i] <= 1)) {
+      throw new RangeError(`${where}: bands[${i}] is ${bands[i]} — every factor must lie in (0, 1]`);
+    }
+  }
 }
 
 /**
@@ -397,6 +445,9 @@ export interface UnitLayer {
   readonly capacity: number;
   shadingMode(): UnitShadingMode;
   setShadingMode(mode: UnitShadingMode): void;
+  /** Czynniki jasności pasm — patrz `UNIT_BAND_SHADE` / `UNIT_BAND_SHADE_LEGAL`. Kopia. */
+  shadingBands(): readonly number[];
+  setShadingBands(bands: readonly number[]): void;
   /**
    * Przepisuje macierze i barwy instancji z bieżącego `SimState.units`. Bezpieczne do
    * wołania co klatkę: NIC nie alokuje (test 13) i NICZEGO nie mutuje w wejściu (test 10).
@@ -420,11 +471,8 @@ export function createUnitLayer(planet: Planet): UnitLayer {
   // miejscu cyklu życia: przy konstrukcji, nie w pętli renderu. Bez niego
   // `UNIT_BAND_SHADE[lightBand(...)]` po dołożeniu progu w Fazie 4 dawałoby po cichu
   // `undefined`, czyli barwę `NaN` i niewidzialne jednostki na najwyższym paśmie.
-  if (UNIT_BAND_SHADE.length !== LIGHT_BANDS.length + 1) {
-    throw new RangeError(
-      `createUnitLayer: UNIT_BAND_SHADE.length (${UNIT_BAND_SHADE.length}) must equal LIGHT_BANDS.length + 1 (${LIGHT_BANDS.length + 1})`,
-    );
-  }
+  validateShadingBands(UNIT_BAND_SHADE, 'createUnitLayer (UNIT_BAND_SHADE)');
+  validateShadingBands(UNIT_BAND_SHADE_LEGAL, 'createUnitLayer (UNIT_BAND_SHADE_LEGAL)');
   const cellCount = planet.cells.length;
   const baseRadius = planet.radius * UNIT_RADIUS_FACTOR;
   const rimWidth = planet.radius * UNIT_RIM_FACTOR;
@@ -507,6 +555,7 @@ export function createUnitLayer(planet: Planet): UnitLayer {
   rebuild(INITIAL_UNIT_CAPACITY);
 
   let mode: UnitShadingMode = 'flat';
+  let bands: readonly number[] = UNIT_BAND_SHADE;
 
   /**
    * Parametry `writeInstance`, przekazywane przez ZAALOKOWANY RAZ bufor, a nie argumentami:
@@ -567,6 +616,12 @@ export function createUnitLayer(planet: Planet): UnitLayer {
     shadingMode: (): UnitShadingMode => mode,
     setShadingMode(next: UnitShadingMode): void {
       mode = next;
+    },
+
+    shadingBands: (): readonly number[] => bands.slice(),
+    setShadingBands(next: readonly number[]): void {
+      validateShadingBands(next, 'UnitLayer.setShadingBands');
+      bands = next.slice();
     },
 
     update(units: readonly Unit[], light: Float32Array): void {
@@ -668,7 +723,7 @@ export function createUnitLayer(planet: Planet): UnitLayer {
         params[10] = length + coreLift;
         writeInstance(coreMatrices, i);
 
-        const shade = unitShade(mode, light[cellId]);
+        const shade = unitShade(mode, light[cellId], bands);
         writeUnitRimColor(shade, bodyColors, i * 3);
         writeUnitCoreColor(fraction, shade, coreColors, i * 3);
       }

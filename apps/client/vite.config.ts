@@ -23,6 +23,9 @@ export default defineConfig({
       input: {
         main: resolve(rootDir, 'index.html'),
         gate: resolve(rootDir, 'gate.html'),
+        // Faza 2B, Zadanie 5: bramka PEŁNEGO OBRAZU — osobna strona, bo bramka terenowa
+        // (`gate.html`) zostaje nietknięta jako instrument mierzący sam teren.
+        sceneGate: resolve(rootDir, 'scene-gate.html'),
       },
     },
   },

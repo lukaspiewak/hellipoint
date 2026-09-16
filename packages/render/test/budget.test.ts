@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
+import { Matrix4 } from 'three';
 import { describeGcWindows, gcNoiseLimit, measureGcWindows } from './support/gcWindows.js';
-import { createPlanet, lightField, sunDirection } from '@heliopolis/sim';
+import {
+  BUILDINGS,
+  createPlanet,
+  ENEMIES,
+  lightField,
+  sunDirection,
+  type Building,
+  type EnemyType,
+  type Unit,
+} from '@heliopolis/sim';
 import { buildPlanetGeometry } from '../src/geometry.js';
 import { buildCellOutlines, createPlanetMesh } from '../src/planetMesh.js';
+import { createBuildingLayer } from '../src/buildingMesh.js';
+import { createUnitLayer } from '../src/unitMesh.js';
 import { DEFAULT_PALETTE, writeCellColors } from '../src/shading.js';
 import { median, percentile } from '../src/frameStats.js';
 
@@ -256,5 +268,164 @@ describe('PlanetMesh.updateColors — cała ścieżka klatki, po dołożeniu kra
     expect(sink).not.toBe(0);
 
     planetMesh.dispose();
+  });
+});
+
+/**
+ * Faza 2B, Zadanie 5, Krok 3: **CAŁA praca per klatka przy pełnej scenie** — teren plus krata
+ * (`PlanetMesh.updateColors`) plus budynki plus jednostki, przy szczycie zmierzonym w Fazie 1C.
+ *
+ * ## Co ten test mierzy, a czego NIE mierzy
+ *
+ * Mierzy CPU: przepisanie wszystkich buforów, które pętla renderu przepisuje 60 razy na
+ * sekundę. NIE mierzy `renderer.render()` — tego nie da się zmierzyć w Node bez prawdziwego
+ * WebGL (patrz `scene.ts`/`createSceneWithRenderer`), i dlatego liczba z budżetu 8 ms
+ * odczytuje się z HUD na żywym płótnie (`apps/client/scene-gate.html`), a nie stąd. Ten test
+ * pilnuje WŁASNOŚCI, której HUD nie umie zobaczyć: że przy 481 jednostkach **ani jedna z
+ * trzech warstw nie alokuje w pętli renderu**.
+ *
+ * Trzy warstwy razem, nie każda osobno: `buildingMesh.test.ts` (test 16) i `unitMesh.test.ts`
+ * (test 13) mierzą swoje warstwy w izolacji, więc alokacja w SKLEJCE — a to ona jest nowa w
+ * tym zadaniu — przechodziłaby przez oba.
+ *
+ * ## ROZDZIELCZOŚĆ TEGO POMIARU, zmierzona i zapisana, a nie przemilczana
+ *
+ * Szum tła `GCProfiler` rośnie z DŁUGOŚCIĄ okna (to cykle odśmiecania całego procesu, a
+ * vitest uruchamia pliki równolegle), a sygnał defektu rośnie z LICZBĄ ALOKACJI. Przy 481
+ * jednostkach oba rosną podobnie, więc ten konkretny pomiar ma skończoną czułość i warto
+ * wiedzieć jaką. Zmierzone parą mutacji na tej maszynie (okno ok. 250 ms):
+ *
+ *   | wariant                                          | mierzone | sufit szumu | próg | wynik |
+ *   |--------------------------------------------------|----------|-------------|------|-------|
+ *   | czysto                                           | 0-1      | 6-14        | 7-15 | przechodzi |
+ *   | kontrola: +2071 `Matrix4` na klatkę               | 37-43    | 7-14        | 8-15 | **wykryte** |
+ *   | `Float64Array(64)` na JEDNOSTKĘ (481/kl.)         | ponad próg | —         | —    | **wykryte** |
+ *   | `Math.sqrt` → `Math.hypot` w jednostkach (481/kl.)| 6-7      | 7           | 8    | **NIE wykryte** |
+ *   | jedna krótkotrwała tablica na budynek (148/kl.)   | 0-1      | 6-14        | 7-15 | nie alokuje (patrz niżej) |
+ *
+ * Dwa różne powody, dla których dwa ostatnie wiersze wyglądają podobnie, i tylko jeden z
+ * nich jest ograniczeniem tego testu:
+ *
+ * (Zakresy, nie pojedyncze liczby: szum tła zależy od tego, ile innych plików testowych biegnie
+ * w tej samej chwili — mierzone i przy pojedynczym pliku, i przy pełnym pakiecie. Próg idzie
+ * razem z szumem, więc margines czysto ↔ kontrola zostaje w obu przypadkach.)
+ *
+ * 1. **`Math.hypot` przy 481 jednostkach leży poniżej progu i to JEST granica czułości** —
+ *    granica po WIELKOŚCI alokacji, nie po tym, że jest „na jednostkę": wiersz wyżej pokazuje,
+ *    że alokacja na jednostkę JEST wykrywana, gdy jest większa. Tablica `rest` z `Math.hypot`
+ *    ma trzy elementy, więc 481 takich na klatkę daje sygnał porównywalny z szumem tła
+ *    procesu. Łapie ją test 13 w `unitMesh.test.ts`, który mierzy przy PEŁNEJ pojemności
+ *    bufora (2048 jednostek), czyli przy czterokrotnie gęstszej alokacji. Populacji 481 nie
+ *    wolno tu podnosić dla wygody pomiaru — to liczba z briefu (szczyt Fazy 1C) — więc
+ *    granica zostaje zapisana.
+ * 2. **Krótkotrwała tablica na budynek to NIE jest alokacja** — V8 usuwa ją analizą
+ *    ucieczki, bo nie opuszcza ramki wywołania. Brak wykrycia jest tu POPRAWNY: pomiar
+ *    mierzy alokacje, które faktycznie zachodzą, a ta nie zachodzi. (Dlatego kontrola tego
+ *    testu używa `Matrix4`, który ucieczkę przeżywa — patrz `allocatingFrame`.)
+ */
+describe('pełna scena — praca per klatka przy 481 jednostkach (Faza 2B, Zadanie 5, Krok 3)', () => {
+  it('nie alokuje NICZEGO: 2000 klatek pełnej sceny nie wychodzi ponad podłogę szumu odśmiecania', () => {
+    const planet = createPlanet({ seed: 20260915 });
+    const geo = buildPlanetGeometry(planet);
+    const light = lightField(planet, sunDirection(0, 180));
+    const planetMesh = createPlanetMesh(geo);
+    const buildings = createBuildingLayer(planet, geo);
+    const units = createUnitLayer(planet);
+
+    // Szczyt z Fazy 1C: 481 ŻYWYCH jednostek. Liczba przypięta, bo to ona jest budżetem —
+    // pomiar przy dowolnej innej nie odpowiadałby na pytanie Kroku 3.
+    const UNIT_COUNT = 481;
+    const TYPES: readonly EnemyType[] = ['SWARM', 'DISRUPTOR', 'ARMOR'];
+    const unitList: Unit[] = Array.from({ length: UNIT_COUNT }, (_, i) => {
+      const type = TYPES[i % TYPES.length];
+      const cellId = (i * 3) % planet.cells.length;
+      const center = planet.cells[cellId].center;
+      return {
+        id: i + 1,
+        type,
+        cellId,
+        pos: { x: center.x, y: center.y, z: center.z },
+        hp: ENEMIES[type].hp,
+        exposure: (ENEMIES[type].burnTime * (i % 7)) / 6,
+      };
+    });
+
+    // „Kilkadziesiąt budynków" z briefu — tu 148, czyli dokładnie tyle, ile stawia podgląd
+    // bramki pełnego obrazu (`apps/client/src/sceneGate.ts`), żeby obie liczby opisywały
+    // TĘ SAMĄ scenę.
+    const buildingList: (Building | null)[] = new Array<Building | null>(planet.cells.length).fill(null);
+    let placed = 0;
+    for (let cellId = 0; cellId < planet.cells.length && placed < 148; cellId += 9) {
+      buildingList[cellId] = {
+        cellId,
+        type: 'KINETIC_TURRET',
+        hp: BUILDINGS.KINETIC_TURRET.hp * (0.1 + (placed % 10) / 10),
+        powered: placed % 4 !== 0,
+      };
+      placed++;
+    }
+    expect(placed).toBe(148);
+
+    let sink = 0;
+    const ITERATIONS = 2000;
+    const frame = (): void => {
+      planetMesh.updateColors(light);
+      buildings.update(buildingList);
+      units.update(unitList, light);
+    };
+    /**
+     * Kontrola: DOKŁADNIE ta sama klatka plus JEDNA macierz na rysowany obiekt — ten sam
+     * kształt kontroli, co w `unitMesh.test.ts` (test 13) i `buildingMesh.test.ts` (test 16),
+     * żeby dało się zestawić liczby z trzech plików. To jest realny błąd (`new Matrix4()` w
+     * pętli przepisywania instancji), nie abstrakcyjna alokacja.
+     */
+    const ELEMENTS_PER_FRAME = planet.cells.length + UNIT_COUNT + 148;
+    const allocatingFrame = (): number => {
+      frame();
+      let acc = 0;
+      for (let i = 0; i < ELEMENTS_PER_FRAME; i++) acc += new Matrix4().elements[0];
+      return acc; // ucieczka wyniku — inaczej V8 ma prawo usunąć alokację w całości
+    };
+    for (let i = 0; i < 120; i++) {
+      frame();
+      sink += allocatingFrame();
+    }
+
+    const windows = measureGcWindows({
+      empty: () => {
+        for (let i = 0; i < ITERATIONS; i++) sink += i;
+      },
+      measured: () => {
+        for (let i = 0; i < ITERATIONS; i++) frame();
+      },
+      control: () => {
+        for (let i = 0; i < ITERATIONS; i++) sink += allocatingFrame();
+      },
+    });
+
+    console.log(
+      `[BUDGET] cykle GC na ${ITERATIONS} klatek PEŁNEJ SCENY (${UNIT_COUNT} jednostek, ${placed} budynków, ${planet.cells.length} komórek), ` +
+        `kontrola +${ELEMENTS_PER_FRAME} Matrix4/klatkę — ${describeGcWindows(windows)}`,
+    );
+
+    // Ten sam kształt trzech asercji co wyżej — uzasadnienie w `support/gcWindows.ts`.
+    expect(Math.min(...windows.empty), 'przyrząd nie potrafi zwrócić zera').toBe(0);
+    expect(Math.min(...windows.control), 'kontrola alokująca nie odstaje od szumu tła').toBeGreaterThan(
+      Math.max(...windows.idle),
+    );
+    expect(Math.max(...windows.measured), 'pełna scena alokuje w pętli renderu').toBeLessThanOrEqual(
+      gcNoiseLimit(windows),
+    );
+    expect(sink).not.toBe(0);
+
+    // Kontrola pozytywna na sam pomiar: warstwy FAKTYCZNIE narysowały to, co miały —
+    // pomiar „zero alokacji" na warstwie rysującej zero instancji nic by nie znaczył.
+    expect(units.body.count).toBe(UNIT_COUNT);
+    expect(buildings.shell.count).toBe(placed);
+    expect(buildings.alert.count).toBeGreaterThan(0);
+
+    planetMesh.dispose();
+    buildings.dispose();
+    units.dispose();
   });
 });

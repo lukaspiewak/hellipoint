@@ -745,3 +745,235 @@ się nie zmienia: test porównujący wyjście z wyjściem tej samej funkcji jest
 ### 12.9 Stan po zadaniu
 
 `530 testów w 37 plikach`, `pnpm typecheck` czysty, `pnpm test` zielony. Commit `fa1ff80`.
+
+---
+
+## 13. Zadanie 5 — bramka PEŁNEGO OBRAZU i uszczelnienie kontroli
+
+Zadanie 5 bada scenę, którą gracz naprawdę zobaczy: **teren + krata + budynki + jednostki,
+razem**. Bramka z Zadań 1-2 (`/gate.html`) bada SAM TEREN i **zostaje nietknięta** — to ona
+jest instrumentem, którym zmierzono 15/15 z §6, i nie wolno jej podmienić pod tamtym wynikiem.
+Pełna scena dostaje **osobny przebieg** na osobnej stronie (`/scene-gate.html`), i to jest
+świadome rozstrzygnięcie sporu z Zadań 3 i 4: pole jednostek rysuje granicę dnia i nocy
+NIEZALEŻNIE od terenu (jednostka pali się albo nie), więc w bramce terenowej byłoby wprost
+podpowiedzią.
+
+**Kontrola pozytywna nadal potrafi oblać także w pełnej scenie**, i nie przez przypadek: obie
+nowe warstwy są DZIEĆMI siatki terenu, a `visible` w Three.js jest dziedziczne, więc tryb
+kontrolny gasi je razem z planetą. W kontroli widać dokładnie to samo, co w bramce terenowej —
+gładką kulę i pierścień. Pilnuje tego test 33b, przypinający liczby dla OBU konfiguracji;
+test 33 (konfiguracja terenowa) został nietknięty.
+
+### 13.1 Krok 1: uszczelnienie kontroli — kamera nie celuje już w pytaną komórkę
+
+**Naprawiony przeciek** (zgłoszony w §12.6, świadomie nienaprawiony w Zadaniu 2): `setupTrial`
+celował kamerą wzdłuż normalnej pytanej komórki, więc komórka zawsze lądowała na środku tarczy,
+a w trybie kontrolnym jasność jest monotoniczną, nieprzyciętą funkcją `dot(normal, sunDir)` —
+czyli bezwzględna jasność środka, czytana zawsze w tym samym miejscu ekranu i przy tej samej
+geometrii, była częściową wskazówką.
+
+Kamera celuje teraz w punkt odchylony o **zasiany, pseudolosowy kąt z zakresu 14°–34°**
+(`buildCameraOffsets`, ziarno `0x4f464653`). Dwie własności są wymogiem, nie szczegółem, i obie
+mają testy:
+
+- **ten sam offset dla odpowiadającej próby w KAŻDYM trybie** — offsety są indeksowane NUMEREM
+  PRÓBY, nie komórką; asymetria protokołu między trybami sama byłaby confoundem;
+- **komórka nadal jednoznacznie wskazana** — znacznik unosi się teraz W STRONĘ KAMERY, a nie
+  wzdłuż normalnej, więc jego paralaksa wynosi **zero z konstrukcji**, niezależnie od kąta.
+
+Uniesienie wzdłuż normalnej (0,012 promienia, wartość sprzed tego zadania) przy odchyleniu 24°
+daje **ujemny zapas głębokości**, czyli obręcz przyciętą przez teren — zmierzone i przypięte
+jako kontrola pozytywna testu 5b. Dzisiejsza obręcz jest cała do ok. **49°** kąta patrzenia
+(15° swobodnego doorbitowania ponad najdalszą próbę); dociągnięcie tego do limbu (70,5°)
+wymagałoby uniesienia ok. 25 jednostek, czyli znacznika puchnącego o połowę przy maksymalnym
+przybliżeniu. Zapisane jako granica, nie naprawiane.
+
+### 13.2 Kontrola PRZED i PO uszczelnieniu — dwa różne instrumenty, trzy liczby
+
+| przebieg | kto / czym | wynik | wzorzec odpowiedzi |
+|---|---|---|---|
+| kontrola PRZED, runda 0 Zadania 2 | **wykonawca Zadania 2** (agent) | **12/15** | — |
+| kontrola PRZED, §7.3 | **właściciel projektu** (oko) | 8/15 | stała „oświetlona" ×15 |
+| **kontrola PRZED, ten sam instrument co niżej** | **wykonawca Zadania 5** (agent, ocena z obrazu) | **8/15** | stała „oświetlona" ×15 |
+| **kontrola PO uszczelnieniu** | **wykonawca Zadania 5** (agent, ocena z obrazu) | **8/15** | stała „oświetlona" ×15 |
+
+Pomiar „przed" wykonawcy Zadania 5 zrobiony **tym samym przyrządem i tą samą metodą** co
+„po" — jedyną zmianą było tymczasowe wyzerowanie `CAMERA_OFFSET_MIN/MAX_DEGREES` (odtworzenie
+zachowania sprzed zadania), przebudowa pakietu i przeładowanie strony. Obie tabele są w
+raporcie zadania.
+
+**Co z tego wynika, a co nie:**
+
+- **8/15 to DOKŁADNIE podłoga stałej odpowiedzi** (plan jest zrównoważony 8/7), a wzorzec był
+  w obu przebiegach ten sam: piętnaście razy „oświetlona". Czyli dla oceniającego WZROKOWO
+  kontrola była na poziomie zgadywania **już przed uszczelnieniem** — i została na nim po.
+  Uszczelnienie niczego nie zepsuło i niczego nie musiało naprawiać dla tego obserwatora.
+- **12/15 wykonawcy Zadania 2 nie jest tą samą wielkością.** Ta faza ustaliła już raz, że
+  „agent czytający piksele i człowiek patrzący na ekran to dwa różne instrumenty" (§12.6), i
+  ten pomiar dokłada do tego trzecią obserwację: **ten sam agent, oceniając z obrazu tak jak
+  oko, dostał 8/15 w konfiguracji, w której inny agent dostał 12/15.** Przeciek był więc
+  realny na poziomie PIKSELI (jasność pod pierścieniem jest funkcją `dot`, i to niezależnie od
+  uszczelnienia), ale nie na poziomie tego, co da się z obrazu odczytać wzrokiem.
+- **Dlatego uszczelnienie zostaje mimo zerowej różnicy w liczbie.** Usuwa mechanizm opisany w
+  §12.6 (stabilna kalibracja: stała pozycja ekranowa, stała geometria, symetryczny zakres
+  tarczy), a nie liczbę. Bramka ma orzekać czystym instrumentem niezależnie od tego, czy akurat
+  ktoś potrafił z brudnego skorzystać.
+- **Kontrola po uszczelnieniu NIE daje istotnie więcej niż przypadek.** Nie ma więc ustalenia
+  „gładkie cieniowanie niesie więcej informacji, niż zmierzyła Faza 0".
+
+### 13.3 Protokół bramki pełnego obrazu
+
+1. Z `apps/client`: `npx vite` (port **5180**, `strictPort`; jeśli zajęty — serwer już stoi).
+2. Otwórz **`http://localhost:5180/scene-gate.html`**. (`/gate.html` to bramka TERENOWA,
+   `/` to normalny widok gry.)
+3. Strona ma **dwie fazy**:
+   - **PRÓBY** (pytanie 1): scena ZAMROŻONA w fazie słońca bieżącej próby, pierścień na jednej
+     komórce, piętnaście osądów. Zamrożona celowo: jedyną rzeczą, która ma się różnić wobec
+     bramki terenowej, jest obecność pełnej sceny.
+   - **SWOBODNY** (pytania 2-5): słońce orbituje, jednostki idą i płoną, pierścień ukryty.
+     Przełącznik cieniowania jednostek (klawisze 1-4), przełącznik pulsu alarmu, przełącznik
+     zatrzymania słońca (do porównań na tym samym tle).
+4. **Oceniaj z widoku całej tarczy** (ten sam punkt protokołu co §5.5) oraz z bliska.
+5. Panel składa gotowy blok Markdown — wklej go do §13.6.
+
+**Komórki, o które bramka pyta (45 sztuk, trzy plany), są wolne od budynków i jednostek.** To
+decyzja protokolarna, nie ułatwienie: obiekt stojący DOKŁADNIE na pytanej komórce zasłania to,
+o co pytanie dotyczy, czyli czyni je nieodpowiadalnym, a nie trudniejszym. **Sąsiedzi pytanych
+komórek NIE są czyszczeni.**
+
+**Znana niedogodność:** przy mocnym przybliżeniu pytana komórka potrafi wyjść poza kadr, bo
+kamera celuje OBOK niej (Krok 1). Cofnij zoom. Skrót „wróć do zaznaczonej komórki" to Faza 2C
+(`camera.focusOn` już istnieje, hotkey jeszcze nie).
+
+### 13.4 Przebieg wykonawcy — SPRAWDZENIE PRZYRZĄDU, NIE WERDYKT
+
+Wykonawca przeszedł bramkę sam, żeby sprawdzić, że przyrząd działa i że pełna scena nie psuje
+odpowiedzi. **To nie jest werdykt na D1 i nie wolno go tak czytać** — pięciu pytań rozstrzyga
+człowiek patrzący na ekran.
+
+| przebieg | wynik | podłoga zgadywania |
+|---|---|---|
+| **pełna scena, tryb progowany (oceniany), z widoku całej tarczy** | **15/15** | 50% |
+| kontrola pozytywna PO uszczelnieniu | 8/15 (stała odpowiedź) | 50% |
+| kontrola pozytywna PRZED uszczelnieniem (ta sama metoda) | 8/15 (stała odpowiedź) | 50% |
+
+Tryb progowany: **te same piętnaście komórek i te same piętnaście odpowiedzi, co w tabeli §6**
+(97, 215, 933, 1169, 11, 95, 96, 426, 282, 875, 4, 3, 243, 988, 757). **Żadna próba nie stała
+się trudniejsza po dołożeniu kraty, budynków i jednostek** — w przebiegu wykonawcy.
+
+**Ograniczenie tego przebiegu, zapisane wprost:** wykonawca czytał §6 tego dokumentu PRZED
+przebiegiem, a maska jasna/ciemna jest **wspólna dla wszystkich trzech planów** (ziarno
+`LIT_PATTERN_SEED` nie zależy od `offset`), więc znał sekwencję prawd. Zobowiązał się
+odpowiadać wyłącznie z obrazu i wynik 8/15 w obu kontrolach — z pięcioma błędami tam, gdzie
+znana sekwencja dawała poprawną odpowiedź — jest tego świadectwem, ale **nie dowodem**.
+Przebieg CZŁOWIEKA, który tej sekwencji nie zna, jest jedynym czystym pomiarem.
+
+### 13.5 Budżet klatki przy pełnej scenie (Krok 3)
+
+| co | wartość |
+|---|---|
+| **mediana renderu** | **0,800 ms** |
+| **p95 renderu** | **1,300 ms** |
+| budżet | 8 ms |
+| jednostek | **481** (szczyt zmierzony w Fazie 1C, utrzymywany dosypywaniem) |
+| budynków | 148 |
+| komórek | 1442 |
+| okno | n = 1000 klatek, wyłącznie z trybu swobodnego |
+| rusztowanie symulacji (POZA budżetem) | mediana 0,000 ms |
+| **maszyna** | **Apple M5 (Mac17,2), 10 rdzeni, macOS 26.6.2**, przeglądarka w panelu Browser |
+
+Dla porównania: 2A mierzyła 0,200 ms mediany przy samym terenie, Zadanie 2 — 0,50 ms / 0,855 ms
+po dołożeniu kraty. Pełna scena z 481 jednostkami i 148 budynkami mieści się w **10% budżetu**.
+
+Pierwsze klatki po starcie pokazują p95 rzędu 7-12 ms — to rozgrzewka shaderów, nie wydajność
+(ta sama uwaga co w §12.2). Odczyt brać dopiero przy n = 1000.
+
+Osobno, bez GPU: `budget.test.ts` mierzy CAŁĄ pracę CPU per klatka pełnej sceny (kolorowanie
+terenu i kraty + budynki + jednostki) i pilnuje, że **nie alokuje niczego**. Zmierzona
+rozdzielczość tego pomiaru jest zapisana w komentarzu testu, razem z mutacją, której NIE łapie.
+
+### 13.6 PIĘĆ PYTAŃ — CZEKA NA WŁAŚCICIELA PROJEKTU
+
+**To jest sekcja, której wykonawca nie wypełnia.** Wklej tu blok z panelu
+(`/scene-gate.html`, pole „Do wklejenia w dokument wyników").
+
+| # | pytanie | werdykt | uwagi |
+|---|---|---|---|
+| 1 | Czy terminator nadal jest czytelny przy pełnej scenie? | — | **regresja wobec 15/15 z §6 jest najgroźniejszym możliwym wynikiem tej fazy i ma zostać ZAPISANA, nie obejdzona** |
+| 2 | Czy widać, który budynek jest niezasilony, bez najeżdżania kursorem? | — | |
+| 3 | Czy widać, że jednostka się pali, zanim zginie? | — | |
+| 4 | Czy widać cieniowanie jednostki czynnikiem 0,8464? | — | jeśli NIE — argument Zadania 4 domyka się i `flat` zostaje bez zastrzeżeń; jeśli TAK — ustalenie do Fazy 4, nie powód do zmiany teraz |
+| 5 | Czy widać, że pierścień alarmu pulsuje? | — | jeśli NIE — pierścień zostaje bez pulsu; amplitudy NIE wolno podnosić ponad rozmiar komórki |
+
+#### Materiał, na którym te pytania stoją — zmierzony, nie oszacowany
+
+**Pytanie 4.** Wariant legalny to `UNIT_BAND_SHADE_LEGAL = [0,8464; 0,9232; 1,0]`. **0,8464, nie
+0,8463 ani 0,846334**: granica z bisekcji jest kresem DOLNYM, nie osiągalnym minimum. Test 22
+(`unitMesh.test.ts`) przypina parę tuż przy granicy — `passesAt(0,8464)` prawda,
+`passesAt(0,8463)` fałsz, `passesAt(0,846334)` fałsz — oraz MINIMALNOŚĆ (nie ma mniejszego
+czynnika przy rozdzielczości czterech cyfr, który też przechodzi). Czynnik 0,8464 zmienia rdzeń
+jednostki o **18/255 sRGB**; obserwacja, na której Zadanie 4 oparło wniosek, była przy 0,55,
+czyli przy **59/255**. Panel daje oba warianty obok siebie (klawisze 1-4), przy zatrzymanym
+słońcu.
+
+**Pytanie 5.** Puls wrócił do `BuildingLayer.update` jako opcjonalne, **domyślnie zerowe**
+wychylenie promienia (test 24 pilnuje, że domyślna ścieżka daje macierze identyczne co do bitu
+jak przed tym zadaniem). Maksymalna LEGALNA amplituda to **cały** pozostały zapas między
+pierścieniem (3,0300) a sufitem narzuconym rozmiarem komórki (3,1720):
+
+| co | wartość |
+|---|---|
+| amplituda `ALERT_PULSE_AMPLITUDE_FACTOR` | **0,13 jednostki** |
+| to samo w pikselach widoku domyślnego | **0,44 px** |
+| próg widoczności (§5.3 raportu Zadania 3) | 1 px |
+| szczyt pulsu | 3,1600 przy sufucie **3,1720** |
+| komórek z przekroczeniem na szczycie pulsu | **0 z 1442** (test 8) |
+
+Czyli: to nie jest amplituda dobrana tak, żeby puls było widać — to jest **maksimum tego, co w
+ogóle istnieje**. Sufitem jest rozmiar komórki, nie dobór wartości, i dokładnie tę różnicę
+pytanie 5 pokazuje. Amplituda większa o 0,0002 promienia oblewa test 8 (para mutacji w §13.7).
+
+### 13.7 Tabela mutacji — czym zabija się każdy nowy próg Zadania 5
+
+Dla każdego progu para: **tuż za granicą** (ma oblać) i **tuż przed** (ma przejść), obie blisko
+granicy. Baseline: 587 zielonych w 39 plikach.
+
+| # | złamana własność | mutacja | wynik |
+|---|---|---|---|
+| M1 | kamera nie celuje w pytaną komórkę | `CAMERA_OFFSET_MIN/MAX = 0` | **oblewa** 5c, 5d |
+| M1b | dolna granica odchylenia | `CAMERA_OFFSET_MIN = 13` (tuż za) | **oblewa** 5d |
+| M1c | — | `CAMERA_OFFSET_MIN = 14` (dziś, tuż przed) | przechodzi |
+| M2 | offset ten sam dla odpowiadającej próby w każdym trybie | indeks offsetu z `cellId` zamiast z numeru próby | **oblewa** 5c |
+| M3 | uniesienie znacznika | `MARKER_MIN_LIFT_FACTOR = 0,012` (wartość sprzed zadania) | **oblewa** 5b |
+| M3b | — | `0,035` (tuż przed) | przechodzi |
+| M3c | — | `0,030` (tuż za) | **oblewa** 5b |
+| M4 | zerowa paralaksa znacznika | uniesienie wzdłuż NORMALNEJ zamiast w stronę kamery | **oblewa** 5 |
+| M5 | wariant legalny mieści się w budżecie 3:1 | `UNIT_BAND_SHADE_LEGAL[0] = 0,8463` (tuż za) | **oblewa** 22 |
+| M5b | wariant legalny jest MAKSYMALNY | `0,8465` (legalne, ale nie maksymalne) | **oblewa** 22 |
+| M5c | warstwa faktycznie stosuje podane czynniki | `setShadingBands` ignoruje argument | **oblewa** 22 |
+| M6 | puls mieści się w komórce | `ALERT_PULSE_AMPLITUDE_FACTOR = 0,0015` (tuż za) | **oblewa** 8, 23 |
+| M6b | — | `0,0014` (tuż przed) | przechodzi |
+| M7 | puls domyślnie WYŁĄCZONY | domyślne `alertPulse` = maksimum | **oblewa** 23, 24 |
+| M8 | warstwy pełnej sceny gasną razem z planetą | warstwy jako RODZEŃSTWO siatki terenu | **oblewa** 33b |
+| M9 | pełna scena nie alokuje w pętli renderu | `Float64Array(64)` na jednostkę | **oblewa** test budżetu |
+| M9b | — | `Math.sqrt` → `Math.hypot` (481 alok./klatkę) | **NIE oblewa** — granica czułości, zapisana w komentarzu testu |
+| M10 | `paintTerrain` tylko w trybie ocenianym | usunięty strażnik trybu | **oblewa** 34 |
+| M11 | wykrywanie ODPOWIEDZI STAŁEJ | wyłączone | **oblewa** 24b |
+| M11b | — | adnotacja drukowana ZAWSZE | **oblewa** 24b |
+| M12 | *(kontrola na samą tabelę)* rozluźnienie `toBe(8)` → `toBeGreaterThanOrEqual(1)` w 33b | — | przechodzi, czyli rozluźnienie JEST wykrywalne tylko przez czytanie diffu |
+
+Połówka „ma przejść" wykryła w tym zadaniu jedną wadę: przy M5b okazało się, że pierwsza wersja
+testu 22 przypinała `Math.min(...UNIT_BAND_SHADE_LEGAL) === 0,8464` **kotwicą na dzisiejszą
+liczbę**, zamiast własnością „to jest najmniejszy czynnik, który przechodzi". Przepisane na
+minimalność; oblewa teraz obie strony, a nie tylko jedną.
+
+### 13.8 Stan po zadaniu
+
+`587 testów w 39 plikach`, `pnpm typecheck` czysty, `pnpm test` zielony (trzy pełne przebiegi
+pod obciążeniem równoległym). Testy 33, 15 i 14 — zapadki zastawione na to zadanie —
+**nietknięte**; zamiast nich dołożone 33b (pełna scena) i 34 (faza swobodna).
+
+Zrobiony przy okazji ruling zapisany po werdykcie Zadania 1: **panel wykrywa ODPOWIEDŹ STAŁĄ i
+mówi to wprost** w eksportowanym logu, zamiast pokazywać liczbę wyglądającą na przypadek.
+Zadanie 5 wyprodukowało ten przypadek dwa razy z rzędu (oba przebiegi kontroli), więc adnotacja
+stoi już przy obu tabelach z §13.2.

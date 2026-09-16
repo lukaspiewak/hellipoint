@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { Mesh, Vector3, type BufferAttribute, type BufferGeometry, type Color, type Object3D, type Scene } from 'three';
 import { createPlanet, lightField, sunDirection } from '@heliopolis/sim';
 import {
+  aimDirection,
+  buildCameraOffsets,
   createReadabilityGate,
   formatGateResultsMarkdown,
   markerPosition,
+  markerRingRadius,
+  CAMERA_OFFSET_MAX_DEGREES,
+  CAMERA_OFFSET_MIN_DEGREES,
   type GateAnswerRecord,
   type GateMode,
   type GatePlans,
@@ -54,12 +59,18 @@ function createFakeRenderer(): SceneRenderer & { renderCalls: number; disposeCal
   return renderer;
 }
 
-function makeGate(plans: GatePlans = realPlans()): {
+function makeGate(
+  plans: GatePlans = realPlans(),
+  fullScene = false,
+): {
   gate: ReadabilityGate;
   renderer: ReturnType<typeof createFakeRenderer>;
 } {
   const renderer = createFakeRenderer();
-  const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), plans, () => renderer);
+  const gate = createReadabilityGate(planet, createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), plans, {
+    makeRenderer: () => renderer,
+    fullScene,
+  });
   return { gate, renderer };
 }
 
@@ -127,7 +138,7 @@ describe('createReadabilityGate — konstrukcja i walidacja planów', () => {
     const plans = realPlans();
     for (const mode of ['threshold', 'smooth', 'control'] as const) {
       expect(() =>
-        createReadabilityGate(planet, createFakeCanvas(), { ...plans, [mode]: [] }, () => createFakeRenderer()),
+        createReadabilityGate(planet, createFakeCanvas(), { ...plans, [mode]: [] }, { makeRenderer: () => createFakeRenderer() }),
       ).toThrow(RangeError);
     }
     // Kontrola pozytywna: komplet niepustych planów NIE rzuca.
@@ -138,9 +149,7 @@ describe('createReadabilityGate — konstrukcja i walidacja planów', () => {
   it('3. rzuca RangeError, gdy plany mają różne długości — "piętnaście prób" musi znaczyć jedno', () => {
     const plans = realPlans();
     expect(() =>
-      createReadabilityGate(planet, createFakeCanvas(), { ...plans, control: plans.control.slice(0, 14) }, () =>
-        createFakeRenderer(),
-      ),
+      createReadabilityGate(planet, createFakeCanvas(), { ...plans, control: plans.control.slice(0, 14) }, { makeRenderer: () => createFakeRenderer() }),
     ).toThrow(RangeError);
   });
 
@@ -150,9 +159,7 @@ describe('createReadabilityGate — konstrukcja i walidacja planów', () => {
     // tam, gdzie cała jej wartość polega na tym, że może.
     const plans = realPlans();
     expect(() =>
-      createReadabilityGate(planet, createFakeCanvas(), { ...plans, control: plans.threshold }, () =>
-        createFakeRenderer(),
-      ),
+      createReadabilityGate(planet, createFakeCanvas(), { ...plans, control: plans.threshold }, { makeRenderer: () => createFakeRenderer() }),
     ).toThrow(RangeError);
 
     // Kontrola pozytywna: plany z `buildGateTrials` o trzech różnych offsetach NIE rzucają —
@@ -164,16 +171,213 @@ describe('createReadabilityGate — konstrukcja i walidacja planów', () => {
 });
 
 describe('markerPosition — funkcja czysta', () => {
-  it('5. wynik leży wzdłuż normalnej komórki, w niewielkiej dodatniej odległości od jej środka', () => {
+  it('5. [ZEROWA PARALAKSA] znacznik leży DOKŁADNIE na promieniu widzenia przechodzącym przez środek komórki, pod każdym kątem', () => {
+    // Własność, którą Krok 1 Zadania 5 czyni KONIECZNĄ: kamera nie celuje już w pytaną
+    // komórkę, więc uniesienie wzdłuż normalnej (tak było do tego zadania) przesuwałoby
+    // pierścień względem jego komórki o `uniesienie × tan θ`. Pierścień wskazujący nie tę
+    // komórkę, o którą bramka pyta, unieważnia odpowiedź — a ta wada byłaby NIEWIDOCZNA dla
+    // każdego testu porównującego znacznik z samą tylko komórką.
+    //
+    // Mierzone jako współliniowość kamera–znacznik–środek komórki, czyli dokładnie to, co
+    // znaczy „rzutuje się w to samo miejsce ekranu", niezależnie od rzutowania.
     for (const cellId of [0, 733, planet.cells.length - 1]) {
       const cell = planet.cells[cellId];
-      const pos = markerPosition(planet, cellId);
-      const delta = new Vector3(pos.x - cell.center.x, pos.y - cell.center.y, pos.z - cell.center.z);
-      expect(delta.length()).toBeGreaterThan(0);
-      expect(delta.length()).toBeLessThan(planet.radius * 0.05);
+      const centre = new Vector3(cell.center.x, cell.center.y, cell.center.z);
       const normal = new Vector3(cell.normal.x, cell.normal.y, cell.normal.z);
-      expect(delta.clone().normalize().dot(normal)).toBeGreaterThan(0.999);
+      // Kamery odchylone od normalnej o 0°, 20° i 60° — od przypadku zdegenerowanego
+      // (dawne zachowanie) po skrajny, do jakiego człowiek może doorbitować.
+      const lifts: number[] = [];
+      for (const degrees of [0, 20, 60]) {
+        const offset = { polarRad: (degrees * Math.PI) / 180, azimuthRad: 1.1 };
+        const aim = aimDirection(planet, cellId, offset);
+        const camera = new Vector3(aim.x, aim.y, aim.z).multiplyScalar(planet.radius * 3);
+        const pos = markerPosition(planet, cellId, camera);
+        const marker = new Vector3(pos.x, pos.y, pos.z);
+
+        // WSPÓŁLINIOWOŚĆ: znacznik leży na odcinku kamera → środek komórki.
+        const toCamera = camera.clone().sub(centre).normalize();
+        const toMarker = marker.clone().sub(centre);
+        expect(toMarker.length(), `${degrees}°`).toBeGreaterThan(0);
+        expect(toMarker.clone().normalize().dot(toCamera), `${degrees}°`).toBeCloseTo(1, 9);
+
+        // UNIESIENIE ROŚNIE Z KĄTEM: pod kątem stycznym powierzchnia po jednej stronie
+        // pierścienia podnosi się ku kamerze, więc stałe uniesienie dałoby obcięty znacznik.
+        // Tu sprawdzana jest MONOTONICZNOŚĆ i sensowne granice; czy uniesienie WYSTARCZA,
+        // mierzy test 5b — niezależnym przyrządem (przecięcie promienia z kulą), a nie
+        // powtórzeniem wzoru z modułu, które byłoby prawdziwe z konstrukcji.
+        lifts.push(toMarker.length());
+        expect(toMarker.length(), `${degrees}°`).toBeGreaterThan(0);
+        expect(toMarker.length(), `${degrees}°`).toBeLessThan(planet.radius * 0.2);
+
+        // KONTROLA POZYTYWNA NA SAM POMIAR: przy 0° znacznik pokrywa się z dawnym
+        // zachowaniem (wzdłuż normalnej), przy 60° JUŻ NIE — inaczej „współliniowość"
+        // byłaby prawdziwa trywialnie, bo obie definicje dawałyby to samo.
+        const alongNormal = toMarker.clone().normalize().dot(normal);
+        // Przy 20° radialnych kierunek NA KAMERĘ tworzy z normalną 29,4° (kamera stoi w
+        // skończonej odległości `3R`, więc kąt przy komórce jest większy od radialnego), przy
+        // 60° — 79,1°. Próg 0,95 (18°) odcina oba od przypadku „to jednak normalna".
+        if (degrees === 0) expect(alongNormal).toBeCloseTo(1, 9);
+        else expect(alongNormal).toBeLessThan(0.95);
+      }
+      expect(lifts[1], `komórka ${cellId}`).toBeGreaterThan(lifts[0]);
+      expect(lifts[2], `komórka ${cellId}`).toBeGreaterThan(lifts[1]);
     }
+  });
+
+  it('5b. [PRZYCINANIE] cała tarcza znacznika jest bliżej kamery niż kula — dla KAŻDEJ komórki prób i każdego kąta patrzenia do 45°', () => {
+    // `Sprite` w Three.js ma JEDNĄ głębokość widoku dla wszystkich swoich pikseli
+    // (wierzchołki przesuwane w płaszczyźnie XY kamery, `mvPosition.z` ten sam), więc
+    // „nie jest przycięty" znaczy: głębokość znacznika mniejsza niż głębokość kuli na
+    // KAŻDYM promieniu przechodzącym przez tarczę. Awaria tego rodzaju jest widoczna
+    // WYŁĄCZNIE na GPU — dokładnie ta klasa, która w tej fazie dwa razy przeszła zielony
+    // pakiet (pierścień alarmu nawinięty odwrotnie, pasy obręczy poniżej piksela).
+    //
+    // Przyrząd jest NIEZALEŻNY od wzoru w module: przecina promień kamera → punkt obręczy
+    // z kulą i porównuje głębokości. Powtórzenie wzoru z `writeMarkerPosition` byłoby
+    // asercją prawdziwą z konstrukcji — pierwszą pozycją z katalogu wad tej fazy.
+    const plans = realPlans();
+    const ringRadius = markerRingRadius(planet.radius);
+    const RING_SAMPLES = 64;
+
+    /** Najciaśniejszy zapas głębokości obręczy; `lift` podany ⇒ znacznik liczony po staremu. */
+    const clearanceAt = (cellId: number, degrees: number, legacyNormalLift?: number): number => {
+      const offset = { polarRad: (degrees * Math.PI) / 180, azimuthRad: 0.7 };
+      const aim = aimDirection(planet, cellId, offset);
+      const camera = new Vector3(aim.x, aim.y, aim.z).multiplyScalar(planet.radius * 3);
+      const cell = planet.cells[cellId];
+      const marker =
+        legacyNormalLift === undefined
+          ? (() => {
+              const p = markerPosition(planet, cellId, camera);
+              return new Vector3(p.x, p.y, p.z);
+            })()
+          : new Vector3(cell.center.x, cell.center.y, cell.center.z).add(
+              new Vector3(cell.normal.x, cell.normal.y, cell.normal.z).multiplyScalar(legacyNormalLift),
+            );
+      // Oś patrzenia K1: kamera zawsze patrzy w środek planety (`controls.target`).
+      const forward = camera.clone().negate().normalize();
+      const markerDepth = marker.clone().sub(camera).dot(forward);
+      // Dwie osie prostopadłe do osi patrzenia — w nich leży kwadrat billboardu.
+      const up = Math.abs(forward.z) < 0.9 ? new Vector3(0, 0, 1) : new Vector3(1, 0, 0);
+      const right = new Vector3().crossVectors(forward, up).normalize();
+      const realUp = new Vector3().crossVectors(right, forward).normalize();
+
+      let worst = Infinity;
+      for (let s = 0; s < RING_SAMPLES; s++) {
+        const a = (s / RING_SAMPLES) * Math.PI * 2;
+        const p = marker
+          .clone()
+          .add(right.clone().multiplyScalar(Math.cos(a) * ringRadius))
+          .add(realUp.clone().multiplyScalar(Math.sin(a) * ringRadius));
+        // Przecięcie promienia kamera → p z kulą o promieniu `planet.radius`.
+        const d = p.clone().sub(camera).normalize();
+        const b = 2 * camera.dot(d);
+        const c = camera.lengthSq() - planet.radius * planet.radius;
+        const disc = b * b - 4 * c;
+        if (disc <= 0) continue; // ten promień mija kulę — nie ma czego przyciąć
+        const t = (-b - Math.sqrt(disc)) / 2;
+        const surface = camera.clone().add(d.clone().multiplyScalar(t));
+        worst = Math.min(worst, surface.clone().sub(camera).dot(forward) - markerDepth);
+      }
+      return worst;
+    };
+
+    // Kąty patrzenia od 0° (kamera wprost na komórkę) przez cały zakres prób
+    // (`CAMERA_OFFSET_MAX_DEGREES` = 34°) po 45°, czyli 11° SWOBODNEGO doorbitowania ponad
+    // najdalszą próbę. Zmierzone tym samym przyrządem: obręcz zostaje cała do ok. 49°, a
+    // dalej zaczyna wchodzić pod horyzont komórki — co zapisuję jako liczbę, bo dociągnięcie
+    // tego do limbu (70,5°) wymagałoby uniesienia ok. 25 jednostek, czyli znacznika
+    // puchnącego o połowę przy maksymalnym przybliżeniu.
+    let worstClearance = Infinity;
+    for (const trial of plans.threshold) {
+      for (const degrees of [0, 14, 24, 34, 45]) {
+        worstClearance = Math.min(worstClearance, clearanceAt(trial.cellId, degrees));
+      }
+    }
+    expect(worstClearance, `najciaśniejszy zapas głębokości znacznika: ${worstClearance.toFixed(4)}`).toBeGreaterThan(
+      0.5,
+    );
+
+    // KONTROLA POZYTYWNA NA SAM PRZYRZĄD — i zarazem powód, dla którego Krok 1 musiał ruszyć
+    // sposób unoszenia znacznika: uniesienie wzdłuż NORMALNEJ o 0,012 promienia (wartość
+    // sprzed tego zadania) przy kącie z zakresu prób daje zapas UJEMNY, czyli obręcz
+    // przyciętą przez teren. Bez tej połówki „zapas dodatni" mógłby wyjść z przyrządu, który
+    // nigdy nie zwraca liczby ujemnej.
+    const legacy = clearanceAt(plans.threshold[0].cellId, 24, planet.radius * 0.012);
+    expect(legacy, `dawne uniesienie wzdłuż normalnej: ${legacy.toFixed(4)}`).toBeLessThan(0);
+  });
+});
+
+describe('Krok 1 Zadania 5: kamera NIE celuje w pytaną komórkę', () => {
+  it('5c. [SEDNO USZCZELNIENIA] odchylenie celu kamery jest w zadanym zakresie, ZMIENNE, deterministyczne — i IDENTYCZNE dla odpowiadającej próby w każdym trybie', () => {
+    const { gate } = makeGate();
+    const min = (CAMERA_OFFSET_MIN_DEGREES * Math.PI) / 180;
+    const max = (CAMERA_OFFSET_MAX_DEGREES * Math.PI) / 180;
+
+    // 1. ZAKRES: komórka schodzi ze środka tarczy, ale zostaje głęboko wewnątrz niej.
+    const polars = new Set<number>();
+    const azimuths = new Set<number>();
+    for (let i = 0; i < gate.totalTrials; i++) {
+      const o = gate.cameraOffset(i);
+      expect(o.polarRad, `próba ${i + 1}`).toBeGreaterThanOrEqual(min);
+      expect(o.polarRad, `próba ${i + 1}`).toBeLessThanOrEqual(max);
+      polars.add(o.polarRad);
+      azimuths.add(o.azimuthRad);
+    }
+    // 2. ZMIENNOŚĆ: gdyby offset był stały, człowiek nauczyłby się „komórka jest zawsze na
+    //    prawo od środka" i odzyskał odniesienie, które to uszczelnienie odbiera.
+    expect(polars.size).toBe(gate.totalTrials);
+    expect(azimuths.size).toBe(gate.totalTrials);
+
+    // 3. DETERMINIZM: druga sesja tego samego człowieka ma dostać ten sam przebieg.
+    const { gate: twin } = makeGate();
+    for (let i = 0; i < gate.totalTrials; i++) {
+      expect(twin.cameraOffset(i)).toEqual(gate.cameraOffset(i));
+    }
+    twin.dispose();
+
+    // 4. WŁASNOŚĆ, DLA KTÓREJ TO ISTNIEJE: kamera faktycznie NIE patrzy wzdłuż normalnej
+    //    pytanej komórki, a KĄT jest ten sam dla odpowiadającej próby w KAŻDYM trybie.
+    //    Asymetria protokołu między trybami byłaby confoundem sama w sobie: zmieniałaby
+    //    trudność zadania z powodu niezwiązanego z cieniowaniem.
+    const plans = realPlans();
+    const anglesPerMode: Record<GateMode, number[]> = { threshold: [], smooth: [], control: [] };
+    for (const mode of ['threshold', 'smooth', 'control'] as const) {
+      gate.setMode(mode);
+      for (let i = 0; i < gate.totalTrials; i++) {
+        const cell = planet.cells[plans[mode][i].cellId];
+        const normal = new Vector3(cell.normal.x, cell.normal.y, cell.normal.z);
+        const view = gate.camera.object.position.clone().normalize();
+        anglesPerMode[mode].push(Math.acos(Math.min(1, view.dot(normal))));
+        gate.answer(true);
+        gate.advance();
+      }
+    }
+    for (let i = 0; i < gate.totalTrials; i++) {
+      expect(anglesPerMode.threshold[i], `próba ${i + 1}`).toBeGreaterThanOrEqual(min - 1e-9);
+      expect(anglesPerMode.smooth[i]).toBeCloseTo(anglesPerMode.threshold[i], 9);
+      expect(anglesPerMode.control[i]).toBeCloseTo(anglesPerMode.threshold[i], 9);
+    }
+    gate.dispose();
+  });
+
+  it('5d. [PARA MUTACJI] odchylenie 0° kładzie komórkę na środku tarczy, a każde odchylenie z zakresu — poza nim', () => {
+    // Połówka „ma przejść" jest tu ważniejsza od połówki „ma oblać": mierzy, że test 5c
+    // orzeka o POŁOŻENIU NA EKRANIE, a nie o samych liczbach w `CameraOffset`.
+    const cellId = 733;
+    const cell = planet.cells[cellId];
+    const normal = new Vector3(cell.normal.x, cell.normal.y, cell.normal.z);
+    const screenOffset = (degrees: number): number => {
+      const aim = aimDirection(planet, cellId, { polarRad: (degrees * Math.PI) / 180, azimuthRad: 0.7 });
+      const view = new Vector3(aim.x, aim.y, aim.z);
+      // Odległość rzutu komórki od środka tarczy, w jednostkach świata.
+      return Math.sin(Math.acos(Math.min(1, view.dot(normal)))) * planet.radius;
+    };
+    // Widoczny promień tarczy z odległości startowej `3R`: `R × sqrt(1 − 1/9)` = 94,3.
+    const discRadius = planet.radius * Math.sqrt(1 - 1 / 9);
+    expect(screenOffset(0)).toBeCloseTo(0, 9); // tuż PRZED: dawne zachowanie, komórka na środku
+    expect(screenOffset(CAMERA_OFFSET_MIN_DEGREES) / discRadius).toBeGreaterThan(0.25);
+    expect(screenOffset(CAMERA_OFFSET_MAX_DEGREES) / discRadius).toBeLessThan(0.62); // wciąż daleko od limbu
   });
 });
 
@@ -209,7 +413,7 @@ describe('createReadabilityGate — znacznik nie zdradza odpowiedzi', () => {
     const plans = realPlans();
     const { gate } = makeGate(plans);
     for (let i = 0; i < gate.totalTrials; i++) {
-      const expected = markerPosition(planet, plans.threshold[i].cellId);
+      const expected = markerPosition(planet, plans.threshold[i].cellId, gate.camera.object.position);
       expect(gate.marker.visible).toBe(true);
       expect(gate.marker.position.x).toBeCloseTo(expected.x, 6);
       expect(gate.marker.position.y).toBeCloseTo(expected.y, 6);
@@ -560,7 +764,7 @@ describe('createReadabilityGate — renderFrame/resize/dispose', () => {
 
   it('23. resize() przelicza proporcje kamery', () => {
     const canvas = createFakeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
-    const gate = createReadabilityGate(planet, canvas, realPlans(), () => createFakeRenderer());
+    const gate = createReadabilityGate(planet, canvas, realPlans(), { makeRenderer: () => createFakeRenderer() });
     const mutable = canvas as unknown as { clientWidth: number; clientHeight: number };
     mutable.clientWidth = 1024;
     mutable.clientHeight = 768;
@@ -590,6 +794,30 @@ describe('formatGateResultsMarkdown', () => {
     const md = formatGateResultsMarkdown(make(15), 15);
     expect(md).toContain('PASS');
     expect(md).toContain('Wynik: 15/15');
+  });
+
+  it('24b. [RULING Z ZADANIA 1] log ODPOWIEDZI STAŁEJ mówi to wprost, zamiast pokazywać liczbę wyglądającą na przypadek', () => {
+    // Plan jest zrównoważony, więc stała odpowiedź daje DOKŁADNIE tyle, ile jest komórek tej
+    // strony — przy piętnastu próbach 8/15. Gołe „8/15" w dokumencie decyzyjnym za pół roku
+    // zostanie odczytane jako czysty przypadek, a to jest inna rzecz: brak rozróżniania.
+    // Zapisane jako ruling po werdykcie Zadania 1 i zrobione tu, bo Zadanie 5 wyprodukowało
+    // ten przypadek dwa razy z rzędu (oba przebiegi kontroli).
+    const alwaysLit = make(15).map((a) => ({ ...a, answeredLit: true, correct: a.actuallyLit }));
+    const md = formatGateResultsMarkdown(alwaysLit, 15);
+    expect(md).toContain('ODPOWIEDŹ STAŁA');
+    expect(md).toContain('oświetlona');
+    // KONTROLA POZYTYWNA NA SAM POMIAR: log, w którym odpowiedzi są MIESZANE, tej adnotacji
+    // NIE dostaje — inaczej „wykrywa stałą odpowiedź" znaczyłoby „drukuje ją zawsze".
+    expect(formatGateResultsMarkdown(make(15), 15)).not.toContain('ODPOWIEDŹ STAŁA');
+    // ...i ten sam wynik liczbowy da się osiągnąć BEZ stałej odpowiedzi — więc adnotacja
+    // zależy od WZORCA, a nie od liczby poprawnych.
+    const mixed = make(15).map((a, i) =>
+      i < 8 ? a : { ...a, answeredLit: !a.actuallyLit, correct: false },
+    );
+    expect(new Set(mixed.map((a) => a.answeredLit)).size, 'przypadek kontrolny nie jest mieszany').toBe(2);
+    const mixedSameScore = formatGateResultsMarkdown(mixed, 15);
+    expect(mixedSameScore).toContain('Wynik: 8/15');
+    expect(mixedSameScore).not.toContain('ODPOWIEDŹ STAŁA');
   });
 
   it('25. choć jedna błędna → "FAIL (n/m)", NIE "PASS"', () => {
@@ -817,6 +1045,99 @@ describe('bramka a krata komórek (Faza 2B, Zadanie 2 — runda naprawcza 1)', (
     // WŁASNOŚĆ 3: w trybie ocenianym widać dokładnie trzy — teren, kratę i znacznik. Pilnuje
     // to drugiej strony tej samej monety: kraty, która w grze ZNIKA, a powinna być widoczna.
     expect(inThreshold.size).toBe(3);
+
+    gate.dispose();
+  });
+
+  it('33b. [NIEZMIENNIK] to samo w PEŁNEJ SCENIE bramki Zadania 5 — budynki i jednostki też gasną razem z planetą', () => {
+    // Zapadka z testu 33 była zastawiona dokładnie na to zadanie i **zadziałała**: gdyby
+    // `fullScene` wieszał warstwy jako RODZEŃSTWO siatki terenu, jednostki zostałyby widoczne
+    // w trybie kontrolnym — a jednostka pokazuje, po której stronie terminatora stoi (pali się
+    // albo nie), więc rysowałaby granicę NIEZALEŻNIE od terenu i kontrola pozytywna
+    // przestałaby móc oblać. To jest jedyny powód, dla którego pełna scena w ogóle może
+    // dzielić harness z bramką terenową.
+    //
+    // Test 33 zostaje NIETKNIĘTY i nadal orzeka o konfiguracji Zadania 1 (sam teren): to ta
+    // konfiguracja jest instrumentem, którym zmierzono 15/15, i nie wolno jej podmienić pod
+    // tamtym wynikiem. Tutaj są własne, osobno przypięte liczby dla drugiej konfiguracji.
+    const { gate, renderer } = makeGate(realPlans(), true);
+    expect(gate.world, 'fullScene: true musi dać warstwy świata').not.toBeNull();
+
+    gate.setMode('threshold');
+    const inThreshold = visibleDrawables(gate, renderer);
+    gate.setMode('control');
+    const inControl = visibleDrawables(gate, renderer);
+
+    expect(inThreshold.size).toBeGreaterThan(1);
+    expect(inControl.size).toBeGreaterThan(0);
+    expect(inThreshold.has(gate.marker)).toBe(true);
+
+    // WŁASNOŚĆ 1: jedyną rzeczą widoczną w OBU trybach jest znacznik.
+    const inBoth = [...inControl].filter((o) => inThreshold.has(o));
+    expect(inBoth).toEqual([gate.marker]);
+
+    // WŁASNOŚĆ 2: w kontroli nadal DOKŁADNIE dwie rzeczy — siatka kontrolna i znacznik.
+    // Ta liczba jest identyczna jak w teście 33 i to jest jej treść: pełna scena nie dokłada
+    // do kontroli ANI JEDNEGO widocznego obiektu.
+    expect(inControl.size).toBe(2);
+
+    // WŁASNOŚĆ 3: w trybie ocenianym widać osiem — teren, krata, trzy warstwy budynku
+    // (bryła, rdzeń, pierścień alarmu), dwie warstwy jednostki (tarcza, rdzeń) i znacznik.
+    // Liczba WPISANA WPROST, nie „co najmniej": dołożenie czegokolwiek do pełnej sceny ma
+    // przejść przez ten test, bo dokładnie tego dotyczy własność 1.
+    expect(inThreshold.size).toBe(8);
+
+    // KONTROLA POZYTYWNA NA SAM POMIAR: te same warstwy, które gasną, muszą być tymi, które
+    // bramka faktycznie wystawia — inaczej „8" mogłoby pochodzić z ośmiu innych obiektów.
+    const world = gate.world!;
+    for (const object of [world.buildings.shell, world.buildings.core, world.buildings.alert, world.units.body, world.units.core]) {
+      expect(inThreshold.has(object), 'warstwa pełnej sceny nie jest widoczna w trybie ocenianym').toBe(true);
+      expect(inControl.has(object), 'warstwa pełnej sceny PRZETRWAŁA przełączenie na kontrolę').toBe(false);
+    }
+
+    gate.dispose();
+  });
+
+  it('34. faza SWOBODNA: pierścień znika i NIE wraca przy kolejnej próbie, a teren daje się przemalować dowolnym światłem — ale tylko w trybie ocenianym', () => {
+    // Faza swobodna bramki pełnego obrazu (pytania 2-5) nie zadaje żadnej próby, więc
+    // pierścień wskazywałby komórkę, o którą nikt nie pyta. Ukrycie musi PRZEŻYĆ `setupTrial`
+    // — inaczej wróciłby przy pierwszym ruchu panelu, a tego nie złapałby żaden test
+    // patrzący tylko na stan bezpośrednio po wywołaniu.
+    const { gate, renderer } = makeGate(realPlans(), true);
+    const world = gate.world!;
+    expect(gate.marker.visible).toBe(true);
+
+    gate.setMarkerHidden(true);
+    expect(gate.marker.visible).toBe(false);
+    gate.answer(true);
+    gate.advance();
+    expect(gate.marker.visible, 'ukrycie nie przeżyło przejścia do kolejnej próby').toBe(false);
+    expect(visibleDrawables(gate, renderer).has(gate.marker)).toBe(false);
+
+    gate.setMarkerHidden(false);
+    expect(gate.marker.visible).toBe(true);
+
+    // `paintTerrain` maluje teren PODANYM polem, a nie polem próby: faza swobodna ma
+    // orbitujące słońce. Mierzone na barwach, nie na fakcie wywołania.
+    const nightEverywhere = new Float32Array(planet.cells.length);
+    const dayEverywhere = new Float32Array(planet.cells.length).fill(1);
+    const { flat } = meshesOf(gate, renderer);
+    world.paintTerrain(nightEverywhere);
+    const night = cellColorFlat(colorsOf(flat), 0);
+    world.paintTerrain(dayEverywhere);
+    const day = cellColorFlat(colorsOf(flat), 0);
+    expect(distance(night, day), 'paintTerrain nie zmienia barw terenu').toBeGreaterThan(0.5);
+    expect(night).toEqual(NIGHT);
+
+    // ...i WYŁĄCZNIE w trybie ocenianym: tryb porównawczy i kontrolny mają pokazywać to, co
+    // pokazują, a nie render gry przemalowany cudzym światłem — inaczej kontrola pozytywna
+    // przestaje znaczyć to, co znaczy. Głośny błąd zamiast cichego rozjazdu.
+    for (const mode of ['smooth', 'control'] as const) {
+      gate.setMode(mode);
+      expect(() => world.paintTerrain(dayEverywhere), mode).toThrow(RangeError);
+    }
+    gate.setMode('threshold');
+    expect(() => world.paintTerrain(dayEverywhere)).not.toThrow();
 
     gate.dispose();
   });

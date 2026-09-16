@@ -96,6 +96,13 @@ import type { Rgb } from './shading.js';
  * możliwy przez OBRACANIE obręczy z segmentów zamiast jej skalowania; rozstrzyga to bramka
  * Zadania 5.
  *
+ * Zadanie 5 dołożyło do `update` opcjonalne `alertPulse` — wychylenie promienia, domyślnie
+ * zero — żeby człowiek przy bramce mógł ZOBACZYĆ puls o maksymalnej LEGALNEJ amplitudzie
+ * (0,13 jednostki = 0,44 px) zamiast czytać o nim w raporcie. Nie jest to cofnięcie decyzji
+ * Zadania 3: pierścień domyślnie nadal nie pulsuje, a górna granica amplitudy jest
+ * egzekwowana wyjątkiem i pilnowana testem 8 NA SZCZYCIE pulsu — patrz
+ * `ALERT_PULSE_AMPLITUDE_FACTOR`.
+ *
  * ## Dlaczego `hp` jest kodowane POLEM, a nie samą barwą
  *
  * Kodowanie jasnością koliduje z pasmami (wyżej), więc `hp` prowadzi kanał GEOMETRYCZNY:
@@ -246,6 +253,34 @@ export const CORE_SCALE_MIN = 0.5; // [WYGLĄD]
  * ten alarm zgłasza.
  */
 export const ALERT_RADIUS_FACTOR = 0.0303; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Maksymalne wychylenie pulsu pierścienia alarmu — jako ułamek promienia planety
+ * (0,13 jednostki). **Domyślnie NIEUŻYWANE: `update` bez drugiego argumentu rysuje pierścień
+ * dokładnie tak, jak rysował po rundzie naprawczej 2 Zadania 3, bit w bit.**
+ *
+ * ## Po co to jest, skoro Zadanie 3 puls USUNĘŁO
+ *
+ * Bo usunęło go POMIAREM, a brief Zadania 5 mówi wprost, że rozstrzyga to CZŁOWIEK: „jeśli
+ * pulsu nie widać, zapisz to jako wynik i zostaw pierścień bez pulsu, zamiast podnosić
+ * amplitudę ponad rozmiar komórki". Żeby dało się odpowiedzieć uczciwie, człowiek musi móc
+ * zobaczyć puls — ale WYŁĄCZNIE taki, który dałoby się wysłać na ekran.
+ *
+ * ## Skąd ta liczba: to jest CAŁA reszta budżetu, nie wybór
+ *
+ * Pierścień stoi w spoczynku na 3,0300, a sufit narzucony rozmiarem komórki (najmniejsza
+ * odległość środek → KRAWĘDŹ obrysu, mierzona kątowo na wszystkich 1442 komórkach) wynosi
+ * **3,1720**. Cały pozostały zapas to **0,1420** jednostki. Puls rośnie WYŁĄCZNIE w górę od
+ * spoczynku — konfiguracja spoczynkowa jest tą, która maksymalizuje szerokość obu pasów
+ * obręczy, więc nie ma z czego zejść w dół — a 0,13 zostawia 0,012 jednostki marginesu na
+ * ostatni bit zaokrąglenia macierzy.
+ *
+ * **W pikselach widoku domyślnego 0,13 jednostki to 0,44 px** — mniej niż połowa progu
+ * widoczności (`MIN_VISIBLE_PX` = 1 px, §5.3 raportu Zadania 3). Czyli: to NIE jest amplituda
+ * dobrana tak, żeby puls było widać; to jest maksimum tego, co w ogóle istnieje. Sufitem
+ * jest ROZMIAR KOMÓRKI, nie dobór wartości — i dokładnie tę różnicę bramka pokazuje.
+ */
+export const ALERT_PULSE_AMPLITUDE_FACTOR = 0.0013; // [WYGLĄD]
 
 /**
  * `[WYGLĄD]` Wewnętrzna krawędź pierścienia alarmu, jako ułamek jego promienia (1,8786).
@@ -650,12 +685,18 @@ export interface BuildingLayer {
    * Przepisuje macierze i barwy instancji z bieżącego `SimState.buildings`. Bezpieczne do
    * wołania co klatkę: NIC nie alokuje (test 16) i NICZEGO nie mutuje w wejściu (test 14).
    *
-   * Bez parametru czasu: warstwa jest STATYCZNA wobec zegara — wszystko, co pokazuje, zależy
-   * wyłącznie od `buildings`. Do rundy naprawczej 2 pierścień alarmu pulsował i brał tu
-   * `timeSeconds`; puls odpadł, bo jego wychylenie i szerokość pasów obręczy konkurowały o
-   * ten sam 1,17 jednostki między bryłą a krawędzią komórki (patrz `ALERT_RADIUS_FACTOR`).
+   * Nadal bez parametru CZASU, i to jest ta sama decyzja co po rundzie naprawczej 2 Zadania
+   * 3: warstwa nie zna zegara. `alertPulse` to gotowe WYCHYLENIE PROMIENIA w jednostkach
+   * świata (domyślnie 0 — pierścień w spoczynku, bit w bit jak dotąd); fazę liczy wywołujący,
+   * więc jeden zegar zostaje w jednym miejscu, a warstwa pozostaje funkcją swojego wejścia.
+   * Materiał do pytania 5 bramki Zadania 5 — patrz `ALERT_PULSE_AMPLITUDE_FACTOR`.
+   *
+   * @throws {RangeError} gdy `alertPulse` jest ujemny albo przekracza
+   *   `planet.radius × ALERT_PULSE_AMPLITUDE_FACTOR`. Amplituda ponad sufit wyprowadza
+   *   pierścień poza komórkę — a to jest dokładnie ta awaria, którą runda naprawcza 1
+   *   Zadania 3 znalazła w 72 komórkach i którą test 8 pilnuje NA SZCZYCIE pulsu.
    */
-  update(buildings: readonly (Building | null)[]): void;
+  update(buildings: readonly (Building | null)[], alertPulse?: number): void;
   dispose(): void;
 }
 
@@ -680,6 +721,7 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
   const baseRadius = planet.radius * BUILDING_RADIUS_FACTOR;
   const baseHeight = planet.radius * BUILDING_HEIGHT_FACTOR;
   const alertRadius = planet.radius * ALERT_RADIUS_FACTOR;
+  const maxAlertPulse = planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR;
   const coreRim = planet.radius * CORE_RIM_FACTOR;
   const lift = planet.radius * SURFACE_LIFT_FACTOR;
 
@@ -795,10 +837,15 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
     core,
     alert,
 
-    update(buildings: readonly (Building | null)[]): void {
+    update(buildings: readonly (Building | null)[], alertPulse = 0): void {
       if (buildings.length !== cellCount) {
         throw new RangeError(
           `BuildingLayer.update: buildings.length (${buildings.length}) must equal planet.cells.length (${cellCount})`,
+        );
+      }
+      if (!(alertPulse >= 0 && alertPulse <= maxAlertPulse)) {
+        throw new RangeError(
+          `BuildingLayer.update: alertPulse is ${alertPulse} — must lie in [0, ${maxAlertPulse}] (ring would leave its cell)`,
         );
       }
 
@@ -844,7 +891,7 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
         built++;
 
         if (!building.powered) {
-          params[0] = alertRadius;
+          params[0] = alertRadius + alertPulse;
           params[1] = 1;
           params[2] = lift;
           writeInstance(alertMatrices, unpowered, i);
