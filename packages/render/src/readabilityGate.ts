@@ -305,16 +305,18 @@ export function createReadabilityGate(
 
     const plan = active();
     if (plan.index >= plan.trials.length) return;
-    const light = lightField(planet, plan.trials[plan.index].sunDir);
 
     if (mode === 'threshold') {
-      planetMesh.updateColors(light);
+      planetMesh.updateColors(lightField(planet, plan.trials[plan.index].sunDir));
     } else if (mode === 'smooth') {
       const colorAttr = planetMesh.mesh.geometry.getAttribute('color') as BufferAttribute;
-      writeCellColorsSmooth(geo, light, colorAttr.array as Float32Array);
+      writeCellColorsSmooth(geo, lightField(planet, plan.trials[plan.index].sunDir), colorAttr.array as Float32Array);
       colorAttr.needsUpdate = true;
     } else {
-      writeSmearedColors(smearedGeo, light, smearedColors);
+      // `sunDir` PRZED przycięciem, nie `light` — patrz `writeSmearedColors`: `lightField`
+      // spłaszcza całą półkulę nocną do jednej wartości, a krawędź tej jednolitej łaty JEST
+      // terminatorem. Przekazanie tu gotowego pola przywróciłoby przeciek kontroli.
+      writeSmearedColors(smearedGeo, plan.trials[plan.index].sunDir, smearedColors);
       (smearedGeometry.getAttribute('color') as BufferAttribute).needsUpdate = true;
     }
   }

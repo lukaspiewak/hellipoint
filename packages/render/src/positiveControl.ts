@@ -1,4 +1,4 @@
-import type { Planet } from '@heliopolis/sim';
+import type { Planet, Vec3 } from '@heliopolis/sim';
 import { DEFAULT_PALETTE, type Palette } from './shading.js';
 
 /**
@@ -25,9 +25,49 @@ import { DEFAULT_PALETTE, type Palette } from './shading.js';
  *    więc GPU interpoluje jego kolor we wszystkie strony. Zero płaskich łat: na całej
  *    powierzchni nie ma ANI JEDNEJ nieciągłości koloru (C⁰), a to nieciągłości C⁰ oko czyta
  *    jako „linia".
- * 2. **Kolor liczony per wierzchołek, ciągły.** `writeSmearedColors` interpoluje liniowo
- *    noc→dzień wg `light` komórki-wierzchołka, z pominięciem `lightBand`. Razem z punktem 1
- *    daje to `saturate(dot(normal, sunDir))` rozlane po kuli — prototyp Fazy 0 co do joty.
+ * 2. **Kolor liczony per wierzchołek, ciągły, BEZ PRZYCIĘCIA.** `writeSmearedColors`
+ *    interpoluje noc→dzień wg `(dot(normal, sunDir) + 1) / 2`, liczonego SAMODZIELNIE z
+ *    normalnych komórek — patrz akapit niżej, dlaczego NIE wolno tu użyć `lightField`.
+ *
+ * ## KOREKTA: `saturate` przeciekał, i to jest zmierzone
+ *
+ * Pierwsza wersja tej kontroli używała `saturate(dot)`, czyli dokładnie tego samego wzoru co
+ * `lightAt` w symulacji, z uzasadnieniem „prototyp Fazy 0 co do joty". **Kontrola nie
+ * oblała: właściciel projektu dostał w niej 14/15.** Przyczyna, zmierzona na planecie bramki:
+ *
+ * | odwzorowanie | komórek NIEODRÓŻNIALNYCH od wszystkich sąsiadów (faza 1 / 2 / 3) |
+ * |---|---|
+ * | `saturate(dot)` | **673 / 650 / 650** z 1442 |
+ * | `(dot + 1) / 2` | **0 / 0 / 0** |
+ *
+ * `saturate` ścina CAŁĄ półkulę nocną do jednej wartości `0.0`, więc noc jest jedną
+ * jednolitą łatą — **a krawędź tej łaty JEST terminatorem.** Interpolacja po powierzchni
+ * rozmywa tę krawędź lokalnie o mniej więcej komórkę, więc z bliska widać tylko rozmazanie;
+ * z widoku całej tarczy krawędź obszaru jednolitego jest doskonale widoczna. Do tego
+ * `saturate` daje **załamanie pochodnej** dokładnie na terminatorze (zero po stronie nocnej,
+ * dodatnia po oświetlonej) — kolor jest ciągły, ale gradient skacze, a oko czyta nieciągłość
+ * gradientu jako krawędź.
+ *
+ * **Na czym polegał błąd: odtworzony został WZÓR, a nie WŁASNOŚĆ.** Własność, która czyniła
+ * render Fazy 0 nieczytelnym, brzmi „terminator nie ma żadnej cechy szczególnej". Wzór z
+ * przycięciem tej własności nie ma — daje terminatorowi dwie cechy naraz.
+ *
+ * `(dot + 1) / 2` nie ma ani przycięcia, ani załamania: jasność narasta gładko od antypody
+ * słońca (wartość 0) do punktu podsłonecznego (wartość 1), żaden obszar nie jest jednolity,
+ * a terminator jest po prostu izolinią `0,5` — nieodróżnialną od każdej innej.
+ *
+ * **Dlatego ta funkcja NIE przyjmuje `lightField`** (ono jest już przycięte) tylko surowy
+ * `sunDir`, i liczy iloczyn skalarny sama z `geo.normals`. To nie jest wygoda API — to
+ * jedyny sposób, żeby przycięcie nie mogło tu wrócić tylnymi drzwiami.
+ *
+ * ## Czego ta kontrola NIE usuwa — i to jest granica tej konstrukcji
+ *
+ * Terminator pozostaje izolinią o NAJWIĘKSZYM gradiencie jasności, bo `dot = cos θ` ma
+ * maksymalne nachylenie dokładnie przy `θ = 90°`. Zmierzone: średni krok barwny między
+ * sąsiadami wynosi 0,0359 na całej kuli i 0,0561 na krawędziach przez terminator — czyli
+ * 1,56×, wobec 2,78× przy `saturate`. Żadne gładkie, monotoniczne odwzorowanie `dot` tego nie
+ * usunie; to jest własność geometrii kuli, nie palety. Kontrola jest więc najsłabszym
+ * możliwym sygnałem terminatora przy tej geometrii, a nie sygnałem zerowym.
  *
  * ## Czym ta kontrola NIE jest
  *
@@ -141,22 +181,32 @@ function orientOutward(positions: Float32Array, i: number, a: number, b: number)
 }
 
 /**
- * Kolor PER WIERZCHOŁEK, interpolowany liniowo noc→dzień wg `light` komórki tego
- * wierzchołka — z całkowitym pominięciem `lightBand`/`LIGHT_BANDS`. W połączeniu ze
+ * Kolor PER WIERZCHOŁEK, interpolowany liniowo noc→dzień wg `(dot(normal, sunDir) + 1) / 2`
+ * — z całkowitym pominięciem `lightBand`/`LIGHT_BANDS` **i bez przycięcia**. W połączeniu ze
  * współdzielonymi wierzchołkami `buildSmearedGeometry` daje to kolor rozlany PO POWIERZCHNI,
- * czyli awarię Fazy 0.
+ * bez ani jednego obszaru jednolitego i bez załamania pochodnej — patrz KOREKTA w komentarzu
+ * modułu, gdzie jest zapisane, dlaczego `saturate(dot)` w tej roli PRZECIEKAŁ.
  *
- * Sygnatura (bufor własności wywołującego, brak alokacji, te same strażniki `RangeError`)
- * celowo naśladuje `writeCellColors` — żeby harness mógł traktować oba tryby jednym kodem i
- * żeby „tryb kontrolny" nie stał się ścieżką o innych regułach niż tryb oceniany.
+ * **Bierze `sunDir`, nie `light`, i to jest wymóg poprawności, nie wygoda API.** `lightField`
+ * zwraca `saturate(dot)`, czyli pole JUŻ PRZYCIĘTE: cała półkula nocna ma w nim dokładnie
+ * jedną wartość. Gdyby ta funkcja przyjmowała gotowe pole, przycięcie wróciłoby tu przy
+ * pierwszym wywołaniu z `lightField` — a to jest dokładnie ten przeciek, który sprawił, że
+ * kontrola dawała 14/15 zamiast poziomu zgadywania.
+ *
+ * Iloczyn skalarny liczony jest z `geo.normals` (jedna normalna na wierzchołek = na komórkę),
+ * w miejscu, bez alokacji — ten sam wzorzec bufora własności wywołującego co `writeCellColors`.
  *
  * @throws {RangeError} gdy `out.length !== geo.vertexCount * 3`.
- * @throws {RangeError} gdy `light.length !== geo.vertexCount`.
  * @throws {RangeError} gdy `palette` ma mniej niż dwie pozycje (nie ma czego interpolować).
+ * @throws {RangeError} gdy `sunDir` nie jest skończonym wektorem niezerowym. Bez tej straży
+ *   `sunDir = {0,0,0}` (albo z `NaN`) dałoby `dot === 0` w KAŻDEJ komórce, czyli `t === 0,5`
+ *   wszędzie — kulę w jednym płaskim kolorze. Kontrola wyglądałaby wtedy na działającą
+ *   („granicy nie widać!"), będąc w istocie wyłączoną: nie widać NICZEGO. To jest najgorszy
+ *   możliwy tryb awarii akurat tej funkcji, bo fałszuje wynik w stronę „kontrola oblała".
  */
 export function writeSmearedColors(
   geo: SmearedGeometry,
-  light: Float32Array,
+  sunDir: Vec3,
   out: Float32Array,
   palette: Palette = DEFAULT_PALETTE,
 ): void {
@@ -165,20 +215,25 @@ export function writeSmearedColors(
       `writeSmearedColors: out.length (${out.length}) must equal geo.vertexCount * 3 (${geo.vertexCount * 3})`,
     );
   }
-  if (light.length !== geo.vertexCount) {
-    throw new RangeError(
-      `writeSmearedColors: light.length (${light.length}) must equal geo.vertexCount (${geo.vertexCount})`,
-    );
-  }
   if (palette.length < 2) {
     throw new RangeError(`writeSmearedColors: palette must have at least 2 entries, got ${palette.length}`);
+  }
+  const sunLength = Math.hypot(sunDir.x, sunDir.y, sunDir.z);
+  if (!(sunLength > 0) || !Number.isFinite(sunLength)) {
+    throw new RangeError(`writeSmearedColors: sunDir must be a finite non-zero vector, got length ${sunLength}`);
   }
 
   const night = palette[0];
   const day = palette[palette.length - 1];
+  const sx = sunDir.x / sunLength;
+  const sy = sunDir.y / sunLength;
+  const sz = sunDir.z / sunLength;
+
   for (let i = 0; i < geo.vertexCount; i++) {
-    const t = light[i];
     const o = i * 3;
+    // (dot + 1) / 2 — całe [-1, 1] rozciągnięte na [0, 1]. ŻADNEGO przycięcia: to jest
+    // cała różnica między kontrolą, która obla, a kontrolą, która przecieka.
+    const t = (geo.normals[o] * sx + geo.normals[o + 1] * sy + geo.normals[o + 2] * sz + 1) / 2;
     out[o] = night[0] + (day[0] - night[0]) * t;
     out[o + 1] = night[1] + (day[1] - night[1]) * t;
     out[o + 2] = night[2] + (day[2] - night[2]) * t;

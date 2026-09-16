@@ -84,88 +84,118 @@ estetycznie wyrazista ani że paleta jest docelowa. To zostaje Fazie 4.
 
 ## 3. Kontrola pozytywna — i dowód, że POTRAFI oblać
 
-`packages/render/src/positiveControl.ts`. Odtwarza awarię Fazy 0 dosłownie, na dwóch
-warstwach naraz:
+> **RUNDA 1 — KOREKTA.** Pierwsza wersja tej kontroli używała `saturate(dot)` i **nie oblała**:
+> właściciel projektu dostał w niej **14/15**. Poniższy opis jest już po naprawie; przebieg
+> naprawy i to, co dokładnie przeciekało, zapisuje §3.4.
+
+`packages/render/src/positiveControl.ts`. Odtwarza awarię Fazy 0 na dwóch warstwach naraz:
 
 1. **Wierzchołki WSPÓŁDZIELONE.** Jeden wierzchołek na komórkę (jej środek), trójkąty łączą
    środki trzech wzajemnie sąsiadujących komórek — siatka dualna do goldbergowej.
    Zmierzone: **1442 wierzchołki, 2880 trójkątów**, czyli dokładnie `2V − 4` ze wzoru Eulera
    (i `V − E + F = 2` policzone z faktycznie zapisanych trójkątów — test `positiveControl.test.ts` #2).
    Każdy wierzchołek należy do 5 (pentagon) albo 6 (heksagon) trójkątów.
-2. **Kolor liczony PER WIERZCHOŁEK, ciągłą rampą** noc→dzień wg `light` komórki-wierzchołka,
-   z pominięciem `lightBand`.
+2. **Kolor per wierzchołek wg `(dot + 1) / 2`, BEZ PRZYCIĘCIA**, liczony samodzielnie z
+   normalnych komórek i `sunDir` — **nie** z `lightField`, które jest już przycięte.
 
-Razem: na całej powierzchni **nie ma ani jednej nieciągłości koloru (C⁰)** — a to właśnie
-nieciągłości C⁰ oko czyta jako „linia". Zmierzone: 1464 z 2880 trójkątów ma wierzchołki o
-różnych kolorach (w siatce gry — **zero**, bo każda komórka ma własne wierzchołki).
+Razem: na całej powierzchni **nie ma ani jednej nieciągłości koloru (C⁰)**, **ani jednego
+obszaru jednolitego**, ani załamania pochodnej. Jasność narasta gładko od antypody słońca
+(wartość 0) do punktu podsłonecznego (wartość 1), a terminator jest izolinią `0,5` —
+nieodróżnialną od każdej innej.
 
 Nawinięcie trójkątów jest **naprawiane, nie zakładane**: bez poprawki **1440 z 2880** wyszłoby
 zwróconych do wewnątrz, a `MeshBasicMaterial` rysuje tylko przednie ściany — dziura w kontroli
 sama zdradzałaby położenie.
 
-### 3.1 Czego kontrola NIE zmienia — i dlaczego to nie osłabia dowodu
+### 3.1 Miara, która złapała przeciek: komórki jednolite z całym sąsiedztwem
 
-Wartości barw **per wierzchołek** są w kontroli identyczne jak w trybie „gradient, płaskie
-komórki" (tabela w §4.3: 0,0655–0,1539 w obu). Różnica nie leży w liczbach na wierzchołkach,
-tylko w tym, że w kontroli **nigdzie nie ma skoku** — GPU rozciąga te same wartości w rampę.
-Dokładnie to Faza 0 zmierzyła jako nieczytelne i dokładnie tego nie potrafiła odtworzyć
-kontrola 2A.
+Liczba komórek, których kolor jest nieodróżnialny od koloru **wszystkich** sąsiadów — czyli
+leżących we wnętrzu jednolitej łaty. Zmierzone na planecie bramki, trzy fazy:
 
-### 3.2 DOWÓD, ŻE KONTROLA DZIAŁA: przebieg wykonawcy w trybie kontrolnym
+| odwzorowanie | faza 1 | faza 2 | faza 3 |
+|---|---|---|---|
+| `saturate(dot)` — kontrola sprzed korekty | **673** | **650** | **650** |
+| `(dot + 1) / 2` — kontrola po korekcie | **0** | **0** | **0** |
+| render gry (progowany), dla skali | 1174 | — | — |
 
-Wykonawca przeszedł **pełne piętnaście prób w trybie kontrolnym**, na żywym renderze
-(`http://localhost:5181/gate.html`), odpowiadając wyłącznie z tego, co widział. Plan kontrolny
-był mu nieznany (rozłączny zestaw komórek, przetasowana maska jasna/ciemna).
+Przypięte testem `positiveControl.test.ts` #11, asercją **bezwzględną** (`toBe(0)`), z kontrolą
+pozytywną liczącą tę samą wielkość dla starego odwzorowania (musi wyjść 673).
 
-**Wynik: 8/15 (53%), przy podłodze zgadywania 50% i najlepszej stałej odpowiedzi 8/15.**
+### 3.2 Druga połowa przecieku: załamanie pochodnej
 
-| # | Faza | Komórka | Prawda | Odpowiedź | Wynik |
-|---|---|---|---|---|---|
-| 1 | 1 | 119 | oświetlona | ciemna | BŁĄD |
-| 2 | 1 | 221 | oświetlona | oświetlona | OK |
-| 3 | 1 | 941 | oświetlona | ciemna | BŁĄD |
-| 4 | 1 | 1171 | oświetlona | oświetlona | OK |
-| 5 | 1 | 96 | ciemna | ciemna | OK |
-| 6 | 2 | 108 | oświetlona | oświetlona | OK |
-| 7 | 2 | 109 | ciemna | ciemna | OK |
-| 8 | 2 | 621 | oświetlona | ciemna | BŁĄD |
-| 9 | 2 | 399 | ciemna | oświetlona | BŁĄD |
-| 10 | 2 | 884 | ciemna | ciemna | OK |
-| 11 | 3 | 28 | ciemna | oświetlona | BŁĄD |
-| 12 | 3 | 27 | oświetlona | ciemna | BŁĄD |
-| 13 | 3 | 735 | ciemna | ciemna | OK |
-| 14 | 3 | 1032 | ciemna | ciemna | OK |
-| 15 | 3 | 763 | oświetlona | ciemna | BŁĄD |
+`saturate` daje zero po stronie nocnej i dodatnią pochodną po oświetlonej — kolor jest ciągły,
+ale **gradient skacze**, a oko czyta nieciągłość gradientu jako krawędź. Miara: iloraz
+średniego kroku barwnego na krawędziach przez terminator do średniego kroku na wszystkich
+krawędziach.
 
-**Co było widać:** płynna rampa od granatu do kremu przez całą tarczę i **ani jednej linii**.
-Pierścień zawsze stał na jednolicie wyglądającym obszarze; nie było punktu odniesienia, wobec
-którego dałoby się powiedzieć „to jest już po jasnej stronie". Odpowiedzi rozłożyły się 5×
-„oświetlona" / 10× „ciemna" — przechył ku nocy, bo w rampie cała okolica granicy wygląda jak
-noc. Z ośmiu komórek faktycznie oświetlonych trafione zostały trzy.
+| odwzorowanie | krok przez granicę / krok typowy |
+|---|---|
+| `saturate(dot)` | **2,78×** |
+| `(dot + 1) / 2` | **1,56×** |
 
-**Wniosek: bramka POTRAFI wyprodukować odpowiedź „nie widzę".** Czego nie potrafiła bramka
-Fazy 2A.
+Przypięte testem #12. **Reszty ponad 1,0 nie da się usunąć** i jest to zapisane jako granica
+tej konstrukcji, nie defekt: `dot = cos θ` ma maksymalne nachylenie dokładnie przy `θ = 90°`,
+więc terminator jest izolinią o największym gradiencie dla **każdego** gładkiego,
+monotonicznego odwzorowania `dot`. To jest własność geometrii kuli, nie palety.
 
-### 3.3 Trzeci tryb (gradient, płaskie komórki) — i co z zestawienia wynika
+### 3.3 DOWÓD, ŻE KONTROLA DZIAŁA: przebiegi wykonawcy
+
+Wszystkie przebiegi oceniane **z widoku całej tarczy**, zgodnie z punktem 5 protokołu.
+Plany kontrolne były wykonawcy nieznane (rozłączne komórki; do przebiegów po korekcie użyto
+dodatkowych przesunięć planu, bo prawdę dla przesunięcia 2 wykonawca już widział).
+
+| przebieg | odwzorowanie kontroli | wynik | podłoga zgadywania |
+|---|---|---|---|
+| kontrola, runda 0 | `saturate(dot)` | 8/15 (53%) | 50% |
+| **kontrola, po korekcie** | `(dot + 1) / 2` | **5/15 (33%)** | 50% |
+| kontrola, po korekcie (przebieg przerwany przeładowaniem strony) | `(dot + 1) / 2` | 5/13 (38%) | 50% |
+| **tryb oceniany (progowany)** | — | **15/15** | 50% |
+
+Łącznie po korekcie: **10/28 (36%)** w kontroli, wobec **15/15** w trybie ocenianym.
+
+**Co widać w nowej kontroli:** tarcza jest niemal jednolicie jasnokremowa, z gradientem tak
+łagodnym, że na oko nie do wychwycenia. **Nie ma ciemnej połowy, nie ma krzywej, nie ma
+żadnej krawędzi** — ani ostrej, ani rozmytej. Pierścień za każdym razem stoi na obszarze
+wyglądającym identycznie jak reszta kuli. To jest jakościowo inny obraz niż przed korektą,
+gdzie wyraźnie widać było granatową półkulę i jej krawędź.
+
+**Wniosek: bramka POTRAFI wyprodukować odpowiedź „nie widzę".**
+
+### 3.4 Zapis korekty: odtworzony został WZÓR, a nie WŁASNOŚĆ
+
+Pierwsza wersja kontroli używała `saturate(dot)` — tego samego wzoru, którego używa
+`lightAt` w symulacji — z uzasadnieniem „prototyp Fazy 0 co do joty". **To było błędem, i to
+nie drobnym.** Przycięcie ścina całą półkulę nocną do jednej wartości, więc noc jest jedną
+jednolitą łatą, **a krawędź tej łaty JEST terminatorem**. Interpolacja po powierzchni zaciera
+tę krawędź lokalnie o mniej więcej komórkę — dlatego wykonawca, oceniając z bliska, dostał
+poziom zgadywania (8/15) i uznał kontrolę za działającą; właściciel projektu, oceniając z
+widoku całej tarczy (czyli zgodnie z protokołem, który wykonawca sam napisał), zobaczył
+krawędź natychmiast i dostał 14/15.
+
+**Lekcja, która wykracza poza tę kontrolę:** własność, która czyniła render Fazy 0
+nieczytelnym, brzmi „terminator nie ma żadnej cechy szczególnej". Wzór z przycięciem tej
+własności nie ma — daje terminatorowi dwie cechy naraz (krawędź obszaru jednolitego i
+załamanie pochodnej). Odtwarzanie wzoru zamiast własności jest tym samym rodzajem pomyłki,
+co test nazwany od zachowania, którego nieobecności nie wykryje.
+
+Zabezpieczenie na przyszłość jest w typie: `writeSmearedColors` **nie przyjmuje już pola
+światła**, tylko `sunDir`, i liczy iloczyn skalarny sama. Przycięcie nie ma którędy wrócić.
+
+### 3.5 Trzeci tryb (gradient, płaskie komórki) — i co z zestawienia wynika
 
 `setMode('smooth')` zostaje jako trzeci punkt odniesienia: zmienia **tylko** mapowanie palety,
 zostawiając komórki płaskimi. Obejrzane na żywo: komórki są widoczne jako osobne łaty o lekko
 różnych odcieniach, ale **linii nie ma** — dokładnie jak opisuje §7.3.3 specu 2A.
 
-Zestawienie trzech trybów przypisuje zasługę właściwej warstwie:
-
 | tryb | geometria | kolor | co widać |
 |---|---|---|---|
 | `threshold` | osobne wierzchołki | progowany | **linia przez całą tarczę** |
-| `smooth` | osobne wierzchołki | gradient | płaskie łaty, granicy nie widać |
-| `control` | **współdzielone** | gradient per wierzchołek | jednolita rampa, nic |
+| `smooth` | osobne wierzchołki | gradient `saturate(dot)` | płaskie łaty, granicy nie widać |
+| `control` | **współdzielone** | `(dot+1)/2` per wierzchołek | jednolita jasna tarcza, nic |
 
 Uwaga, która wynika z nowego pytania i której stare nie mogło pokazać: przy pytaniu
 **globalnym** także tryb `smooth` przestaje być odpowiadalny — a przy pytaniu **lokalnym**
-z Fazy 2A był (15/15 było w nim osiągalne). To jest najmocniejsze pojedyncze potwierdzenie,
-że przeprojektowanie trafia w rzecz.
-
----
+z Fazy 2A był (15/15 było w nim osiągalne).
 
 ## 4. `LIGHT_BANDS[0]` obniżone do zera — pomiar po zmianie
 
@@ -308,6 +338,10 @@ Wynik: __ / 15
 
 ### 7.3 Przebieg kontrolny (jeśli wykonany)
 
+> **Uwaga:** wynik **14/15**, który padł w kontroli przed korektą rundy 1, dotyczy kontroli
+> z `saturate(dot)` i jest **nieaktualny** — tamta kontrola przeciekała (§3.4). Obecna używa
+> `(dot + 1) / 2`; wykonawca dostaje w niej 5/15 z tego samego widoku całej tarczy.
+
 Wynik w trybie kontrolnym: __ / 15.
 
 Czy w trybie kontrolnym granica była widoczna? (tak/nie, i co dokładnie było widać)
@@ -325,37 +359,45 @@ Czy w trybie kontrolnym granica była widoczna? (tak/nie, i co dokładnie było 
 
 ---
 
-## 8. Przebieg wykonawcy — POMIAR CZUŁOŚCI, NIE WERDYKT
+## 8. Przebiegi wykonawcy — POMIAR CZUŁOŚCI, NIE WERDYKT
 
-Wykonawca przeszedł oba przebiegi sam, żeby sprawdzić, że przyrząd rozróżnia tryby. To **nie
+Wykonawca przeszedł oba tryby sam, żeby sprawdzić, że przyrząd rozróżnia tryby. To **nie
 jest** werdykt na D1 i nie wolno go tak czytać.
 
-| tryb | wynik | podłoga zgadywania |
+**Wszystkie przebiegi po korekcie oceniane z widoku całej tarczy** — zgodnie z punktem 5
+protokołu, który wykonawca napisał po rundzie 0 i którego w rundzie 0 sam nie dochował.
+
+| przebieg | wynik | podłoga zgadywania |
 |---|---|---|
-| **kontrola pozytywna** (współdzielone wierzchołki) | **8/15** (53%) | 50% / 8-15 stałą odpowiedzią |
-| **progowany** (render gry) | **13/15** (87%) | 50% |
+| **tryb oceniany (progowany), z widoku całej tarczy** | **15/15** | 50% |
+| **kontrola pozytywna po korekcie, z widoku całej tarczy** | **5/15** (33%) | 50% |
+| kontrola po korekcie, przebieg przerwany przeładowaniem strony | 5/13 (38%) | 50% |
+| *(runda 0, dla porównania)* tryb oceniany oceniany z bliska | 13/15 | 50% |
+| *(runda 0, dla porównania)* kontrola z `saturate(dot)` | 8/15 | 50% |
 
-**Obie pomyłki w trybie progowanym (próby 2 i 4) padły przy mocnym przybliżeniu kamery**, gdy
-w kadrze zostawało kilka komórek, a pierścień był wielkości komórki. Dziesięć kolejnych prób
-(6–15), ocenianych z widoku całej tarczy, to **10/10** przy natychmiastowej pewności: barwa
-pod pierścieniem to granat albo pomarańcz, bez odcieni pośrednich.
+Dwie rzeczy, które ta tabela ustala, i obie są o metodzie, nie o wyniku:
 
-**Sprawdzone wprost, zamiast założone:** wykonawca wrócił świeżą stroną do komórki 1169
-(jedna z dwóch pomylonych) i obejrzał ją **przy obu poziomach zoomu** — wnętrze pierścienia
-było pomarańczowe w obu, zgodnie z prawdą. Odpowiedniość znacznik↔komórka jest więc poprawna;
-pomyłki były odczytem wykonawcy, nie wadą przyrządu. Skutkiem tego ustalenia jest punkt 5
-protokołu i nowy akapit w instrukcji panelu.
+1. **Odległość oglądania zmienia wynik w trybie ocenianym.** W rundzie 0 wykonawca dostał
+   13/15, oceniając część prób przy mocnym przybliżeniu; po powrocie do widoku całej tarczy —
+   15/15. Sprawdzone wprost, zamiast założone: wykonawca wrócił świeżą stroną do komórki 1169
+   (jednej z dwóch pomylonych) i obejrzał ją przy obu poziomach zoomu — wnętrze pierścienia
+   było pomarańczowe w obu, zgodnie z prawdą. Odpowiedniość znacznik↔komórka jest poprawna;
+   pomyłki były odczytem wykonawcy.
+2. **Odległość oglądania zmieniała też wynik w WADLIWEJ kontroli — i to jest sedno korekty.**
+   Przy `saturate(dot)` wykonawca z bliska dostał 8/15 i uznał kontrolę za działającą;
+   właściciel projektu z widoku całej tarczy dostał **14/15**, bo stamtąd krawędź jednolitej
+   półkuli nocnej jest doskonale widoczna. Po korekcie ta zależność znika: z tego samego
+   widoku całej tarczy kontrola daje 5/15.
 
-Nie zmienia to jednak niczego w §7: **13/15 to nie jest PASS i wykonawca żadnego werdyktu nie
-wydaje.**
+Nie zmienia to niczego w §7: **wykonawca żadnego werdyktu nie wydaje.**
 
 ---
 
 ## 9. Tabela mutacji — czym zabija się każdy nowy test
 
-Dla każdego nowego testu złamano nazwaną przez niego własność, uruchomiono zestaw
-(151 testów w 10 plikach pakietu `render`) i zapisano, które testy czerwienieją. Baseline: 0
-czerwonych. Skróty: `SH` = `shading.test.ts`, `TP` = `terminatorPairs.test.ts`,
+Dla każdego nowego testu złamano nazwaną przez niego własność, uruchomiono zestaw testów
+pakietu `render` (10 plików; 151 testów w rundzie 0, 154 po korekcie rundy 1) i zapisano,
+które testy czerwienieją. Baseline w obu rundach: 0 czerwonych. Skróty: `SH` = `shading.test.ts`, `TP` = `terminatorPairs.test.ts`,
 `PC` = `positiveControl.test.ts`, `GA` = `readabilityGate.test.ts`.
 
 | # | Złamana własność | Czerwonych | Które testy |
@@ -442,6 +484,36 @@ go zabija.
 
 ---
 
+### 9.3 Mutacje rundy 1 (korekta kontroli)
+
+Baseline: **154 testy, 0 czerwonych**. Mianownik sprawdzany w każdym przebiegu — żaden plik
+nie przestał się ładować, więc żadna z poniższych liczb nie jest artefaktem niewstałego pliku.
+
+| # | Złamana własność | Czerwonych | Które testy |
+|---|---|---|---|
+| R1 | **kontrola wraca do `saturate(dot)`** — dokładnie przeciek z rundy 0 | 4/154 | PC8, PC11, PC12, GA19 |
+| R2 | kontrola bez przeskalowania `[-1,1]→[0,1]` (surowy `dot`) | 2/154 | PC8, GA19 |
+| R3 | brak strażnika zdegenerowanego `sunDir` | 1/154 | PC9 |
+| R4 | `sunDir` nie jest normalizowany | 1/154 | PC8 |
+| R5 | kontrola malowana ZAWSZE fazą pierwszej próby planu | 1/154 | GA32 |
+| R6 | kontrola malowana raz i nigdy nie odświeżana | 2/154 | GA19, GA32 |
+| R7 | kontrola dostaje kolor PROGOWANY per wierzchołek | 7/154 | PC6, PC7, PC8, PC11, PC12, GA19, GA20 |
+
+**R1 oblewa z dokładnie tą liczbą, którą wskazał przegląd:** `positiveControl.test.ts` #11
+raportuje `expected 673 to be +0`, a #12 `expected 2.7754 to be less than 1.8`. Asercja jest
+bezwzględna, więc nie porusza się razem z niczym, co sprawdza.
+
+**Dwie luki zamknięte przy okazji tej rundy**, obie znalezione przez pytanie „co by TEGO nie
+złapało":
+
+- *„kontrola nie śledzi fazy"* — pomiary czułości (GA19) są na fazę odporne, bo mierzą rozkład
+  skoków, a ten wygląda podobnie w każdej fazie. Dodany test **GA32** (odpowiednik testu 17
+  dla siatki kontrolnej, porównanie co do bitu) i mutacja R5.
+- *„`sunDir` nie jest normalizowany"* — `sunDirection` zwraca wektor jednostkowy, więc w
+  normalnym użyciu nikt by tego nie zauważył, a `(dot+1)/2` wyszłoby poza `[0,1]` i kolory
+  ekstrapolowałyby poza paletę. Dopisana asercja w **PC8** i mutacja R4.
+
+
 ## 10. Wada projektu znaleziona w trakcie własnego przebiegu
 
 Pierwsza wersja planu prób realizowała zrównoważenie jasna/ciemna **naprzemiennie**
@@ -465,10 +537,10 @@ własny test (TP19b) i własną mutację (M15).
 | `packages/render/src/terminatorPairs.ts` | `findBoundaryCells`, `selectSpread` z offsetem, plan jednokomórkowy |
 | `packages/render/src/shading.ts` | `LIGHT_BANDS[0] = 0`, porównanie ścisłe |
 | `apps/client/gate.html`, `apps/client/src/gate.ts` | panel: dwa przyciski odpowiedzi, trzy tryby |
-| `packages/render/test/positiveControl.test.ts` | **nowy** — 10 testów |
-| `packages/render/test/readabilityGate.test.ts` | przepisany — 31 testów |
+| `packages/render/test/positiveControl.test.ts` | **nowy** — 12 testów |
+| `packages/render/test/readabilityGate.test.ts` | przepisany — 32 testy |
 | `packages/render/test/terminatorPairs.test.ts` | przepisany — 24 testy |
 | `packages/render/test/shading.test.ts` | zmienione #1, #2, #12, #13, #14; **nowy #18** |
 
-Baseline przed tym zadaniem: 496 testów w 36 plikach. Po nim: **516 testów w 37 plikach**,
-`pnpm typecheck` czysty, `pnpm test` zielony.
+Baseline przed tym zadaniem: 496 testów w 36 plikach. Po rundzie 0: 516 testów. Po korekcie
+rundy 1: **519 testów w 37 plikach**, `pnpm typecheck` czysty, `pnpm test` zielony.

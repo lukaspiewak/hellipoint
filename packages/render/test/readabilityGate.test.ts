@@ -12,7 +12,7 @@ import {
 } from '../src/readabilityGate.js';
 import { buildGateTrials, type GateTrial } from '../src/terminatorPairs.js';
 import { buildPlanetGeometry } from '../src/geometry.js';
-import { buildSmearedGeometry } from '../src/positiveControl.js';
+import { buildSmearedGeometry, writeSmearedColors } from '../src/positiveControl.js';
 import { DEFAULT_PALETTE, lightBand, writeCellColors } from '../src/shading.js';
 import type { SceneRenderer } from '../src/scene.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
@@ -425,35 +425,83 @@ describe('createReadabilityGate — co WIDAĆ pod znacznikiem: tryb oceniany kon
     gate.dispose();
   });
 
-  it('19. [KONTROLA POZYTYWNA] w trybie kontrolnym ta sama miara zapada się o rząd wielkości — barwa komórki przestaje odpowiadać na pytanie bramki', () => {
-    // To jest liczbowy odpowiednik tego, co człowiek ma zobaczyć: w trybie ocenianym barwa
-    // pod pierścieniem odpowiada na pytanie wprost; w kontroli nie niesie już tej informacji.
-    // Gdyby ta liczba była porównywalna z trybem progowanym, kontrola NIE odtwarzałaby awarii
-    // Fazy 0 i wynik bramki nic by nie znaczył.
+  it('19. [KONTROLA POZYTYWNA] przy KAŻDEJ komórce, o którą pyta kontrola, otoczenie wygląda tak samo jak gdziekolwiek indziej — brak cechy szczególnej na granicy', () => {
+    // Poprzednia wersja tego testu mierzyła „odległość komórki oświetlonej od barwy nocy" i
+    // wymagała, żeby była mała. To była ZŁA WŁASNOŚĆ i przez nią kontrola przeciekała:
+    // „blisko barwy nocy" było prawdą dlatego, że `saturate` ścinał całą noc do jednej
+    // wartości — czyli dokładnie z powodu defektu, a nie mimo niego.
+    //
+    // Właściwa własność brzmi: **terminator nie ma żadnej cechy szczególnej**. Mierzona jako
+    // największy skok barwny między zaznaczoną komórką a jej sąsiadami — w trybie ocenianym
+    // to pełny skok palety, w kontroli tyle samo, ile gdziekolwiek indziej na kuli.
     const plans = realPlans();
     const { gate, renderer } = makeGate(plans);
-    gate.setMode('control');
-    const colors = colorsOf(meshesOf(gate, renderer).smeared);
+    const meshes = meshesOf(gate, renderer);
 
-    let maxLitDistance = 0;
-    let litChecked = 0;
-    for (let i = 0; i < plans.control.length; i++) {
-      const trial = plans.control[i];
-      const d = distance(cellColorSmeared(colors, trial.cellId), NIGHT);
-      if (trial.lit) {
-        maxLitDistance = Math.max(maxLitDistance, d);
-        litChecked++;
-      } else {
-        expect(d, `próba ${i + 1} (ciemna)`).toBe(0);
-      }
+    const maxStepTo = (read: (id: number) => readonly number[], cellId: number): number => {
+      let max = 0;
+      for (const n of planet.cells[cellId].neighbors) max = Math.max(max, distance(read(cellId), read(n)));
+      return max;
+    };
+
+    // (a) tryb OCENIANY: przy każdej komórce planu ocenianego jest pełny skok palety.
+    const flatColors = colorsOf(meshes.flat);
+    let minEvaluatedStep = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < plans.threshold.length; i++) {
+      minEvaluatedStep = Math.min(
+        minEvaluatedStep,
+        maxStepTo((id) => cellColorFlat(flatColors, id), plans.threshold[i].cellId),
+      );
       gate.answer(true);
       gate.advance();
     }
-    expect(litChecked).toBe(8);
-    console.log(`[KONTROLA] tryb kontrolny: NAJWIĘKSZA odległość komórki oświetlonej od nocy = ${maxLitDistance.toFixed(4)}`);
-    // Zmierzone: kontrola ≤ 0,16 wobec 0,90 w trybie ocenianym, czyli co najmniej 5× mniej.
-    expect(maxLitDistance).toBeLessThan(0.2);
-    expect(maxLitDistance).toBeGreaterThan(0); // i nie jest zerem — kontrola coś rysuje, nie jest czarna
+
+    // (b) tryb KONTROLNY: mierzone NA TYM SAMYM buforze, w którym stoi dana próba. Bufor
+    //     kolorów jest przemalowywany przy każdej próbie, więc porównanie „komórka pytania"
+    //     z „najwięcej gdziekolwiek" wolno robić WYŁĄCZNIE w obrębie jednej fazy. Pierwsza
+    //     wersja tego testu porównywała komórkę z fazy 1 z maksimum policzonym po ostatnim
+    //     przemalowaniu (faza 3) i dostawała wynik niemożliwy — komórkę „bardziej skrajną"
+    //     niż maksimum po wszystkich komórkach, wśród których ona sama się znajduje.
+    gate.setMode('control');
+    const smearedColors = colorsOf(meshes.smeared);
+    const readSmeared = (id: number): readonly number[] => cellColorSmeared(smearedColors, id);
+
+    let maxControlStepAtTrials = 0;
+    let maxControlStepAnywhere = 0;
+    let minComparableFraction = 1;
+    let checked = 0;
+    for (let i = 0; i < plans.control.length; i++) {
+      const atCell = maxStepTo(readSmeared, plans.control[i].cellId);
+      const allSteps = planet.cells.map((c) => maxStepTo(readSmeared, c.id));
+      const anywhere = Math.max(...allSteps);
+      // Ile komórek NA CAŁEJ KULI ma skok porównywalny z tą, o którą bramka pyta. To jest
+      // miara „komórka pytania nie jest wyróżniona": gdyby terminator niósł cechę szczególną,
+      // ułamek byłby rzędu samego pierścienia granicznego, a nie kilkunastu procent kuli.
+      const comparable = allSteps.filter((s) => s >= atCell * 0.9).length / allSteps.length;
+
+      expect(atCell, `próba ${i + 1}`).toBeLessThanOrEqual(anywhere);
+      expect(anywhere, `próba ${i + 1}`).toBeLessThan(0.1); // zmierzone: 0,0758–0,0783
+      maxControlStepAtTrials = Math.max(maxControlStepAtTrials, atCell);
+      maxControlStepAnywhere = Math.max(maxControlStepAnywhere, anywhere);
+      minComparableFraction = Math.min(minComparableFraction, comparable);
+      checked++;
+      gate.answer(true);
+      gate.advance();
+    }
+    expect(checked).toBe(plans.control.length);
+
+    console.log(
+      `[KONTROLA] skok przy komórce pytania — oceniany: ${minEvaluatedStep.toFixed(4)}, kontrolny: ${maxControlStepAtTrials.toFixed(4)} (max na kuli ${maxControlStepAnywhere.toFixed(4)}; komórek o porównywalnym skoku: ≥ ${(minComparableFraction * 100).toFixed(1)}%)`,
+    );
+
+    expect(minEvaluatedStep).toBeCloseTo(0.9005, 3); // pełny skok palety przy KAŻDEJ ocenianej komórce
+    expect(maxControlStepAtTrials).toBeGreaterThan(0); // kontrola coś rysuje, nie jest jednolicie czarna
+    // SEDNO, dwie strony tej samej własności:
+    // (1) nigdzie w kontroli nie ma nieciągłości porównywalnej ze skokiem pasma;
+    expect(maxControlStepAnywhere).toBeLessThan(minEvaluatedStep / 10);
+    // (2) komórka pytania nie jest wyróżniona — co najmniej co dziesiąta komórka kuli ma
+    //     skok porównywalny z jej własnym (zmierzone: najmniej 14,0%).
+    expect(minComparableFraction).toBeGreaterThan(0.1);
   });
 
   it('20. w trybie kontrolnym kolor jest zapisywany PER WIERZCHOŁEK siatki współdzielonej, więc granica nie ma ani jednej nieciągłości', () => {
@@ -587,6 +635,45 @@ describe('formatGateResultsMarkdown', () => {
     const md = formatGateResultsMarkdown(make(2, [1]), 15);
     expect(md).toContain('| 1 | 1 | 100 | oświetlona | oświetlona | OK |');
     expect(md).toContain('| 2 | 1 | 101 | ciemna | oświetlona | BŁĄD |');
+  });
+});
+
+describe('createReadabilityGate — tryb kontrolny też musi śledzić fazę', () => {
+  it('32. KAŻDA próba kontrolna maluje siatkę współdzieloną światłem SWOJEJ fazy — co do bitu', () => {
+    // Odpowiednik testu 17 dla siatki kontrolnej. Bez niego „kontrola maluje raz i nigdy nie
+    // odświeża" przechodziłoby zielono: pomiary czułości (test 19) są odporne na fazę, bo
+    // mierzą rozkład skoków, a ten wygląda podobnie w każdej fazie. Człowiek oglądałby wtedy
+    // próby kontrolne 6–15 w świetle fazy 1 — dokładnie ten tryb awarii, który w Fazie 2A
+    // przeżył cały przegląd, tylko przeniesiony na drugą siatkę.
+    const plans = realPlans();
+    const { gate, renderer } = makeGate(plans);
+    gate.setMode('control');
+    const colors = colorsOf(meshesOf(gate, renderer).smeared);
+    expect(colors.length).toBe(smearedGeo.vertexCount * 3);
+
+    const expected = new Float32Array(smearedGeo.vertexCount * 3);
+    const bufferForTrial = (i: number): Float32Array => {
+      const buf = new Float32Array(smearedGeo.vertexCount * 3);
+      writeSmearedColors(smearedGeo, plans.control[i].sunDir, buf, DEFAULT_PALETTE);
+      return buf;
+    };
+    // KONTROLA POZYTYWNA na sam test: fazy dają RÓŻNE bufory. Bez tego porównanie niżej
+    // przechodziłoby także dla harnessu, który maluje kontrolę raz i nigdy nie odświeża.
+    expect(Array.from(bufferForTrial(0))).not.toEqual(Array.from(bufferForTrial(5)));
+    expect(Array.from(bufferForTrial(5))).not.toEqual(Array.from(bufferForTrial(10)));
+
+    let checked = 0;
+    for (let i = 0; i < plans.control.length; i++) {
+      writeSmearedColors(smearedGeo, plans.control[i].sunDir, expected, DEFAULT_PALETTE);
+      let mismatches = 0;
+      for (let k = 0; k < expected.length; k++) if (colors[k] !== expected[k]) mismatches++;
+      expect(mismatches, `próba kontrolna ${i + 1} (faza ${plans.control[i].phaseIndex + 1})`).toBe(0);
+      checked++;
+      gate.answer(true);
+      gate.advance();
+    }
+    expect(checked).toBe(plans.control.length);
+    gate.dispose();
   });
 });
 
