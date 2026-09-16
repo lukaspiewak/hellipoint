@@ -201,7 +201,16 @@ describe('lightFieldInto — wariant bez alokacji, do pętli renderu', () => {
     expect(Math.min(...allocatingRuns)).toBeGreaterThanOrEqual(3);
     expect(Math.min(...reusedRuns)).toBe(0);
     expect(sink[0]).toBeGreaterThan(0); // kontrola: obie pętle faktycznie się wykonały
-  });
+    // Limit czasu podniesiony z domyślnych 5 s (Faza 2B, Zadanie 3). Ten test wykonuje
+    // sześć okien po 20 000 wywołań plus rozgrzewkę — w izolacji ok. 2,5 s, czyli połowa
+    // domyślnego limitu. Vitest uruchamia pliki RÓWNOLEGLE, więc ten zapas zjada każdy
+    // nowy plik testowy, który liczy: dołożenie `buildingMesh.test.ts` (0,6 s pracy CPU)
+    // wywracało ten test w KAŻDYM przebiegu całego pakietu, choć w izolacji przechodził.
+    // Zmieniony jest WYŁĄCZNIE limit czasu — ani jedna asercja, ani liczba iteracji, ani
+    // kontrola pozytywna. Alternatywy odrzucone: zmniejszenie liczby iteracji osłabiłoby
+    // kontrolę pozytywną (patrz akapit „20 000, nie 2000" wyżej), a wyłączenie
+    // równoległości plików spowolniłoby cały pakiet dla jednego testu.
+  }, 30_000);
 });
 
 describe('lightField', () => {

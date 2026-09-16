@@ -1,5 +1,13 @@
 import { createRollingWindow, createScene, median, percentile, RENDER_VERSION } from '@heliopolis/render';
-import { createPlanet, DEFAULT_RUN, lightFieldInto, sunDirection } from '@heliopolis/sim';
+import {
+  BUILDINGS,
+  createPlanet,
+  DEFAULT_RUN,
+  lightFieldInto,
+  sunDirection,
+  type Building,
+  type BuildingType,
+} from '@heliopolis/sim';
 
 console.log(`Heliopolis render ${RENDER_VERSION}`);
 
@@ -16,6 +24,50 @@ if (!(canvas instanceof HTMLCanvasElement)) {
 // dla rozgrywki (roguelite, draft co świt) to Faza 2C, nie ten widok.
 const planet = createPlanet({ seed: 20260915 });
 const scene = createScene(planet, canvas);
+
+// --- Podgląd budynków (Faza 2B, Zadanie 3) ---------------------------------------------
+// TYMCZASOWE RUSZTOWANIE, nie rozgrywka. `Sim` wchodzi do klienta dopiero w Fazie 2C
+// (`global-constraints.md`), a bez ani jednego budynku na ekranie nie da się ani obejrzeć
+// tego, co to zadanie dowozi, ani zadać pytań 2 i 3 bramki Zadania 5 („czy widać, który
+// budynek jest niezasilony"). To jest więc zwykła TABLICA o kształcie `SimState.buildings`,
+// budowana tutaj deterministycznie — NIE `SimState`, i nic tego stanu nie mutuje: render go
+// wyłącznie czyta. Faza 2C podmieni to na `sim.state.buildings` i nic poza tym blokiem
+// nie będzie musiało się zmienić.
+//
+// Dobór tak, żeby dało się OBEJRZEĆ wszystko, o co pyta to zadanie, w jednej scenie:
+// wszystkie dziesięć typów, pełny zakres `hp` i oba stany zasilenia, rozsiane po CAŁEJ
+// kuli — czyli w każdej chwili obrotu część z nich stoi na nocy, część na zmierzchu, a
+// część na dniu — plus zwarte skupisko wokół komórki startowej, żeby dało się zobaczyć,
+// jak sąsiadujące budynki wyglądają obok siebie i obok kraty.
+const DEMO_TYPES: readonly BuildingType[] = [
+  'CORE', 'BARRICADE', 'PYLON', 'SOLAR_PANEL', 'BATTERY',
+  'EXTRACTOR', 'KINETIC_TURRET', 'LASER_TURRET', 'GEOTHERMAL_CAP', 'EVACUATION_MODULE',
+];
+const DEMO_HP_FRACTIONS = [1, 0.75, 0.5, 0.25, 0.05];
+
+const demoBuildings: (Building | null)[] = new Array<Building | null>(planet.cells.length).fill(null);
+function placeDemo(cellId: number, ordinal: number): void {
+  if (demoBuildings[cellId] !== null) return;
+  const type = DEMO_TYPES[ordinal % DEMO_TYPES.length];
+  demoBuildings[cellId] = {
+    cellId,
+    type,
+    hp: BUILDINGS[type].hp * DEMO_HP_FRACTIONS[ordinal % DEMO_HP_FRACTIONS.length],
+    powered: ordinal % 4 !== 0,
+  };
+}
+let demoOrdinal = 0;
+// Skupisko: komórka startowa, jej sąsiedzi i sąsiedzi sąsiadów.
+const cluster = new Set<number>([planet.startCell]);
+for (let ring = 0; ring < 2; ring++) {
+  for (const id of [...cluster]) {
+    for (const neighbor of planet.cells[id].neighbors) cluster.add(neighbor);
+  }
+}
+for (const id of cluster) placeDemo(id, demoOrdinal++);
+// Rozsianie: co jedenasta komórka — 131 sztuk rozłożonych po całej kuli.
+for (let id = 0; id < planet.cells.length; id += 11) placeDemo(id, demoOrdinal++);
+console.log(`[PODGLĄD] budynków w scenie: ${demoBuildings.filter((b) => b !== null).length}`);
 
 // --- Licznik klatek (Zadanie 5, Krok 2 briefu) -----------------------------------------
 // Budżet z `global-constraints.md` (8 ms na CAŁY render przy 1442 komórkach) mówi o czasie
@@ -63,6 +115,10 @@ function tick(): void {
   const elapsedSeconds = (frameStart - startTime) / 1000;
   const sunDir = sunDirection(elapsedSeconds, DEFAULT_RUN.rotationPeriod);
   lightFieldInto(planet, sunDir, light);
+  // Co klatkę, mimo że `demoBuildings` się nie zmienia: pierścień alarmu wokół budynków
+  // niezasilonych PULSUJE, więc jego macierz zależy od czasu (patrz `alertPulseScale`) —
+  // a przy okazji to jest dokładnie ten koszt, który ma się mieścić w budżecie 8 ms.
+  scene.updateBuildings(demoBuildings, elapsedSeconds);
   scene.render(light, sunDir);
 
   const frameMs = performance.now() - frameStart;

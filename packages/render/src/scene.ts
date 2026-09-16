@@ -1,5 +1,6 @@
 import { PerspectiveCamera, Scene, WebGLRenderer } from 'three';
-import type { Planet, Vec3 } from '@heliopolis/sim';
+import type { Building, Planet, Vec3 } from '@heliopolis/sim';
+import { createBuildingLayer } from './buildingMesh.js';
 import { createCamera, type OrbitCamera } from './camera.js';
 import { buildPlanetGeometry } from './geometry.js';
 import { createPlanetMesh } from './planetMesh.js';
@@ -21,6 +22,18 @@ export interface PlanetScene {
    * podpis się nie zmieniał, gdy ta potrzeba się pojawi.
    */
   render(light: Float32Array, sunDir: Vec3): void;
+  /**
+   * Przepisuje warstwę budynków (Faza 2B, Zadanie 3) z bieżącego `SimState.buildings`.
+   * OSOBNO od `render`, a nie jako jego kolejny argument, z dwóch powodów: (1) `render`
+   * ma podpis wymagany briefem Zadania 4 Fazy 2A i nie ma powodu go łamać; (2) budynki
+   * zmieniają się rzadko (komenda gracza, trafienie, brownout), a `light` co klatkę —
+   * wołający, który jeszcze nie ma symulacji (Faza 2C wnosi `Sim`), po prostu tego nie woła
+   * i widzi planetę bez budynków, zamiast musieć wymyślać pustą tablicę na każdą klatkę.
+   *
+   * `timeSeconds` napędza WYŁĄCZNIE puls pierścienia alarmu wokół budynków niezasilonych
+   * (patrz `alertPulseScale`), więc wołający bez zegara może go pominąć.
+   */
+  updateBuildings(buildings: readonly (Building | null)[], timeSeconds?: number): void;
   readonly camera: OrbitCamera;
   /**
    * Przelicza proporcje kamery i `devicePixelRatio` renderera na podstawie bieżących
@@ -100,6 +113,14 @@ export function createSceneWithRenderer(
   const planetMesh = createPlanetMesh(geo);
   const camera = createCamera(canvas, planet.radius);
 
+  // Budynki są DZIECKIEM siatki terenu, nie rodzeństwem — dokładnie tak samo jak krata
+  // komórek z Zadania 2 i z tego samego powodu: `visible` w Three.js jest dziedziczne, więc
+  // wszystko, co pokazuje stan POJEDYNCZYCH KOMÓREK, ma znikać razem z planetą. Ktokolwiek
+  // schowa planetę (dziś: tryb kontroli pozytywnej bramki czytelności), schowa i to, bez
+  // wiedzy o tej warstwie — patrz test 33 w `readabilityGate.test.ts`.
+  const buildings = createBuildingLayer(planet, geo);
+  planetMesh.mesh.add(buildings.object);
+
   const threeScene = new Scene();
   threeScene.add(planetMesh.mesh);
 
@@ -140,12 +161,16 @@ export function createSceneWithRenderer(
       planetMesh.updateColors(light);
       renderer.render(threeScene, camera.object);
     },
+    updateBuildings(list: readonly (Building | null)[], timeSeconds?: number): void {
+      buildings.update(list, timeSeconds);
+    },
     dispose(): void {
       if (typeof window !== 'undefined') {
         window.removeEventListener('resize', resize);
       }
       camera.dispose();
       planetMesh.dispose();
+      buildings.dispose();
       renderer.dispose();
     },
   };

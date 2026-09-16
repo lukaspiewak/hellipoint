@@ -1,0 +1,768 @@
+import {
+  BufferAttribute,
+  BufferGeometry,
+  Color,
+  Group,
+  InstancedBufferAttribute,
+  InstancedMesh,
+  MeshBasicMaterial,
+} from 'three';
+import type { Building, BuildingType, Planet } from '@heliopolis/sim';
+import { BUILDINGS } from '@heliopolis/sim';
+import type { PlanetGeometry } from './geometry.js';
+import type { Rgb } from './shading.js';
+
+/**
+ * Budynki na ekranie (Faza 2B, Zadanie 3): do 1442 sztuk naraz, każda na środku swojej
+ * komórki, zorientowana jej normalną, z DWOMA stanami czytelnymi bez UI — `powered` i
+ * `hp`.
+ *
+ * Render TYLKO CZYTA `SimState.buildings` (`global-constraints.md`); ten moduł nie ma
+ * żadnej ścieżki zapisu do symulacji ani do `Planet`.
+ *
+ * ## Dlaczego budynek jest DWUTONOWY, i dlaczego to nie jest estetyka
+ *
+ * Paleta terenu jest LINIOWA (patrz `Rgb` w `shading.ts`), a jej luminancje to
+ * **0,0508 / 0,4926 / 0,9198** (noc / zmierzch / dzień). Z tego wynika twarde
+ * ograniczenie, które policzyłem ZANIM dobrałem jakikolwiek kolor:
+ *
+ * > **Żaden pojedynczy ton nie osiąga kontrastu WCAG 3:1 wobec wszystkich trzech pasm.**
+ * > Optimum (maksimum minimum po trzech pasmach) wynosi **2,3202** i wypada przy
+ * > luminancji **0,18388**. Przeszukane po całym zakresie luminancji z krokiem 10⁻⁵.
+ *
+ * Dowód jest jednolinijkowy: żeby mieć 3:1 wobec DNIA trzeba luminancji ≤ 0,2733, żeby mieć
+ * 3:1 wobec NOCY trzeba ≥ 0,2524, a żeby mieć 3:1 wobec ZMIERZCHU trzeba ≤ 0,1309 (górna
+ * gałąź, ≥ 1,578, leży poza zakresem). Przedziały `[0,2524; 0,2733]` i `(-∞; 0,1309]` są
+ * rozłączne. Najsłabszym bokiem jest zmierzch↔dzień (kontrast **1,79** — `global-constraints.md`):
+ * to on zjada cały zapas, bo kolor odcinający się od zmierzchu leży już blisko dnia.
+ *
+ * Stąd konstrukcja: każdy budynek niesie JEDNOCZEŚNIE ton bardzo ciemny i ton bardzo jasny.
+ * Ciemny (`SHELL_COLOR`, L = 0,0140) daje 8,48 wobec zmierzchu i 15,15 wobec dnia; jasny
+ * (`CORE_COLOR_HEALTHY`, L = 0,9621) daje 10,04 wobec nocy. Suma pokrywa wszystkie trzy
+ * pasma — i wszystkie trzy barwy KRATY (`DEFAULT_OUTLINE_PALETTE`), która też bywa tłem
+ * budynku — z zapasem nie mniejszym niż 5,99. Pilnuje tego test 1 w `buildingMesh.test.ts`,
+ * razem z kontrolą pozytywną: ŻADEN z tych dwóch tonów sam nie przechodzi progu 3:1 na
+ * wszystkich trzech pasmach, więc dwutonowość jest wymogiem, nie ozdobnikiem.
+ *
+ * To jest dokładnie ten sam mechanizm, który `readabilityGate.ts` zastosował do znacznika
+ * bramki („pierścień jest dwutonowy… jasna część wybija się na tle nocy, ciemna na tle
+ * dnia") — tam wprowadzony z obserwacji, tutaj policzony.
+ *
+ * ## Trzy warstwy, trzy rozłączne role
+ *
+ * | warstwa | geometria | co niesie |
+ * |---|---|---|
+ * | `shell` | graniastosłup sześciokątny, ciemny | obecność budynku + jego TYP (rozmiar bryły) |
+ * | `core`  | płaski sześciokąt na szczycie, jasny | `hp` — POLE jasnego rdzenia i jego BARWA |
+ * | `alert` | płaski pierścień wokół podstawy, dwutonowy, pulsujący | `powered === false` |
+ *
+ * Każda to jeden `InstancedMesh`, czyli trzy wywołania rysowania niezależnie od tego, czy
+ * budynków jest jeden, czy 1442.
+ *
+ * ## Czego tu NIE MA: tej warstwy nie ma w scenie bramki czytelności — i to jest decyzja
+ *
+ * `createReadabilityGate` (`readabilityGate.ts`) dostaje `Planet`, a NIE `SimState` — nie ma
+ * więc żadnych budynków do pokazania. Dołożenie tam pustej warstwy oznaczałoby wstawienie do
+ * sceny trzech obiektów WIDOCZNYCH, ale nie rysujących nic, i podbicie przypiętych liczb w
+ * teście 33 (`readabilityGate.test.ts`) bez żadnego zysku; wymyślenie budynków na potrzeby
+ * bramki oznaczałoby, że bramka mierzy scenę, której gra nigdy nie renderuje. Scenę pełną —
+ * teren + krata + budynki + jednostki — bada Zadanie 5 (Krok 1 jego briefu) i to ono jest
+ * właścicielem tej zmiany. Test 33 przechodzi więc dziś bez dotknięcia.
+ *
+ * Zapadka na Zadanie 5 jest natomiast UZBROJONA i przetestowana z tej strony: `scene.ts`
+ * wiesza `object` jako DZIECKO siatki terenu, a test 15 w `buildingMesh.test.ts` sprawdza na
+ * scenie przekazywanej rendererowi, że schowanie samej planety gasi wszystkie trzy warstwy.
+ * Gdy Zadanie 5 wstawi tę warstwę do bramki tym samym sposobem, kontrola pozytywna zachowa
+ * zdolność do oblania; test 33 zażąda wtedy tylko podniesienia dwóch przypiętych liczb.
+ *
+ * ## Dlaczego stan NIEZASILONY dostał OSOBNĄ warstwę, a nie zmianę barwy budynku
+ *
+ * Brownout gasi obronę w środku ataku (§5.1), więc ten stan ma być widoczny NATYCHMIAST.
+ * Naturalny odruch — „zgaś budynek", czyli zabierz mu jasny rdzeń — jest tu najgorszym
+ * możliwym wyborem: jasny rdzeń to JEDYNY ton budynku widoczny na paśmie NOCY (ciemna
+ * skorupa ma tam 1,57). Budynek niezasilony stałby się więc niewidoczny na całej półkuli
+ * nocnej — dokładnie tam, gdzie brownout boli najbardziej, bo panele słoneczne nie produkują.
+ * Kodowanie przez ZNIKNIĘCIE jest też z natury słabsze od kodowania przez POJAWIENIE SIĘ:
+ * brak czegoś trzeba zauważyć, obecność czegoś rzuca się w oczy sama.
+ *
+ * Dlatego stan niezasilony DOKŁADA pierścień, zamiast cokolwiek zabierać, pierścień jest
+ * dwutonowy z tego samego powodu co budynek, a jego promień PULSUJE (patrz
+ * `alertPulseScale`) — ruch jest jedynym kanałem, którego pasma terenu w ogóle nie zajmują,
+ * bo teren jest nieruchomy.
+ *
+ * ## Dlaczego `hp` jest kodowane POLEM, a nie samą barwą
+ *
+ * Kodowanie jasnością koliduje z pasmami (wyżej), więc `hp` prowadzi kanał GEOMETRYCZNY:
+ * promień jasnego rdzenia maleje z `hp`, a ciemna obwódka wokół niego rośnie. Ten odczyt
+ * działa na obu tłach skrajnych z osobna: na nocy kurczy się jasna plama, na dniu grubieje
+ * ciemna ramka. Barwa rdzenia (biel → czerwień) idzie z tym RÓWNOLEGLE, jako kanał
+ * nadmiarowy — i wolno jej to robić dokładnie dlatego, że rdzeń NIGDY nie sąsiaduje z
+ * terenem: zawsze oddziela go ciemna obwódka skorupy, jak ramka legendy na mapie. Cała
+ * rampa barwy trzyma przy tym ≥ 4,25 kontrastu wobec nocy (minimum na końcu krytycznym),
+ * więc kanał nadmiarowy nie kosztuje widoczności nocnej — pilnuje tego test 2.
+ *
+ * Rozmiar rdzenia nie kłóci się z kodowaniem TYPU, bo typ siedzi w rozmiarze SKORUPY, a
+ * rdzeń skaluje się WZGLĘDEM swojej skorupy. Mała, zdrowa `PYLON` ma rdzeń wypełniający jej
+ * szczyt; duży, rozbity `CORE` ma mały rdzeń w szerokiej ciemnej ramce.
+ */
+
+// --- Stałe wizualne — [WYGLĄD] ---------------------------------------------------------
+
+/**
+ * `[WYGLĄD]` Promień podstawy budynku o rozmiarze 1,0, jako ułamek promienia planety
+ * (jak `OUTLINE_LIFT`/`MARKER_SCALE_FACTOR` — nie stała światowa, bo `createPlanet` może
+ * dostać inny `radius`).
+ *
+ * Zmierzone na tej planecie (1442 komórki, `radius` 100): najmniejszy promień wpisany
+ * komórki to **3,404**, a obrys kraty leży na 93% promienia opisanego, czyli dla
+ * najmniejszej komórki na **3,91**. Największy budynek ma tu promień **2,2** — mieści się
+ * w każdej komórce z zapasem, nie zasłania kraty z Zadania 2 i zostawia miejsce na
+ * pierścień alarmu. Sąsiednie środki komórek dzieli co najmniej **7,796**, więc dwa
+ * sąsiadujące budynki maksymalnego rozmiaru dzieli nadal 3,4 jednostki pustego terenu —
+ * są policzalne jako osobne bryły, nie zlewają się w pasmo.
+ */
+export const BUILDING_RADIUS_FACTOR = 0.022; // [WYGLĄD]
+
+/** `[WYGLĄD]` Wysokość budynku o rozmiarze 1,0, jako ułamek promienia planety. */
+export const BUILDING_HEIGHT_FACTOR = 0.024; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Zwężenie bryły ku górze: promień szczytu jako ułamek promienia podstawy.
+ * Sylwetka zwężona ku górze czyta się jako budynek, walec — jako kropka wyciągnięta w górę.
+ * Musi zostać WIĘKSZE niż `CORE_RADIUS_FACTOR`, inaczej jasny rdzeń zwisałby poza szczyt
+ * skorupy i stracił ciemną obwódkę, na której stoi widoczność na paśmie dnia (test 3).
+ */
+export const SHELL_TAPER = 0.82; // [WYGLĄD]
+
+/** `[WYGLĄD]` Promień jasnego rdzenia przy PEŁNYM `hp`, jako ułamek promienia podstawy. */
+export const CORE_RADIUS_FACTOR = 0.55; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Promień rdzenia przy `hp === 0`, jako ułamek jego promienia przy pełnym `hp`.
+ *
+ * NIE zero: rdzeń to jedyny ton budynku widoczny na paśmie nocy (patrz komentarz modułu),
+ * więc zjechanie do zera znaczyłoby „budynek tuż przed zniszczeniem znika z nocnej
+ * półkuli". Podłoga 0,42 promienia to 0,18 POLA — zakres czytelny jako zmiana, bez
+ * gubienia budynku.
+ */
+export const CORE_SCALE_MIN = 0.42; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Promień pierścienia alarmu (`powered === false`) w spoczynkowej fazie pulsu,
+ * jako ułamek promienia planety. Zmierzone na tej planecie (`radius` 100): obręcz sięga
+ * od **1,98** do **3,20** w spoczynku i od **2,36** do **3,81** na szczycie pulsu, przy
+ * obrysie najmniejszej komórki na **3,913** (patrz `ALERT_PULSE_AMPLITUDE`).
+ *
+ * Pierścień ma rozmiar STAŁY, niezależny od typu budynku: to alarm, a nie część bryły.
+ * Alarm o zmiennej wielkości byłby najmniejszy akurat przy najmniejszych budynkach —
+ * a najmniejszy z nich to `PYLON`, czyli szkielet sieci energetycznej, której awaria
+ * ten alarm zgłasza.
+ */
+export const ALERT_RADIUS_FACTOR = 0.032; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Wewnętrzna krawędź pierścienia alarmu, jako ułamek jego promienia.
+ *
+ * Pierwsza wersja miała tu 0,8, czyli obręcz szerokości 0,59 jednostki świata. **Obejrzane
+ * z widoku CAŁEJ TARCZY: przy 3,2 piksela na jednostkę oba pasy razem miały 1,9 piksela, a
+ * każdy z osobna mniej niż piksel — alarmu nie było widać w ogóle**, mimo że macierze
+ * instancji były poprawne, a testy zielone. Obręcz jest teraz dwukrotnie szersza (1,22
+ * jednostki) i wolno jej sięgnąć pod bryłę największego budynku (1,98 kontra 2,2), bo
+ * część schowana pod budynkiem nic nie kosztuje, a każda jednostka szerokości na
+ * zewnątrz — zyskuje.
+ */
+export const ALERT_INNER_FACTOR = 0.62; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Granica między jasnym a ciemnym pasem pierścienia, jako ułamek promienia.
+ * Dobrana tak, żeby OBA pasy miały DOKŁADNIE tę samą szerokość (0,608 jednostki): pas
+ * ciemny niesie alarm na dniu i zmierzchu, jasny na nocy, więc żaden nie może być pasem
+ * resztkowym. Jasny leży WEWNĄTRZ, ciemny NA ZEWNĄTRZ — bo to jasny pas dubluje się z
+ * ciemną bryłą budynku po sąsiedzku, a ciemny musi mieć czyste, jasne tło dnia tuż obok.
+ */
+export const ALERT_SPLIT_FACTOR = 0.81; // [WYGLĄD]
+
+/** `[WYGLĄD]` Okres pulsu pierścienia alarmu w sekundach. */
+export const ALERT_PULSE_PERIOD_SECONDS = 0.9; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Amplituda pulsu: promień pierścienia zmienia się w zakresie
+ * `[1, 1 + ALERT_PULSE_AMPLITUDE]` razy `ALERT_RADIUS_FACTOR`.
+ *
+ * Puls tylko ROŚNIE (nie oscyluje wokół promienia spoczynkowego), żeby minimum pulsu było
+ * jednocześnie minimum promienia — dzięki temu warunek „pierścień nie wychodzi poza
+ * komórkę" trzeba sprawdzić w jednym punkcie (szczycie), a nie na całym cyklu.
+ *
+ * **Tę liczbę ogranicza ROZMIAR KOMÓRKI, nie gust.** Przy szczycie pulsu promień zewnętrzny
+ * wynosi **3,808**, a obrys NAJMNIEJSZEJ komórki leży na **3,913** — zostaje 0,105 zapasu.
+ * Wyjście poza komórkę znaczyłoby rysowanie po kracie i po sąsiedzie, a dla budynku
+ * stojącego przy terminatorze — po samej granicy dnia i nocy, która jest nadrzędna wobec
+ * wszystkiego, co ta faza dodaje (`global-constraints.md`). Dlatego puls jest tu kanałem
+ * DRUGIM: pierwszym jest sama OBECNOŚĆ pierścienia, która nie ma żadnego sufitu.
+ *
+ * Zweryfikowane w przeglądarce sondą na sobie samym: przy chwilowo podniesionej amplitudzie
+ * do 1,0 puls widać bez cienia wątpliwości, co dowodzi, że czas faktycznie dociera z pętli
+ * renderu do macierzy instancji (przy 0,19 nie da się tego rozstrzygnąć porównaniem dwóch
+ * zrzutów ekranu, bo nie panuję nad ich fazą).
+ */
+export const ALERT_PULSE_AMPLITUDE = 0.19; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` O ile jasny rdzeń unosi się ponad szczyt skorupy i o ile pierścień alarmu
+ * unosi się ponad powierzchnię — jako ułamek promienia planety.
+ *
+ * Dolna granica to rozdzielczość bufora głębokości: przy `near = radius × 0,01` i
+ * `far = radius × 16` (patrz `camera.ts`) rozdzielczość na maksymalnym oddaleniu wynosi
+ * ok. 0,03 jednostki, więc 0,15 to pięciokrotność — bez tego rdzeń migotałby ze szczytem
+ * skorupy przy oddaleniu. Górna granica jest ta sama, co dla `OUTLINE_LIFT`: poniżej 5%
+ * średnicy najmniejszej komórki (0,42), żeby przy limbie nic nie nawisało nad sąsiadem;
+ * 0,15 to 1,8%.
+ */
+export const SURFACE_LIFT_FACTOR = 0.0015; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Ciemny ton budynku — skorupa. LINIOWY, jak cała paleta (`Rgb` w `shading.ts`).
+ * Luminancja 0,0140: kontrast WCAG **8,48** wobec zmierzchu i **15,15** wobec dnia.
+ * Nie czysta czerń, żeby bryła miała własną barwę, a nie czytała się jak dziura w terenie.
+ */
+export const SHELL_COLOR: Rgb = [0.012, 0.014, 0.02]; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Jasny ton budynku przy PEŁNYM `hp` — rdzeń. Luminancja 0,9621: kontrast
+ * **10,04** wobec nocy. Lekko chłodny, żeby odróżniał się od ciepłej bieli pasma dnia
+ * (`DEFAULT_PALETTE[2]`) także odcieniem, nie tylko tym, że oddziela je ciemna obwódka.
+ */
+export const CORE_COLOR_HEALTHY: Rgb = [0.95, 0.97, 0.92]; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Barwa rdzenia przy `hp === 0`. Odległość barw od `CORE_COLOR_HEALTHY` w sRGB
+ * wynosi **0,7556** (dla porównania: skok przez terminator to 0,860), a kontrast wobec
+ * nocy nadal **4,25** — czyli kanał nadmiarowy nie kosztuje widoczności nocnej.
+ */
+export const CORE_COLOR_CRITICAL: Rgb = [1.0, 0.22, 0.12]; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Jasny pas pierścienia alarmu — bursztyn. Luminancja 0,7362, kontrast **7,80**
+ * wobec nocy. Celowo NIE biel rdzenia i NIE czerwień uszkodzenia: trzy różne komunikaty
+ * („budynek", „ranny", „bez prądu") mają mieć trzy różne barwy, inaczej zlewają się w
+ * jedną rampę i gracz czyta jeden stan zamiast dwóch.
+ */
+export const ALERT_COLOR_LIGHT: Rgb = [1.0, 0.72, 0.12]; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Ciemny pas pierścienia alarmu. Luminancja 0,0163: kontrast **8,19** wobec
+ * zmierzchu i **14,63** wobec dnia — to on niesie pierścień po jasnej stronie planety.
+ */
+export const ALERT_COLOR_DARK: Rgb = [0.02, 0.016, 0.008]; // [WYGLĄD]
+
+/** Liczba boków bryły i rdzenia: sześciokąt, jak komórka pod spodem. */
+const SHELL_SIDES = 6;
+/** Liczba boków pierścienia alarmu — tyle, żeby przy zbliżeniu czytał się jako okrąg. */
+const ALERT_SIDES = 24;
+
+/**
+ * `[WYGLĄD]` Rozmiar bryły per typ: `radius` i `height` jako mnożniki
+ * `BUILDING_RADIUS_FACTOR` / `BUILDING_HEIGHT_FACTOR`.
+ *
+ * TYP jest kodowany SYLWETKĄ, nie barwą — barwa jest już zajęta przez dwutonowość
+ * (obecność) i rampę `hp` (stan), a trzeci kanał barwny na tej palecie nie istnieje
+ * (patrz rachunek w komentarzu modułu). Każda para (`radius`, `height`) jest inna, więc
+ * żadne dwa typy nie mają identycznej bryły — sprawdza to test 5.
+ *
+ * To NIE jest pełna identyfikacja typu: dziesięciu sylwetek różniących się dwiema liczbami
+ * nie da się rozróżnić z widoku całej tarczy i ten moduł tego nie obiecuje. Pytania bramki
+ * Zadania 5 dotyczą stanów (`powered`, `hp`), nie rozpoznania typu; rozpoznanie typu to
+ * kandydat na Fazę 2C razem z UI budowania.
+ */
+export const BUILDING_SHAPES: Readonly<Record<BuildingType, { readonly radius: number; readonly height: number }>> = {
+  CORE: { radius: 1.0, height: 1.45 },
+  BARRICADE: { radius: 0.86, height: 0.42 },
+  PYLON: { radius: 0.34, height: 1.35 },
+  SOLAR_PANEL: { radius: 0.9, height: 0.3 },
+  BATTERY: { radius: 0.76, height: 0.62 },
+  EXTRACTOR: { radius: 0.8, height: 0.7 },
+  KINETIC_TURRET: { radius: 0.72, height: 0.95 },
+  LASER_TURRET: { radius: 0.66, height: 1.2 },
+  GEOTHERMAL_CAP: { radius: 0.92, height: 0.55 },
+  EVACUATION_MODULE: { radius: 0.96, height: 1.3 },
+}; // [WYGLĄD]
+
+// --- Funkcje czyste: kodowanie stanów --------------------------------------------------
+
+/**
+ * Ułamek życia budynku, przycięty do `[0, 1]`. Przycięcie, nie wyjątek: `hp` spada poniżej
+ * zera w tym samym ticku, w którym budynek ginie (`combat.ts` odejmuje obrażenia przed
+ * sprzątnięciem), a render, który rzuca w takiej klatce, wysadziłby aplikację na
+ * poprawnym stanie symulacji.
+ *
+ * @throws {RangeError} gdy `maxHp` nie jest dodatnie — to nie jest stan gry, tylko brak
+ *   definicji typu (`BUILDINGS[type].hp`), a dzielenie dałoby `Infinity`/`NaN` i cichy
+ *   rdzeń o zerowej wielkości zamiast błędu.
+ */
+export function healthFraction(hp: number, maxHp: number): number {
+  if (!(maxHp > 0)) {
+    throw new RangeError(`healthFraction: maxHp must be positive, got ${maxHp}`);
+  }
+  const f = hp / maxHp;
+  if (!(f > 0)) return 0;
+  return f < 1 ? f : 1;
+}
+
+/**
+ * Promień jasnego rdzenia jako ułamek jego promienia przy pełnym `hp`: liniowo od
+ * `CORE_SCALE_MIN` (przy `fraction === 0`) do 1 (przy `fraction === 1`). ŚCIŚLE rosnąca,
+ * więc każde obrażenie widać jako zmianę, a nie dopiero po przekroczeniu progu.
+ */
+export function coreScale(fraction: number): number {
+  return CORE_SCALE_MIN + (1 - CORE_SCALE_MIN) * fraction;
+}
+
+/**
+ * Barwa rdzenia dla danego ułamka życia: interpolacja liniowa `CORE_COLOR_CRITICAL` →
+ * `CORE_COLOR_HEALTHY`. Pisze do `out` (trzy składowe od `offset`) zamiast zwracać nową
+ * tablicę — ta funkcja biegnie w pętli renderu, raz na budynek na klatkę.
+ */
+export function writeCoreColor(fraction: number, out: Float32Array, offset: number): void {
+  for (let k = 0; k < 3; k++) {
+    out[offset + k] = CORE_COLOR_CRITICAL[k] + (CORE_COLOR_HEALTHY[k] - CORE_COLOR_CRITICAL[k]) * fraction;
+  }
+}
+
+/**
+ * Mnożnik promienia pierścienia alarmu w chwili `timeSeconds`: `1 + A·(1 - cos)/2`, czyli
+ * gładki puls w zakresie `[1, 1 + ALERT_PULSE_AMPLITUDE]` o okresie
+ * `ALERT_PULSE_PERIOD_SECONDS`, zaczynający się w minimum przy `timeSeconds === 0`.
+ *
+ * Ruch jest tu kanałem NIEZALEŻNYM od barwy i kształtu, bo teren jest nieruchomy — a
+ * `powered === false` to stan, który ma się rzucić w oczy w środku ataku, gdy wzrok gracza
+ * jest gdzie indziej (§5.1).
+ */
+export function alertPulseScale(timeSeconds: number): number {
+  const phase = (timeSeconds / ALERT_PULSE_PERIOD_SECONDS) * Math.PI * 2;
+  return 1 + ALERT_PULSE_AMPLITUDE * 0.5 * (1 - Math.cos(phase));
+}
+
+// --- Geometrie brył (budowane RAZ, współdzielone przez wszystkie instancje) -------------
+
+/**
+ * Graniastosłup o `sides` bokach: podstawa o promieniu 1 w `z = 0`, szczyt o promieniu
+ * `SHELL_TAPER` w `z = 1`, ściany boczne plus pokrywa. BEZ dna — jest odwrócone tyłem do
+ * kamery (`side: FrontSide`), a przy tym leży dokładnie na powierzchni, więc narysowane
+ * biłoby się z terenem o bufor głębokości.
+ */
+function buildShellGeometry(sides: number): BufferGeometry {
+  // (dolny pierścień, górny pierścień, środek szczytu)
+  const vertexCount = sides * 2 + 1;
+  const positions = new Float32Array(vertexCount * 3);
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * Math.PI * 2;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    positions[i * 3] = c;
+    positions[i * 3 + 1] = s;
+    positions[i * 3 + 2] = 0;
+    positions[(sides + i) * 3] = c * SHELL_TAPER;
+    positions[(sides + i) * 3 + 1] = s * SHELL_TAPER;
+    positions[(sides + i) * 3 + 2] = 1;
+  }
+  const apex = sides * 2;
+  positions[apex * 3 + 2] = 1;
+
+  const indices = new Uint16Array(sides * 3 * 3);
+  let cursor = 0;
+  for (let i = 0; i < sides; i++) {
+    const j = (i + 1) % sides;
+    // Ściana: dwa trójkąty, nawinięte przeciwnie do wskazówek zegara patrząc z ZEWNĄTRZ.
+    indices[cursor++] = i;
+    indices[cursor++] = j;
+    indices[cursor++] = sides + j;
+    indices[cursor++] = i;
+    indices[cursor++] = sides + j;
+    indices[cursor++] = sides + i;
+    // Pokrywa: wachlarz wokół środka szczytu.
+    indices[cursor++] = apex;
+    indices[cursor++] = sides + i;
+    indices[cursor++] = sides + j;
+  }
+
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  geometry.setIndex(new BufferAttribute(indices, 1));
+  return geometry;
+}
+
+/** Płaski wielobok o `sides` bokach i promieniu 1 w `z = 0`, wachlarz wokół środka. */
+function buildDiscGeometry(sides: number): BufferGeometry {
+  const positions = new Float32Array((sides + 1) * 3);
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * Math.PI * 2;
+    positions[(i + 1) * 3] = Math.cos(a);
+    positions[(i + 1) * 3 + 1] = Math.sin(a);
+  }
+  const indices = new Uint16Array(sides * 3);
+  for (let i = 0; i < sides; i++) {
+    indices[i * 3] = 0;
+    indices[i * 3 + 1] = i + 1;
+    indices[i * 3 + 2] = ((i + 1) % sides) + 1;
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  geometry.setIndex(new BufferAttribute(indices, 1));
+  return geometry;
+}
+
+/**
+ * Pierścień alarmu: płaska obręcz w `z = 0` od `ALERT_INNER_FACTOR` do 1, złożona z DWÓCH
+ * pasów o barwach wpisanych w atrybut `color` — jasnego wewnątrz, ciemnego na zewnątrz.
+ * Dwutonowość mieszka więc w geometrii, a nie w materiale, i jest ta sama dla każdej
+ * instancji (`instanceColor` tej warstwy nie używa).
+ */
+function buildAlertGeometry(sides: number): BufferGeometry {
+  // Wierzchołki pierścienia ROZDZIELONEGO na promieniu `ALERT_SPLIT_FACTOR` są ZDUBLOWANE
+  // (rings[1] i rings[2] mają ten sam promień, różne barwy). Bez zdublowania GPU
+  // interpolowałby barwę wzdłuż całej obręczy i zamiast dwóch tonów byłby jeden gradient —
+  // czyli dokładnie ten tryb awarii, przed którym `geometry.ts` broni terenu osobnymi
+  // wierzchołkami na komórkę. Pas jasny i pas ciemny mają być PŁASKIE.
+  const rings = [ALERT_INNER_FACTOR, ALERT_SPLIT_FACTOR, ALERT_SPLIT_FACTOR, 1];
+  const ringColors = [ALERT_COLOR_LIGHT, ALERT_COLOR_LIGHT, ALERT_COLOR_DARK, ALERT_COLOR_DARK];
+  const positions = new Float32Array(sides * rings.length * 3);
+  const colors = new Float32Array(sides * rings.length * 3);
+  for (let r = 0; r < rings.length; r++) {
+    const color = ringColors[r];
+    for (let i = 0; i < sides; i++) {
+      const a = (i / sides) * Math.PI * 2;
+      const v = r * sides + i;
+      positions[v * 3] = Math.cos(a) * rings[r];
+      positions[v * 3 + 1] = Math.sin(a) * rings[r];
+      colors[v * 3] = color[0];
+      colors[v * 3 + 1] = color[1];
+      colors[v * 3 + 2] = color[2];
+    }
+  }
+  // Dwa PASY (0→1 jasny, 2→3 ciemny); para 1→2 to szew o zerowej szerokości, pomijana.
+  const bands = [0, 2];
+  const indices = new Uint16Array(sides * bands.length * 6);
+  let cursor = 0;
+  for (const r of bands) {
+    for (let i = 0; i < sides; i++) {
+      const j = (i + 1) % sides;
+      const a0 = r * sides + i;
+      const b0 = r * sides + j;
+      const a1 = (r + 1) * sides + i;
+      const b1 = (r + 1) * sides + j;
+      // Nawinięcie przeciwne do wskazówek zegara PATRZĄC OD +Z, czyli od strony kamery:
+      // kolejność (wewnętrzny_i, zewnętrzny_j, wewnętrzny_j) daje normalną +Z. Odwrotna —
+      // (wewnętrzny_i, wewnętrzny_j, zewnętrzny_j), czyli pierwsza, jaką się pisze —
+      // daje −Z, więc `side: FrontSide` wycina CAŁY pierścień i alarm po prostu nie
+      // istnieje na ekranie. Zobaczone w przeglądarce; żaden test tego nie łapał, bo
+      // macierze instancji były poprawne (patrz raport Zadania 3).
+      indices[cursor++] = a0;
+      indices[cursor++] = b1;
+      indices[cursor++] = b0;
+      indices[cursor++] = a0;
+      indices[cursor++] = a1;
+      indices[cursor++] = b1;
+    }
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new BufferAttribute(colors, 3));
+  geometry.setIndex(new BufferAttribute(indices, 1));
+  return geometry;
+}
+
+// --- Bazy komórek ----------------------------------------------------------------------
+
+/**
+ * Ortonormalna baza każdej komórki, policzona RAZ: `[t1x, t1y, t1z, t2x, t2y, t2z]` na
+ * komórkę. `t1` to kierunek na PIERWSZY NAROŻNIK komórki (zrzutowany na płaszczyznę
+ * styczną i znormalizowany), `t2 = normal × t1`.
+ *
+ * Kierunek narożnika, a nie dowolny wektor styczny: dzięki temu sześciokąt budynku jest
+ * OBRÓCONY TAK SAMO jak sześciokąt komórki pod nim, więc bryła siedzi w kracie z Zadania 2,
+ * zamiast stać w niej krzywo. To jest też jedyny powód, dla którego ta warstwa w ogóle
+ * potrzebuje `PlanetGeometry`, a nie samego `Planet`: narożniki bierzemy z TEGO SAMEGO
+ * bufora, który rysuje teren.
+ *
+ * Funkcja CZYSTA, bez Three.js — testowalna bez WebGL, tak jak `buildCellOutlines`.
+ *
+ * @throws {RangeError} gdy któraś komórka ma mniej niż 4 wierzchołki (środek + 3 narożniki);
+ *   ten sam strażnik i to samo uzasadnienie co w `buildCellOutlines`.
+ */
+export function buildCellBases(geo: PlanetGeometry): Float32Array {
+  const cellCount = geo.cellVertexStart.length;
+  const out = new Float32Array(cellCount * 6);
+  for (let i = 0; i < cellCount; i++) {
+    if (geo.cellVertexCount[i] < 4) {
+      throw new RangeError(
+        `buildCellBases: cell ${i} has ${geo.cellVertexCount[i]} vertices, expected at least 4 (center + 3 corners)`,
+      );
+    }
+    const c = geo.cellVertexStart[i] * 3;
+    const nx = geo.normals[c];
+    const ny = geo.normals[c + 1];
+    const nz = geo.normals[c + 2];
+    const k = c + 3; // pierwszy narożnik
+    let ax = geo.positions[k] - geo.positions[c];
+    let ay = geo.positions[k + 1] - geo.positions[c + 1];
+    let az = geo.positions[k + 2] - geo.positions[c + 2];
+    // Odjęcie składowej wzdłuż normalnej — odcinek środek→narożnik nie leży dokładnie w
+    // płaszczyźnie stycznej (narożnik jest na sferze, nie na stycznej).
+    const along = ax * nx + ay * ny + az * nz;
+    ax -= along * nx;
+    ay -= along * ny;
+    az -= along * nz;
+    const len = Math.hypot(ax, ay, az);
+    const inv = 1 / len;
+    const t1x = ax * inv;
+    const t1y = ay * inv;
+    const t1z = az * inv;
+    const o = i * 6;
+    out[o] = t1x;
+    out[o + 1] = t1y;
+    out[o + 2] = t1z;
+    out[o + 3] = ny * t1z - nz * t1y;
+    out[o + 4] = nz * t1x - nx * t1z;
+    out[o + 5] = nx * t1y - ny * t1x;
+  }
+  return out;
+}
+
+// --- Warstwa ---------------------------------------------------------------------------
+
+export interface BuildingLayer {
+  /**
+   * Jeden węzeł do podpięcia. `createSceneWithRenderer` wiesza go jako DZIECKO siatki
+   * terenu, nie jako rodzeństwo — `visible` w Three.js jest dziedziczne, więc wszystko, co
+   * pokazuje stan komórek, ma znikać razem z planetą (tak samo jak krata z Zadania 2;
+   * patrz uzasadnienie przy `createPlanetMesh` i test 33 w `readabilityGate.test.ts`).
+   */
+  readonly object: Group;
+  /** Wystawione dla testowalności — ten sam wzorzec co `PlanetMesh.mesh`/`outline`. */
+  readonly shell: InstancedMesh;
+  readonly core: InstancedMesh;
+  readonly alert: InstancedMesh;
+  /**
+   * Przepisuje macierze i barwy instancji z bieżącego `SimState.buildings`. Bezpieczne do
+   * wołania co klatkę: NIC nie alokuje (test 11) i NICZEGO nie mutuje w wejściu (test 10).
+   *
+   * `timeSeconds` napędza wyłącznie puls pierścienia alarmu — domyślne zero daje obraz
+   * statyczny, poprawny pod każdym innym względem, więc wołający, który nie ma zegara
+   * (np. test albo zrzut pojedynczej klatki), nie musi go wymyślać.
+   */
+  update(buildings: readonly (Building | null)[], timeSeconds?: number): void;
+  dispose(): void;
+}
+
+/**
+ * Buduje warstwę budynków dla planety i jej geometrii. Pojemność każdej warstwy to
+ * `planet.cells.length` (1442) — tyle, ile wynosi twarde maksimum z definicji: `SimState`
+ * trzyma co najwyżej jeden budynek na komórkę.
+ *
+ * @throws {RangeError} gdy `geo` opisuje inną liczbę komórek niż `planet` — dwie struktury
+ *   indeksowane tym samym `cellId`, których nic nie wiąże składniowo (ten sam wzorzec co
+ *   strażniki w `writeCellColors`).
+ */
+export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): BuildingLayer {
+  const cellCount = planet.cells.length;
+  if (geo.cellVertexStart.length !== cellCount) {
+    throw new RangeError(
+      `createBuildingLayer: geo describes ${geo.cellVertexStart.length} cells, planet has ${cellCount}`,
+    );
+  }
+
+  const bases = buildCellBases(geo);
+  const baseRadius = planet.radius * BUILDING_RADIUS_FACTOR;
+  const baseHeight = planet.radius * BUILDING_HEIGHT_FACTOR;
+  const alertRadius = planet.radius * ALERT_RADIUS_FACTOR;
+  const lift = planet.radius * SURFACE_LIFT_FACTOR;
+
+  const shellGeometry = buildShellGeometry(SHELL_SIDES);
+  const coreGeometry = buildDiscGeometry(SHELL_SIDES);
+  const alertGeometry = buildAlertGeometry(ALERT_SIDES);
+
+  // `MeshBasicMaterial` wszędzie — BEZ modelu oświetlenia, tak samo jak teren
+  // (`global-constraints.md`). Materiał oświetlony wymagałby `THREE.Light` w scenie, a
+  // światło w scenie cieniowałoby TAKŻE teren i rozmyło progi z Zadania 1 z powrotem w
+  // gradient, który Faza 0 zmierzyła jako nieczytelny.
+  // `new Color(r, g, b)` woła `setRGB` w PRZESTRZENI ROBOCZEJ (linear-sRGB), tak samo jak
+  // Three.js czyta atrybut `color` geometrii — więc te stałe znaczą tu dokładnie to samo,
+  // co stałe palety terenu w `shading.ts`, i wyliczone z nich kontrasty WCAG są prawdziwe.
+  const shellMaterial = new MeshBasicMaterial({ color: new Color(...SHELL_COLOR) });
+  // Biel, żeby `instanceColor` (rampa `hp`) był JEDYNYM źródłem barwy rdzenia: Three.js
+  // mnoży `material.color × instanceColor`, więc każdy inny odcień tutaj po cichu
+  // przesunąłby całą rampę.
+  const coreMaterial = new MeshBasicMaterial({ color: 0xffffff });
+  const alertMaterial = new MeshBasicMaterial({ vertexColors: true });
+
+  const shell = new InstancedMesh(shellGeometry, shellMaterial, cellCount);
+  const core = new InstancedMesh(coreGeometry, coreMaterial, cellCount);
+  const alert = new InstancedMesh(alertGeometry, alertMaterial, cellCount);
+
+  // Bufor barw instancji tworzony TERAZ, nie przy pierwszym `setColorAt` — inaczej
+  // pierwsza klatka z budynkiem alokowałaby 17 kB w pętli renderu.
+  const coreColors = new Float32Array(cellCount * 3);
+  core.instanceColor = new InstancedBufferAttribute(coreColors, 3);
+
+  for (const mesh of [shell, core, alert]) {
+    // Sfera otaczająca `InstancedMesh` wynika z macierzy WSZYSTKICH instancji, więc po
+    // każdej zmianie trzeba by ją przeliczać (przejście po 1442 macierzach z alokacją) —
+    // albo zostawić nieaktualną i ryzykować, że cała warstwa zniknie odcięta ostrosłupem
+    // widzenia. Instancje i tak pokrywają całą kulę, którą kamera ogląda z zewnątrz, więc
+    // odcinanie na poziomie warstwy nie ma tu nic do zyskania.
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+  }
+
+  const object = new Group();
+  object.add(shell, core, alert);
+
+  const shellMatrices = shell.instanceMatrix.array as Float32Array;
+  const coreMatrices = core.instanceMatrix.array as Float32Array;
+  const alertMatrices = alert.instanceMatrix.array as Float32Array;
+
+  /**
+   * Parametry `writeInstance`, przekazywane przez ZAALOKOWANY RAZ bufor, a nie argumentami
+   * — `[promień, wysokość, uniesienie]`.
+   *
+   * To wygląda dziwnie i jest tu z POMIARU, nie z gustu. Wersja z tymi trzema liczbami jako
+   * zwykłymi argumentami alokuje: V8 nie wstawił `writeInstance` w ciało pętli, więc każda
+   * niecałkowita liczba przekraczająca granicę wywołania jest PUDEŁKOWANA (`HeapNumber`).
+   * Zmierzone `v8.GCProfiler`, 1000 przebiegów po 1442 budynki (ten sam przyrząd co
+   * `budget.test.ts`):
+   *
+   *   | wariant                                             | cykle GC |
+   *   |-----------------------------------------------------|----------|
+   *   | argumenty zwykłe, promień STAŁY (poza pętlą)         | 0        |
+   *   | argumenty zwykłe, promień ZMIENNY co budynek         | 5-6      |
+   *   | pełny `update` z argumentami zwykłymi                | 12-13    |
+   *   | **parametry przez ten bufor**                        | **0**    |
+   *   | arytmetyka wpisana wprost w pętlę (bez funkcji)      | 0        |
+   *
+   * Ostatni wiersz działa tak samo dobrze i został odrzucony jako trzy kopie tych samych
+   * szesnastu przypisań — bufor kosztuje jeden komentarz, kopie kosztowałyby rozjazd przy
+   * pierwszej zmianie.
+   */
+  const params = new Float64Array(3);
+
+  /**
+   * Wpisuje macierz jednej instancji WPROST do bufora `InstancedMesh` (to samo, co robi
+   * `setMatrixAt` — `Matrix4.toArray(instanceMatrix.array, slot * 16)` — tylko bez
+   * pośrednictwa `Matrix4`). Układ kolumnowy: kolumny 0-2 to baza (X, Y, Z), kolumna 3 to
+   * przesunięcie.
+   *
+   * Baza to `(t1·promień, t2·promień, normalna·wysokość)`. W tej kolejności jest
+   * PRAWOSKRĘTNA (`t1 × t2 = normalna`), więc nawinięcie trójkątów bryły zostaje takie, jak
+   * zbudowane, a odcinanie tylnych ścian nie wywraca jej na lewą stronę.
+   */
+  function writeInstance(target: Float32Array, slot: number, cellId: number): void {
+    const radius = params[0];
+    const height = params[1];
+    const liftAmount = params[2];
+    const b = cellId * 6;
+    const c = geo.cellVertexStart[cellId] * 3;
+    const nx = geo.normals[c];
+    const ny = geo.normals[c + 1];
+    const nz = geo.normals[c + 2];
+    const o = slot * 16;
+    target[o] = bases[b] * radius;
+    target[o + 1] = bases[b + 1] * radius;
+    target[o + 2] = bases[b + 2] * radius;
+    target[o + 3] = 0;
+    target[o + 4] = bases[b + 3] * radius;
+    target[o + 5] = bases[b + 4] * radius;
+    target[o + 6] = bases[b + 5] * radius;
+    target[o + 7] = 0;
+    target[o + 8] = nx * height;
+    target[o + 9] = ny * height;
+    target[o + 10] = nz * height;
+    target[o + 11] = 0;
+    target[o + 12] = geo.positions[c] + nx * liftAmount;
+    target[o + 13] = geo.positions[c + 1] + ny * liftAmount;
+    target[o + 14] = geo.positions[c + 2] + nz * liftAmount;
+    target[o + 15] = 1;
+  }
+
+  return {
+    object,
+    shell,
+    core,
+    alert,
+
+    update(buildings: readonly (Building | null)[], timeSeconds = 0): void {
+      if (buildings.length !== cellCount) {
+        throw new RangeError(
+          `BuildingLayer.update: buildings.length (${buildings.length}) must equal planet.cells.length (${cellCount})`,
+        );
+      }
+      const pulse = alertPulseScale(timeSeconds) * alertRadius;
+
+      let built = 0;
+      let unpowered = 0;
+      for (let i = 0; i < cellCount; i++) {
+        const building = buildings[i];
+        if (building === null || building === undefined) continue;
+        // `cellId` DUBLUJE indeks tablicy — dwa źródła prawdy o tym samym, których nic nie
+        // wiąże składniowo. Render rysuje wg INDEKSU (bo tak symulacja adresuje budynki
+        // wszędzie indziej), a rozjazd zgłasza, zamiast po cichu narysować budynek na
+        // cudzej komórce: to jest błąd programu, a nie stan gry.
+        if (building.cellId !== i) {
+          throw new RangeError(
+            `BuildingLayer.update: buildings[${i}].cellId is ${building.cellId} — index and cellId must agree`,
+          );
+        }
+        const def = BUILDINGS[building.type];
+        const shape = BUILDING_SHAPES[building.type];
+        if (def === undefined || shape === undefined) {
+          throw new RangeError(`BuildingLayer.update: unknown building type "${building.type}" at cell ${i}`);
+        }
+
+        const radius = baseRadius * shape.radius;
+        const height = baseHeight * shape.height;
+        params[0] = radius;
+        params[1] = height;
+        params[2] = 0;
+        writeInstance(shellMatrices, built, i);
+
+        const fraction = healthFraction(building.hp, def.hp);
+        // Rdzeń leży na SZCZYCIE skorupy (`height`), uniesiony o `lift` — patrz
+        // `SURFACE_LIFT_FACTOR`: bez tego dwie powierzchnie leżą w tej samej płaszczyźnie
+        // i biją się o bufor głębokości.
+        params[0] = radius * CORE_RADIUS_FACTOR * coreScale(fraction);
+        params[1] = 1;
+        params[2] = height + lift;
+        writeInstance(coreMatrices, built, i);
+        writeCoreColor(fraction, coreColors, built * 3);
+        built++;
+
+        if (!building.powered) {
+          params[0] = pulse;
+          params[1] = 1;
+          params[2] = lift;
+          writeInstance(alertMatrices, unpowered, i);
+          unpowered++;
+        }
+      }
+
+      shell.count = built;
+      core.count = built;
+      alert.count = unpowered;
+      shell.instanceMatrix.needsUpdate = true;
+      core.instanceMatrix.needsUpdate = true;
+      alert.instanceMatrix.needsUpdate = true;
+      if (core.instanceColor) core.instanceColor.needsUpdate = true;
+    },
+
+    dispose(): void {
+      shellGeometry.dispose();
+      coreGeometry.dispose();
+      alertGeometry.dispose();
+      shellMaterial.dispose();
+      coreMaterial.dispose();
+      alertMaterial.dispose();
+      shell.dispose();
+      core.dispose();
+      alert.dispose();
+    },
+  };
+}
