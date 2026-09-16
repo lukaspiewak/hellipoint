@@ -194,6 +194,16 @@ Bramka z Zadania 1 badała sam teren. Ta bada **scenę, którą gracz naprawdę 
 2. **Czy widać, który budynek jest niezasilony**, bez najeżdżania kursorem?
 3. **Czy widać, że jednostka się pali**, zanim zginie?
 
+- [ ] **Krok 0 (przed przebiegiem): uszczelnij kontrolę — kamera nie może celować w pytaną komórkę**
+
+Znalezione w Zadaniu 2 i **nienaprawione tam świadomie**: `setupTrial` celuje kamerą wzdłuż normalnej pytanej komórki, więc komórka zawsze ląduje na środku tarczy. W trybie kontrolnym jasność jest monotoniczną, nieprzyciętą funkcją `dot(normal, sunDir)`, a tarcza pokazuje oba końce zakresu — więc **bezwzględna jasność środka jest częściową wskazówką**. Wykonawca Zadania 2 dostał w kontroli 12/15 przy oczekiwanych 7,5.
+
+Dlaczego to nie unieważniło Zadania 1: przeciek czyni kontrolę **łatwiejszą**, więc kontrast „15/15 progowania przeciw 12/15 kontroli" jest zaniżony, nie zawyżony. Dlaczego trzeba to naprawić tutaj: to jest bramka, która orzeka o całej fazie, i ma orzekać czystym instrumentem.
+
+Naprawa: **kamera celuje w punkt przesunięty względem pytanej komórki o losowy, zasiany offset** — ten sam offset dla odpowiadającej próby w KAŻDYM trybie. Nie „przestań celować tylko w kontroli": asymetria protokołu między trybami sama jest confoundem, bo zmienia trudność zadania z powodu niezwiązanego z cieniowaniem. Komórka ma nadal być widoczna i jednoznacznie wskazana pierścieniem; chodzi wyłącznie o to, żeby tarcza wyglądała tak samo niezależnie od tego, gdzie leży odpowiedź.
+
+Po naprawie **powtórz kontrolę** i zapisz oba wyniki — przed i po. Jeśli kontrola po uszczelnieniu nadal daje istotnie więcej niż przypadek, zapisz to jako wynik, nie szukaj trzeciej poprawki: znaczyłoby to, że gładkie cieniowanie niesie więcej informacji, niż Faza 0 zmierzyła, i to jest ustalenie o grze, nie o instrumencie.
+
 - [ ] **Krok 2: Zmierz budżet klatki przy pełnej scenie**
 
 2A mierzyła 0,200 ms mediany przy samym terenie, przy budżecie 8 ms. Zmierz przy szczycie z Fazy 1C — **481 jednostek i kilkadziesiąt budynków** — i zapisz maszynę, na której mierzyłeś.
@@ -204,6 +214,7 @@ Bramka z Zadania 1 badała sam teren. Ta bada **scenę, którą gracz naprawdę 
 
 - [ ] `pnpm test` zielony, `pnpm typecheck` bez błędów, strażnik zero-zależności `packages/sim` nadal przechodzi
 - [ ] **Bramka z Zadania 1 potrafi OBLAĆ** — dowiedzione przejściem prób w trybie kontrolnym
+- [ ] **Kontrola uszczelniona** — kamera nie celuje w pytaną komórkę, wynik kontroli zapisany przed i po
 - [ ] `LIGHT_BANDS[0] = 0`, a liczba komórek rozjeżdżających się między renderem a symulacją wynosi **zero**
 - [ ] Siatka komórek widoczna, a odległość barw przez terminator **nie spadła**
 - [ ] Dziesięć typów budynków na ekranie, stan `powered` i uszkodzenie czytelne bez UI
