@@ -193,7 +193,9 @@ Bramka z Zadania 1 badała sam teren. Ta bada **scenę, którą gracz naprawdę 
 1. **Czy terminator nadal jest czytelny** przy pełnej scenie? Regresja wobec Zadania 1 jest tu najgroźniejszym możliwym wynikiem i **musi zostać zapisana, nie obejdzona**.
 2. **Czy widać, który budynek jest niezasilony**, bez najeżdżania kursorem?
 3. **Czy widać, że jednostka się pali**, zanim zginie?
-4. **Czy widać, że pierścień alarmu pulsuje?** Zadanie 3 potwierdziło puls mechanicznie, ale wzrokowo dopiero po podniesieniu amplitudy do 1,0 — przy docelowej szczyt wynosi 3,808 przy obrysie najmniejszej komórki 3,913, więc sufitem jest ROZMIAR KOMÓRKI, nie dobór wartości. Wykonawca uznał puls za kanał drugi, a za pierwszy obecność pierścienia, która sufitu nie ma. **To rozstrzyga człowiek, nie pomiar**: jeśli pulsu nie widać, zapisz to jako wynik i zostaw pierścień bez pulsu, zamiast podnosić amplitudę ponad rozmiar komórki.
+4. **Czy widać cieniowanie jednostki czynnikiem 0,8463?** Zadanie 4 rozstrzygnęło pomiarem, że jednostki nie są cieniowane światłem — i dla trybu **progowego** rozstrzygnięcie jest mocne: stroboskopowanie do 20 zmian pasma na sekundę u jednostek stojących dokładnie na terminatorze, potwierdzone dwoma niezależnymi pomiarami. Ale drugie ogniwo argumentu — „łagodnego cieniowania gładkiego i tak nie widać" — **nie zostało obejrzane w granicach legalnych**. Maksymalne legalne cieniowanie zmienia rdzeń o **18/255 sRGB**; obserwacja wzrokowa, na której oparto wniosek, była przy czynniku 0,55, czyli Δ **59/255**. Ani wykonawca, ani recenzent nie rozstrzygnęli tego wzrokiem. Pokaż człowiekowi jednostkę bez cieniowania i z cieniowaniem 0,8463, na wszystkich trzech pasmach, i **zapisz odpowiedź jako wynik** — jeśli różnicy nie widać, argument domyka się i `flat` zostaje bez zastrzeżeń; jeśli widać, jest to ustalenie do Fazy 4, nie powód do zmiany teraz.
+
+5. **Czy widać, że pierścień alarmu pulsuje?** Zadanie 3 potwierdziło puls mechanicznie, ale wzrokowo dopiero po podniesieniu amplitudy do 1,0 — przy docelowej szczyt wynosi 3,808 przy obrysie najmniejszej komórki 3,913, więc sufitem jest ROZMIAR KOMÓRKI, nie dobór wartości. Wykonawca uznał puls za kanał drugi, a za pierwszy obecność pierścienia, która sufitu nie ma. **To rozstrzyga człowiek, nie pomiar**: jeśli pulsu nie widać, zapisz to jako wynik i zostaw pierścień bez pulsu, zamiast podnosić amplitudę ponad rozmiar komórki.
 
 - [ ] **Krok 0 (przed przebiegiem): uszczelnij kontrolę — kamera nie może celować w pytaną komórkę**
 
@@ -221,6 +223,7 @@ Najpierw usuń wzorzec migający, bo będziesz w tym pliku i tak. Zadanie 4 znal
 - [ ] `LIGHT_BANDS[0] = 0`, a liczba komórek rozjeżdżających się między renderem a symulacją wynosi **zero**
 - [ ] Siatka komórek widoczna, a odległość barw przez terminator **nie spadła**
 - [ ] Dziesięć typów budynków na ekranie, stan `powered` i uszkodzenie czytelne bez UI
+- [ ] Rozstrzygnięte przez człowieka, czy cieniowanie jednostki czynnikiem 0,8463 jest widoczne
 - [ ] Rozstrzygnięte przez człowieka, czy puls pierścienia alarmu jest widoczny przy docelowej amplitudzie
 - [ ] Trzy typy jednostek, płynny ruch, spalanie widoczne
 - [ ] Budżet klatki zmierzony przy 481 jednostkach, z zapisaną maszyną
