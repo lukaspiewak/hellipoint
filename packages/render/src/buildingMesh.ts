@@ -54,7 +54,7 @@ import type { Rgb } from './shading.js';
  * |---|---|---|
  * | `shell` | graniastosłup sześciokątny, ciemny | obecność budynku + jego TYP (rozmiar bryły) |
  * | `core`  | płaski sześciokąt na szczycie, jasny | `hp` — POLE jasnego rdzenia i jego BARWA |
- * | `alert` | płaski pierścień wokół podstawy, dwutonowy, pulsujący | `powered === false` |
+ * | `alert` | płaski pierścień wokół podstawy, dwutonowy | `powered === false` |
  *
  * Każda to jeden `InstancedMesh`, czyli trzy wywołania rysowania niezależnie od tego, czy
  * budynków jest jeden, czy 1442.
@@ -85,10 +85,16 @@ import type { Rgb } from './shading.js';
  * Kodowanie przez ZNIKNIĘCIE jest też z natury słabsze od kodowania przez POJAWIENIE SIĘ:
  * brak czegoś trzeba zauważyć, obecność czegoś rzuca się w oczy sama.
  *
- * Dlatego stan niezasilony DOKŁADA pierścień, zamiast cokolwiek zabierać, pierścień jest
- * dwutonowy z tego samego powodu co budynek, a jego promień PULSUJE (patrz
- * `alertPulseScale`) — ruch jest jedynym kanałem, którego pasma terenu w ogóle nie zajmują,
- * bo teren jest nieruchomy.
+ * Dlatego stan niezasilony DOKŁADA pierścień, zamiast cokolwiek zabierać, i pierścień jest
+ * dwutonowy z tego samego powodu co budynek.
+ *
+ * Do rundy naprawczej 2 promień pierścienia dodatkowo PULSOWAŁ — ruch jest jedynym kanałem,
+ * którego pasma terenu w ogóle nie zajmują, bo teren jest nieruchomy. Puls odpadł nie
+ * dlatego, że był złym pomysłem, tylko dlatego, że komórka jest za mała, żeby pomieścić i
+ * jego wychylenie, i dwa pasy obręczy, każde ponad progiem widoczności jednego piksela
+ * (rachunek przy `ALERT_RADIUS_FACTOR`). Ruch bez sufitu narzuconego rozmiarem komórki jest
+ * możliwy przez OBRACANIE obręczy z segmentów zamiast jej skalowania; rozstrzyga to bramka
+ * Zadania 5.
  *
  * ## Dlaczego `hp` jest kodowane POLEM, a nie samą barwą
  *
@@ -129,9 +135,7 @@ import type { Rgb } from './shading.js';
  * > Do rundy naprawczej 1 stało tu 0,022 (bryła 2,2). Zmniejszone razem z naprawą
  * > `ALERT_RADIUS_FACTOR`: pierścień alarmu musiał się skurczyć, żeby zmieścić się w komórce,
  * > a widoczna obręcz to `promień pierścienia − promień bryły` — te 0,2 jednostki oddane
- * > przez bryłę wracają jako 0,2 jednostki obręczy przy KAŻDYM budynku. Przy 2,2 widoczna
- * > obręcz `CORE` wynosiłaby 0,35 jednostki (1,1 px z widoku domyślnego), przy 2,0 wynosi
- * > **0,55** (1,8 px).
+ * > przez bryłę wracają jako 0,2 jednostki obręczy przy KAŻDYM budynku.
  */
 export const BUILDING_RADIUS_FACTOR = 0.02; // [WYGLĄD]
 
@@ -141,44 +145,56 @@ export const BUILDING_HEIGHT_FACTOR = 0.024; // [WYGLĄD]
 /**
  * `[WYGLĄD]` Zwężenie bryły ku górze: promień szczytu jako ułamek promienia podstawy.
  * Sylwetka zwężona ku górze czyta się jako budynek, walec — jako kropka wyciągnięta w górę.
- *
- * **Nie wystarczy, że jest WIĘKSZE niż `CORE_RADIUS_FACTOR` — musi być większe O TYLE, żeby
- * ciemna obwódka wokół rdzenia była widoczna.** To ona, a nie sam rdzeń, niesie budynek na
- * paśmie dnia (kontrast rdzenia wobec dnia to 1,04) i ona oddziela czerwony rdzeń od
- * pomarańczu zmierzchu (odległość barw w sRGB zaledwie 0,195). Do rundy naprawczej 1
- * strażnikiem była wyłącznie ostra nierówność, więc **0,56 przechodziło komplet testów** —
- * a obwódka schodziła wtedy z 0,54 jednostki do 0,02, czyli do setnych części piksela.
- *
- * Dzisiejsza szerokość obwódki: `promień × (SHELL_TAPER − CORE_RADIUS_FACTOR)` =
- * **0,5400** dla największej bryły, **0,1836** dla `PYLON`-a. Test 3 przypina próg na
- * różnicy (≥ 0,20) i próg bezwzględny na największej bryle (≥ 0,35 jednostki, czyli
- * ok. 1,1 px z widoku domyślnego).
+ * Szczyt musi zostać szerszy od rdzenia o `CORE_RIM_FACTOR` — patrz niżej.
  */
 export const SHELL_TAPER = 0.82; // [WYGLĄD]
 
-/** `[WYGLĄD]` Promień jasnego rdzenia przy PEŁNYM `hp`, jako ułamek promienia podstawy. */
-export const CORE_RADIUS_FACTOR = 0.55; // [WYGLĄD]
+/**
+ * `[WYGLĄD]` Szerokość ciemnej obwódki między jasnym rdzeniem a krawędzią szczytu skorupy,
+ * jako ułamek promienia planety. Promień rdzenia przy pełnym `hp` to
+ * `promień_szczytu − ta_szerokość`, więc obwódka jest **JEDNAKOWA dla wszystkich dziesięciu
+ * typów**: 0,35 jednostki, czyli 1,13 piksela z widoku domyślnego.
+ *
+ * ## Dlaczego stała szerokość, a nie ułamek promienia bryły (runda naprawcza 2)
+ *
+ * Do rundy 2 rdzeń miał promień `0,55 × promień bryły`, czyli obwódka była PROPORCJONALNA.
+ * Skutek: spełniała próg widoczności wyłącznie dla `CORE` (1,74 px), a dla dziewięciu
+ * pozostałych typów leżała poniżej — `PYLON` miał **0,59 px**. Ciemna obwódka to
+ * zadeklarowany nośnik czytelności budynku na paśmie dnia (rdzeń ma tam kontrast 1,04) i
+ * jedyne, co oddziela czerwony rdzeń od pomarańczu zmierzchu (odległość barw 0,195) — dla
+ * większości typów po prostu jej nie było.
+ *
+ * Obwódka jest RAMKĄ, a ramki mają stałą szerokość niezależnie od wielkości tego, co
+ * obramowują — dokładnie tak jak ramka próbki w legendzie mapy. Ta zmiana jest naprawą
+ * wzorca, nie zestrojeniem liczby: przy proporcji żaden próg postawiony na MINIMUM po
+ * populacji nie dałby się spełnić bez zrównania wszystkich typów co do wielkości.
+ *
+ * Warunek konieczny: każdy typ musi mieć szczyt szerszy niż ta obwódka, inaczej rdzeń
+ * miałby promień ujemny. Najmniejszy szczyt (`PYLON`) ma 1,0496 przy obwódce 0,35.
+ */
+export const CORE_RIM_FACTOR = 0.0035; // [WYGLĄD]
 
 /**
  * `[WYGLĄD]` Promień rdzenia przy `hp === 0`, jako ułamek jego promienia przy pełnym `hp`.
  *
- * NIE zero: rdzeń to jedyny ton budynku widoczny na paśmie nocy (patrz komentarz modułu),
- * więc zjechanie do zera znaczyłoby „budynek tuż przed zniszczeniem znika z nocnej
- * półkuli".
+ * Ta jedna liczba rozdziela DWA progi widoczności, które ciągną w przeciwne strony, i musi
+ * spełnić OBA dla NAJMNIEJSZEGO typu (`PYLON`), nie dla największego:
  *
- * **Ale też NIE blisko jedynki, i to jest strona, której do rundy naprawczej 1 nic nie
- * pilnowało: 0,985 przechodziło komplet testów** — rdzeń kurczyłby się o 1,5% promienia
- * między pełnym `hp` a zerem, czyli kanał geometryczny byłby martwy, a asercja kierunkowa
- * („kolejny promień jest mniejszy") nadal prawdziwa. Wielkość, którą trzeba ograniczyć,
- * to POLE: 0,42 promienia daje **0,1764 pola**, czyli rdzeń rozbitego budynku ma niecałą
- * piątą część powierzchni zdrowego. Test 9 przypina próg pola (≤ 0,36, czyli ≤ 0,6
- * promienia) i próg bezwzględny na największej bryle (skok promienia ≥ 0,35 jednostki).
+ *   • rdzeń przy zerowym `hp` musi zostać widoczny — to jedyny ton budynku widoczny na
+ *     paśmie nocy (skorupa ma tam 1,57), więc zjechanie do zera znaczyłoby „budynek tuż
+ *     przed zniszczeniem znika z nocnej półkuli";
+ *   • SKOK promienia między pełnym a zerowym `hp` musi być widoczny — bo to on jest
+ *     sygnałem uszkodzenia.
+ *
+ * Suma obu jest stała i równa promieniowi rdzenia przy pełnym `hp`, więc **0,5 to jedyna
+ * wartość, która dzieli budżet `PYLON`-a po równo**: 1,13 px na każdy. Przy 0,42 (do rundy
+ * naprawczej 2) rdzeń `PYLON`-a przy zerowym `hp` miał 0,77 px, czyli poniżej progu.
+ * Pole rdzenia spada przy tym do **0,25** pola przy pełnym `hp`.
  */
-export const CORE_SCALE_MIN = 0.42; // [WYGLĄD]
+export const CORE_SCALE_MIN = 0.5; // [WYGLĄD]
 
 /**
- * `[WYGLĄD]` Promień pierścienia alarmu (`powered === false`) w spoczynkowej fazie pulsu,
- * jako ułamek promienia planety.
+ * `[WYGLĄD]` Promień pierścienia alarmu (`powered === false`), jako ułamek promienia planety.
  *
  * ## Runda naprawcza 1: ta stała była ZA DUŻA, a strażnik mierzył nie tę wielkość
  *
@@ -191,91 +207,78 @@ export const CORE_SCALE_MIN = 0.42; // [WYGLĄD]
  *   środek → KRAWĘDŹ obrysu, minimum:   **3,1720**   ← wiążąca
  *   środek → NAROŻNIK obrysu, minimum:  **3,9208**   ← z tym porównywał test
  *
- * Skutek na dzisiejszej geometrii, policzony nie oszacowany: **12 komórek, w których
- * pierścień przecinał kratę już w spoczynku** (dokładnie wszystkie 12 pięciokątów, czyli
- * najmniejsze komórki planety) i **72 komórki, w których wchodził na sąsiada na szczycie
- * pulsu**, największe wyjście **0,6360**. Pierścień jest przy tym uniesiony wyżej niż krata
- * (0,15 + strzałka kontra `OUTLINE_LIFT × 100 = 0,20`), więc rysował PO niej, nie pod nią —
- * a dla budynku przy terminatorze znaczyło to bursztyn po granicy dnia i nocy, czyli po
- * własności nadrzędnej wobec wszystkiego, co ta faza dodaje (`global-constraints.md`).
+ * Skutek na ówczesnej geometrii, policzony nie oszacowany: **12 komórek, w których pierścień
+ * przecinał kratę już w spoczynku** (dokładnie wszystkie 12 pięciokątów, czyli najmniejsze
+ * komórki planety) i **72 komórki, w których wchodził na sąsiada na szczycie pulsu**,
+ * największe wyjście **0,6360**. Pierścień jest przy tym uniesiony wyżej niż krata, więc
+ * rysował PO niej, nie pod nią — a dla budynku przy terminatorze znaczyło to bursztyn po
+ * granicy dnia i nocy, czyli po własności nadrzędnej wobec wszystkiego, co ta faza dodaje
+ * (`global-constraints.md`).
  *
- * To jest ten sam rodzaj wady, co „`Math.hypot` przepuścił stałą o odwróconym znaku":
- * asercja na wielkości, która nie jest tą, o którą chodzi. Prawidłową liczbę miałem przy tym
- * we własnym komentarzu jedną stałą wyżej (promień wpisany 3,404) i jej nie użyłem.
+ * ## Runda naprawcza 2: PULS USUNIĘTY, promień podniesiony do maksimum
+ *
+ * Budżet między największą bryłą (2,0) a sufitem komórki (3,1720) wynosi **1,17 jednostki**,
+ * czyli ok. 3,8 piksela z widoku domyślnego. Muszą się w nim zmieścić TRZY rzeczy naraz:
+ * jasny pas obręczy (nośnik alarmu na nocy), ciemny pas (nośnik na dniu i zmierzchu) oraz —
+ * gdyby puls został — jego wychylenie. Każde z nich osobno musi przekroczyć piksel, bo
+ * §5.3 raportu tego zadania ustaliło OBEJRZENIEM, że pas cieńszy niż piksel jest niewidoczny.
+ *
+ * Trzy razy po pikselu mieści się w 3,8 piksela z zapasem 0,8 px — czyli tylko wtedy, gdy
+ * KAŻDA z trzech wielkości stoi dokładnie na progu. To jest definicja strojenia pod test.
+ * Wybór: **puls odpada, obręcz dostaje cały budżet.** Uzasadnienie kierunku: obecność
+ * pierścienia jest kanałem PIERWSZYM (potwierdzonym wzrokiem na obu skalach i przez dwa
+ * przeglądy), puls był kanałem drugim i nigdy nie został potwierdzony wzrokiem przy
+ * docelowej amplitudzie. Po usunięciu każdy pas ma **1,66 px** przy najgorszym (największym)
+ * budynku — zamiast 1,56 px pasa i 1,56 px wychylenia, z których żadne nie miało zapasu.
+ *
+ * Ruch jako kanał NIE JEST wykluczony na zawsze: droga bez sufitu narzuconego rozmiarem
+ * komórki istnieje (obręcz z segmentów, OBRACANA zamiast skalowanej — rotacja nie zmienia
+ * zajmowanego miejsca). Rozstrzyga to człowiek w bramce Zadania 5.
  *
  * ## Dzisiejsze liczby
  *
- *   spoczynek **2,5500**, szczyt pulsu **3,0345**, zapas do krawędzi **0,1375** (4,3%)
- *   komórek z przekroczeniem: **0 z 1442**, w KAŻDEJ fazie pulsu
- *   widoczna obręcz poza największą bryłą: **0,5500** w spoczynku, **1,0345** na szczycie
+ *   promień **3,0300**, zapas do krawędzi **0,1420** (4,5%), komórek z przekroczeniem **0 z 1442**
+ *   widoczna obręcz poza największą bryłą: **1,0300** (3,32 px)
  *
  * Pierścień ma rozmiar STAŁY, niezależny od typu budynku: to alarm, a nie część bryły.
  * Alarm o zmiennej wielkości byłby najmniejszy akurat przy najmniejszych budynkach —
  * a najmniejszy z nich to `PYLON`, czyli szkielet sieci energetycznej, której awaria
  * ten alarm zgłasza.
  */
-export const ALERT_RADIUS_FACTOR = 0.0255; // [WYGLĄD]
+export const ALERT_RADIUS_FACTOR = 0.0303; // [WYGLĄD]
 
 /**
- * `[WYGLĄD]` Wewnętrzna krawędź pierścienia alarmu, jako ułamek jego promienia.
+ * `[WYGLĄD]` Wewnętrzna krawędź pierścienia alarmu, jako ułamek jego promienia (1,8786).
  *
  * Pierwsza wersja miała tu 0,8, czyli obręcz szerokości 0,59 jednostki świata. **Obejrzane
- * z widoku CAŁEJ TARCZY: przy 3,2 piksela na jednostkę oba pasy razem miały 1,9 piksela, a
- * każdy z osobna mniej niż piksel — alarmu nie było widać w ogóle**, mimo że macierze
- * instancji były poprawne, a testy zielone. Obręcz ma teraz 0,969 jednostki i wolno jej
- * sięgnąć pod bryłę największego budynku (1,58 kontra 2,0), bo część schowana pod budynkiem
- * nic nie kosztuje — o widoczności alarmu decyduje `promień pierścienia − promień bryły`,
- * czyli to, co wystaje NA ZEWNĄTRZ.
+ * z widoku CAŁEJ TARCZY: oba pasy razem miały 1,9 piksela, a każdy z osobna mniej niż
+ * piksel — alarmu nie było widać w ogóle**, mimo że macierze instancji były poprawne, a
+ * testy zielone. (Runda naprawcza 1 skasowała przy okazji jedyną asercję, która tę wartość
+ * wykluczała; test 8 wiąże ją teraz wprost, przez SZEROKOŚĆ PASÓW, a nie przez różnicę
+ * promieni — patrz `ALERT_SPLIT_FACTOR`.)
+ *
+ * Krawędź wewnętrzna LEŻY POD bryłą największych budynków (1,8786 kontra 2,0) i to jest
+ * świadome: część schowana pod budynkiem nic nie kosztuje. Ale właśnie dlatego widoczności
+ * alarmu NIE WOLNO mierzyć różnicą promieni — trzeba mierzyć, ile z każdego PASA zostaje
+ * na zewnątrz bryły.
  */
 export const ALERT_INNER_FACTOR = 0.62; // [WYGLĄD]
 
 /**
- * `[WYGLĄD]` Granica między jasnym a ciemnym pasem pierścienia, jako ułamek promienia.
- * Dobrana tak, żeby OBA pasy miały DOKŁADNIE tę samą szerokość (0,4845 jednostki w
- * spoczynku): pas ciemny niesie alarm na dniu i zmierzchu, jasny na nocy, więc żaden nie
- * może być pasem resztkowym. Jasny leży WEWNĄTRZ, ciemny NA ZEWNĄTRZ — bo to jasny pas
- * dubluje się z ciemną bryłą budynku po sąsiedzku, a ciemny musi mieć czyste, jasne tło
- * dnia tuż obok.
+ * `[WYGLĄD]` Granica między jasnym a ciemnym pasem pierścienia, jako ułamek promienia
+ * (2,5149). Dobrana tak, żeby dla NAJWIĘKSZEJ bryły — czyli w najgorszym przypadku, bo to
+ * ona zasłania najwięcej — oba pasy zostały na zewnątrz w tej samej szerokości: jasny
+ * `2,5149 − 2,0 = 0,5149`, ciemny `3,0300 − 2,5149 = 0,5151`. Po 1,66 piksela.
+ *
+ * Pas ciemny niesie alarm na dniu i zmierzchu, jasny na nocy, więc **żaden nie może być
+ * pasem resztkowym** — i do rundy naprawczej 2 to zdanie nie miało żadnego strażnika:
+ * 0,63 zabijało pas jasny, 0,99 pas ciemny, oba przechodziły komplet testów. Wiąże to teraz
+ * test 8, minimum po wszystkich dziesięciu typach, w pikselach.
+ *
+ * Jasny leży WEWNĄTRZ, ciemny NA ZEWNĄTRZ — bo to jasny pas dubluje się z ciemną bryłą
+ * budynku po sąsiedzku, a ciemny musi mieć czyste, jasne tło dnia tuż obok.
  */
-export const ALERT_SPLIT_FACTOR = 0.81; // [WYGLĄD]
-
-/** `[WYGLĄD]` Okres pulsu pierścienia alarmu w sekundach. */
-export const ALERT_PULSE_PERIOD_SECONDS = 0.9; // [WYGLĄD]
-
-/**
- * `[WYGLĄD]` Amplituda pulsu: promień pierścienia zmienia się w zakresie
- * `[1, 1 + ALERT_PULSE_AMPLITUDE]` razy `ALERT_RADIUS_FACTOR`.
- *
- * Puls tylko ROŚNIE (nie oscyluje wokół promienia spoczynkowego), żeby minimum pulsu było
- * jednocześnie minimum promienia — dzięki temu warunek „pierścień nie wychodzi poza
- * komórkę" trzeba sprawdzić w jednym punkcie (szczycie), a nie na całym cyklu.
- *
- * **Tę liczbę ogranicza ROZMIAR KOMÓRKI, nie gust.** Przy szczycie pulsu promień zewnętrzny
- * wynosi **3,0345**, a najmniejsza odległość środka od KRAWĘDZI obrysu to **3,1720** —
- * zostaje 0,1375 zapasu (4,3%). Wyjście poza komórkę znaczy rysowanie po kracie i po
- * sąsiedzie, a dla budynku przy terminatorze — po samej granicy dnia i nocy, która jest
- * nadrzędna wobec wszystkiego, co ta faza dodaje (`global-constraints.md`). Do rundy
- * naprawczej 1 ta granica była policzona z promienia OPISANEGO i pierścień ją łamał w 72
- * komórkach — patrz `ALERT_RADIUS_FACTOR`.
- *
- * Dlatego puls jest tu kanałem DRUGIM: pierwszym jest sama OBECNOŚĆ pierścienia, która nie
- * ma sufitu narzuconego rozmiarem komórki.
- *
- * ## Co czyni ten puls WIDOCZNYM — i co to znaczy dla testu
- *
- * Amplituda sama w sobie nic nie mówi, bo można ją wyzerować okresem. Wielkością, którą
- * trzeba ograniczyć z dołu, jest **szczytowa prędkość promieniowa krawędzi**:
- *
- *     v_max = promień_spoczynkowy × AMPLITUDA × π / OKRES  =  **1,6912 jednostki/s**
- *
- * (maksimum pochodnej `1 + A/2·(1 − cos(2πt/P))` wypada przy `sin = 1`). Przy zachowawczej
- * skali 3,22 piksela na jednostkę z widoku domyślnego (`INITIAL_DISTANCE_FACTOR`, płótno
- * 900 px) to **5,4 px/s**, czyli krawędź przesuwa się o ponad półtora piksela w ciągu
- * jednego rzutu oka (0,3 s). Test 7 przypina próg **1,0 jednostki/s** i oblewa go zarówno
- * amplituda 0,004, jak i okres 90 s — dwie mutacje, które przechodziły do rundy naprawczej 1,
- * bo asercja była zbudowana z tej samej stałej, którą testowała.
- */
-export const ALERT_PULSE_AMPLITUDE = 0.19; // [WYGLĄD]
+export const ALERT_SPLIT_FACTOR = 0.83; // [WYGLĄD]
 
 /**
  * `[WYGLĄD]` O ile jasny rdzeń unosi się ponad szczyt skorupy i o ile pierścień alarmu
@@ -366,21 +369,32 @@ const ALERT_SIDES = 24; // [WYGLĄD]
  * Do rundy naprawczej 1 ta tabela była przypięta WYŁĄCZNIE do samej siebie (test sprawdzał,
  * że macierze zgadzają się z tabelą, i że dziesięć par jest różnych), więc `PYLON` o
  * promieniu **0,03** — bryła o średnicy 0,2 piksela, czyli typ znikający z ekranu —
- * przechodził komplet testów. Test 5 ma teraz próg bezwzględny: KAŻDY typ ma promień
- * ≥ 0,50 i wysokość ≥ 0,50 jednostki świata (najmniejsze dziś: `PYLON` 0,680 promienia,
- * `SOLAR_PANEL` 0,720 wysokości).
+ * przechodził komplet testów. Test 5 ma próg bezwzględny na KAŻDYM typie.
+ *
+ * ## Runda naprawcza 2: dolna granica podniesiona z 0,34 na 0,64
+ *
+ * Najmniejszy typ musi udźwignąć OBA progi rdzenia (widoczny przy zerowym `hp` ORAZ widoczny
+ * skok promienia), a ich suma równa się promieniowi rdzenia przy pełnym `hp`, czyli
+ * `promień × SHELL_TAPER − CORE_RIM_FACTOR × 100`. Dwa piksele po jednym wymagają promienia
+ * bryły co najmniej **1,266**, czyli czynnika **0,633**. `PYLON` stoi na 0,64 (bryła 1,28) i
+ * daje 1,13 px na każdy z nich.
+ *
+ * Kosztem jest sylwetka: `PYLON` był wcześniej dwukrotnie cieńszy niż wszystko inne, dziś
+ * jest „tylko" najcieńszy. W zamian dostał największą wysokość w całej tabeli (1,6, więcej
+ * niż `CORE`), bo maszt CZYTA SIĘ wysokością, nie brakiem szerokości — i pozostaje jedynym
+ * typem, którego wysokość przekracza średnicę.
  */
 export const BUILDING_SHAPES: Readonly<Record<BuildingType, { readonly radius: number; readonly height: number }>> = {
   CORE: { radius: 1.0, height: 1.45 },
-  BARRICADE: { radius: 0.86, height: 0.42 },
-  PYLON: { radius: 0.34, height: 1.35 },
-  SOLAR_PANEL: { radius: 0.9, height: 0.3 },
-  BATTERY: { radius: 0.76, height: 0.62 },
-  EXTRACTOR: { radius: 0.8, height: 0.7 },
-  KINETIC_TURRET: { radius: 0.72, height: 0.95 },
-  LASER_TURRET: { radius: 0.66, height: 1.2 },
-  GEOTHERMAL_CAP: { radius: 0.92, height: 0.55 },
   EVACUATION_MODULE: { radius: 0.96, height: 1.3 },
+  GEOTHERMAL_CAP: { radius: 0.92, height: 0.55 },
+  SOLAR_PANEL: { radius: 0.9, height: 0.3 },
+  BARRICADE: { radius: 0.86, height: 0.42 },
+  EXTRACTOR: { radius: 0.8, height: 0.7 },
+  BATTERY: { radius: 0.76, height: 0.62 },
+  KINETIC_TURRET: { radius: 0.72, height: 0.95 },
+  LASER_TURRET: { radius: 0.68, height: 1.2 },
+  PYLON: { radius: 0.64, height: 1.6 },
 }; // [WYGLĄD]
 
 // --- Funkcje czyste: kodowanie stanów --------------------------------------------------
@@ -424,19 +438,6 @@ export function writeCoreColor(fraction: number, out: Float32Array, offset: numb
   }
 }
 
-/**
- * Mnożnik promienia pierścienia alarmu w chwili `timeSeconds`: `1 + A·(1 - cos)/2`, czyli
- * gładki puls w zakresie `[1, 1 + ALERT_PULSE_AMPLITUDE]` o okresie
- * `ALERT_PULSE_PERIOD_SECONDS`, zaczynający się w minimum przy `timeSeconds === 0`.
- *
- * Ruch jest tu kanałem NIEZALEŻNYM od barwy i kształtu, bo teren jest nieruchomy — a
- * `powered === false` to stan, który ma się rzucić w oczy w środku ataku, gdy wzrok gracza
- * jest gdzie indziej (§5.1).
- */
-export function alertPulseScale(timeSeconds: number): number {
-  const phase = (timeSeconds / ALERT_PULSE_PERIOD_SECONDS) * Math.PI * 2;
-  return 1 + ALERT_PULSE_AMPLITUDE * 0.5 * (1 - Math.cos(phase));
-}
 
 // --- Geometrie brył (budowane RAZ, współdzielone przez wszystkie instancje) -------------
 
@@ -640,13 +641,14 @@ export interface BuildingLayer {
   readonly alert: InstancedMesh;
   /**
    * Przepisuje macierze i barwy instancji z bieżącego `SimState.buildings`. Bezpieczne do
-   * wołania co klatkę: NIC nie alokuje (test 11) i NICZEGO nie mutuje w wejściu (test 10).
+   * wołania co klatkę: NIC nie alokuje (test 16) i NICZEGO nie mutuje w wejściu (test 14).
    *
-   * `timeSeconds` napędza wyłącznie puls pierścienia alarmu — domyślne zero daje obraz
-   * statyczny, poprawny pod każdym innym względem, więc wołający, który nie ma zegara
-   * (np. test albo zrzut pojedynczej klatki), nie musi go wymyślać.
+   * Bez parametru czasu: warstwa jest STATYCZNA wobec zegara — wszystko, co pokazuje, zależy
+   * wyłącznie od `buildings`. Do rundy naprawczej 2 pierścień alarmu pulsował i brał tu
+   * `timeSeconds`; puls odpadł, bo jego wychylenie i szerokość pasów obręczy konkurowały o
+   * ten sam 1,17 jednostki między bryłą a krawędzią komórki (patrz `ALERT_RADIUS_FACTOR`).
    */
-  update(buildings: readonly (Building | null)[], timeSeconds?: number): void;
+  update(buildings: readonly (Building | null)[]): void;
   dispose(): void;
 }
 
@@ -671,6 +673,7 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
   const baseRadius = planet.radius * BUILDING_RADIUS_FACTOR;
   const baseHeight = planet.radius * BUILDING_HEIGHT_FACTOR;
   const alertRadius = planet.radius * ALERT_RADIUS_FACTOR;
+  const coreRim = planet.radius * CORE_RIM_FACTOR;
   const lift = planet.radius * SURFACE_LIFT_FACTOR;
 
   const shellGeometry = buildShellGeometry(SHELL_SIDES);
@@ -785,13 +788,12 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
     core,
     alert,
 
-    update(buildings: readonly (Building | null)[], timeSeconds = 0): void {
+    update(buildings: readonly (Building | null)[]): void {
       if (buildings.length !== cellCount) {
         throw new RangeError(
           `BuildingLayer.update: buildings.length (${buildings.length}) must equal planet.cells.length (${cellCount})`,
         );
       }
-      const pulse = alertPulseScale(timeSeconds) * alertRadius;
 
       let built = 0;
       let unpowered = 0;
@@ -824,7 +826,10 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
         // Rdzeń leży na SZCZYCIE skorupy (`height`), uniesiony o `lift` — patrz
         // `SURFACE_LIFT_FACTOR`: bez tego dwie powierzchnie leżą w tej samej płaszczyźnie
         // i biją się o bufor głębokości.
-        params[0] = radius * CORE_RADIUS_FACTOR * coreScale(fraction);
+        // Promień rdzenia liczony przez ODJĘCIE obwódki o STAŁEJ szerokości od promienia
+        // szczytu, nie przez ułamek promienia bryły — patrz `CORE_RIM_FACTOR`: przy ułamku
+        // obwódka najmniejszego typu schodziła do 0,59 piksela.
+        params[0] = (radius * SHELL_TAPER - coreRim) * coreScale(fraction);
         params[1] = 1;
         params[2] = height + lift;
         writeInstance(coreMatrices, built, i);
@@ -832,7 +837,7 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
         built++;
 
         if (!building.powered) {
-          params[0] = pulse;
+          params[0] = alertRadius;
           params[1] = 1;
           params[2] = lift;
           writeInstance(alertMatrices, unpowered, i);

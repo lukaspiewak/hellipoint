@@ -35,7 +35,6 @@ export {
   type OrbitCamera,
 } from './camera.js';
 export {
-  alertPulseScale,
   buildCellBases,
   coreScale,
   createBuildingLayer,
@@ -44,8 +43,6 @@ export {
   ALERT_COLOR_DARK,
   ALERT_COLOR_LIGHT,
   ALERT_INNER_FACTOR,
-  ALERT_PULSE_AMPLITUDE,
-  ALERT_PULSE_PERIOD_SECONDS,
   ALERT_RADIUS_FACTOR,
   ALERT_SPLIT_FACTOR,
   BUILDING_HEIGHT_FACTOR,
@@ -53,7 +50,7 @@ export {
   BUILDING_SHAPES,
   CORE_COLOR_CRITICAL,
   CORE_COLOR_HEALTHY,
-  CORE_RADIUS_FACTOR,
+  CORE_RIM_FACTOR,
   CORE_SCALE_MIN,
   SHELL_COLOR,
   SHELL_TAPER,

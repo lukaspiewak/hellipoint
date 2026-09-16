@@ -30,10 +30,9 @@ export interface PlanetScene {
    * wołający, który jeszcze nie ma symulacji (Faza 2C wnosi `Sim`), po prostu tego nie woła
    * i widzi planetę bez budynków, zamiast musieć wymyślać pustą tablicę na każdą klatkę.
    *
-   * `timeSeconds` napędza WYŁĄCZNIE puls pierścienia alarmu wokół budynków niezasilonych
-   * (patrz `alertPulseScale`), więc wołający bez zegara może go pominąć.
+   * Bez parametru czasu: warstwa budynków jest statyczna wobec zegara (`BuildingLayer.update`).
    */
-  updateBuildings(buildings: readonly (Building | null)[], timeSeconds?: number): void;
+  updateBuildings(buildings: readonly (Building | null)[]): void;
   readonly camera: OrbitCamera;
   /**
    * Przelicza proporcje kamery i `devicePixelRatio` renderera na podstawie bieżących
@@ -161,8 +160,8 @@ export function createSceneWithRenderer(
       planetMesh.updateColors(light);
       renderer.render(threeScene, camera.object);
     },
-    updateBuildings(list: readonly (Building | null)[], timeSeconds?: number): void {
-      buildings.update(list, timeSeconds);
+    updateBuildings(list: readonly (Building | null)[]): void {
+      buildings.update(list);
     },
     dispose(): void {
       if (typeof window !== 'undefined') {

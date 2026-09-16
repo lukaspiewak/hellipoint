@@ -115,10 +115,10 @@ function tick(): void {
   const elapsedSeconds = (frameStart - startTime) / 1000;
   const sunDir = sunDirection(elapsedSeconds, DEFAULT_RUN.rotationPeriod);
   lightFieldInto(planet, sunDir, light);
-  // Co klatkę, mimo że `demoBuildings` się nie zmienia: pierścień alarmu wokół budynków
-  // niezasilonych PULSUJE, więc jego macierz zależy od czasu (patrz `alertPulseScale`) —
-  // a przy okazji to jest dokładnie ten koszt, który ma się mieścić w budżecie 8 ms.
-  scene.updateBuildings(demoBuildings, elapsedSeconds);
+  // Co klatkę, mimo że `demoBuildings` się nie zmienia i warstwa jest statyczna wobec
+  // zegara: to jest dokładnie ten koszt, który w prawdziwej rozgrywce (Faza 2C) będzie
+  // płacony co klatkę i ma się mieścić w budżecie 8 ms. Licznik klatek go obejmuje.
+  scene.updateBuildings(demoBuildings);
   scene.render(light, sunDir);
 
   const frameMs = performance.now() - frameStart;
