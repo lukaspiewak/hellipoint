@@ -240,8 +240,12 @@ describe('createSceneWithRenderer — dispose() zwalnia WSZYSTKO, co posiada', (
     scene.dispose();
 
     expect(cameraDisposeSpy).toHaveBeenCalledTimes(1);
-    expect(geometryDisposeSpy).toHaveBeenCalledTimes(1);
-    expect(materialDisposeSpy).toHaveBeenCalledTimes(1);
+    // DWIE geometrie i DWA materiały od Fazy 2B, Zadanie 2: teren (`MeshBasicMaterial`) plus
+    // obrysy komórek (`LineBasicMaterial`, dziecko siatki terenu). Liczba jest tu wpisana
+    // wprost, a nie wyprowadzona z czegokolwiek w kodzie produkcyjnym — dołożenie trzeciego
+    // zasobu bez dołożenia mu `dispose()` ma ten test OBLAĆ, a nie przesunąć wraz z nim.
+    expect(geometryDisposeSpy).toHaveBeenCalledTimes(2);
+    expect(materialDisposeSpy).toHaveBeenCalledTimes(2);
     expect(fakeRenderer.disposeCalls).toBe(1);
 
     geometryDisposeSpy.mockRestore();

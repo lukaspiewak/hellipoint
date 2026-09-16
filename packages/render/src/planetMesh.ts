@@ -1,6 +1,20 @@
-import { BufferAttribute, BufferGeometry, Mesh, MeshBasicMaterial } from 'three';
+import {
+  BufferAttribute,
+  BufferGeometry,
+  LineBasicMaterial,
+  LineSegments,
+  Mesh,
+  MeshBasicMaterial,
+} from 'three';
 import type { PlanetGeometry } from './geometry.js';
-import { DEFAULT_PALETTE, writeCellColors, type Palette } from './shading.js';
+import {
+  DEFAULT_OUTLINE_PALETTE,
+  DEFAULT_PALETTE,
+  writeCellColors,
+  writeCellColorsSmooth,
+  type CellVertexRanges,
+  type Palette,
+} from './shading.js';
 
 /**
  * `THREE.Mesh` całej planety, budowany RAZ z geometrii Zadania 2, plus sposób na
@@ -14,14 +28,166 @@ export interface PlanetMesh {
   // (dokładnie to, co ten moduł konstruuje, patrz `createPlanetMesh` niżej).
   readonly mesh: Mesh<BufferGeometry, MeshBasicMaterial>;
   /**
+   * Obrysy komórek (Faza 2B, Zadanie 2) — DZIECKO `mesh`, nie osobny obiekt sceny.
+   * Wystawione dla testowalności, tym samym wzorcem co `mesh` wyżej.
+   */
+  readonly outline: LineSegments<BufferGeometry, LineBasicMaterial>;
+  /**
    * Przelicza kolory wszystkich komórek wg `light` (np. z `lightField`) i pisze je do
    * WŁASNEGO, raz zaalokowanego bufora — patrz komentarz przy `colors` niżej. Bezpieczne
    * do wołania co klatkę (do 60×/s): jedyna praca to jedno przejście `writeCellColors`
    * (już zmierzone w Zadaniu 3 jako tania funkcja czysta) plus podniesienie `needsUpdate`.
    */
-  updateColors(light: Float32Array, palette?: Palette): void;
-  /** Zwalnia geometrię i materiał Three.js. */
+  updateColors(light: Float32Array, palette?: Palette, outlinePalette?: Palette): void;
+  /**
+   * Wariant GŁADKI tego samego (`writeCellColorsSmooth`) — wyłącznie dla trybu
+   * porównawczego bramki czytelności (`readabilityGate.ts`, `setMode('smooth')`), nigdy
+   * dla renderu gry.
+   *
+   * Istnieje jako metoda, a nie jako sięgnięcie bramki po atrybut `color` tej siatki (tak
+   * było do Fazy 2B, Zadanie 2), bo od dołożenia obrysów kolor planety mieszka w DWÓCH
+   * buforach. Bramka pisząca tylko do jednego z nich zostawiłaby w trybie „smooth"
+   * wypełnienia gładkie, a kratę nadal progowaną — czyli terminator WIDOCZNY jako skok
+   * barwy obrysu, w trybie, którego cała rola polega na pokazaniu, jak wygląda render BEZ
+   * progowania. Instrument mierzyłby wtedy coś innego, niż deklaruje.
+   */
+  updateColorsSmooth(light: Float32Array, palette?: Palette, outlinePalette?: Palette): void;
+  /** Zwalnia geometrię i materiał Three.js — terenu i obrysów. */
   dispose(): void;
+}
+
+/**
+ * Pozycje obrysów komórek: dla każdej komórki zamknięta pętla po jej narożnikach, w układzie
+ * `THREE.LineSegments` (para wierzchołków na odcinek). Ten sam kształt „komórka → zakres
+ * wierzchołków" co `PlanetGeometry`, więc `writeCellColors` koloruje to bez żadnej nowej
+ * funkcji (patrz `CellVertexRanges` w `shading.ts`).
+ */
+export interface CellOutlines extends CellVertexRanges {
+  readonly positions: Float32Array;
+  readonly cellVertexStart: Uint32Array;
+  readonly cellVertexCount: Uint32Array;
+}
+
+/**
+ * `[WYGLĄD]` Jak mocno obrys komórki jest WCIĄGNIĘTY do jej środka, jako ułamek odcinka
+ * narożnik→środek.
+ *
+ * **To nie jest estetyka, tylko warunek na nienaruszalność terminatora — i o mało go nie
+ * przegapiłem.** Sąsiadujące komórki dzielą krawędź. Obrys rysowany DOKŁADNIE po krawędziach
+ * dawałby na każdej z nich DWIE pokrywające się linie (po jednej z każdej komórki), a na
+ * granicy pasm — dwie pokrywające się linie w RÓŻNYCH kolorach. Dwa skutki, oba złe:
+ * migotanie z walki o bufor głębokości oraz, znacznie gorzej, PRZYKRYCIE samej granicy.
+ * Piksele terminatora przestałyby pokazywać skok „wypełnienie nocy ↔ wypełnienie zmierzchu"
+ * (odległość barw 0,9005) i pokazywałyby skok „obrys nocy ↔ obrys zmierzchu" — zmierzone
+ * 0,5546, czyli **62% tego, co jest dziś**. Bramka Zadania 1 mierzy właśnie tę pierwszą
+ * liczbę, więc przeszłaby na pomiarze, a oko dostałoby drugą.
+ *
+ * Wciągnięcie zostawia między obrysami dwóch sąsiadów pasek ICH WŁASNYCH wypełnień, więc
+ * granica pasm zostaje narysowana pełnym skokiem palety — tak jak przed tą zmianą.
+ */
+export const OUTLINE_INSET = 0.07; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` O ile obrys jest uniesiony ponad powierzchnię terenu, jako ułamek promienia
+ * planety (pozycja wierzchołka × `1 + OUTLINE_LIFT`).
+ *
+ * Bez tego linia leży DOKŁADNIE w płaszczyźnie trójkąta wachlarza, który ją otacza (odcinek
+ * narożnik→środek należy do tego trójkąta) — czyli walczy z nim o bufor głębokości i miga.
+ * Ułamek promienia, a nie stała światowa: `createPlanet` może dostać inny `radius` (tak samo
+ * jak granice zoomu w `camera.ts`). Wartość jest mała, bo uniesienie kosztuje paralaksę pod
+ * kątem stycznym — ten sam kompromis co `MARKER_SURFACE_OFFSET_FACTOR` w `readabilityGate.ts`,
+ * tylko że tu wystarczy sześć razy mniej, bo linia nie musi wystawać ponad krzywiznę kuli,
+ * tylko ponad płaski wielobok jednej komórki.
+ */
+export const OUTLINE_LIFT = 0.002; // [WYGLĄD]
+
+/**
+ * Buduje pozycje obrysów wszystkich komórek z gotowej `PlanetGeometry` (Zadanie 2 Fazy 2A).
+ * Funkcja CZYSTA, bez Three.js — testowalna bez WebGL, tak samo jak `buildPlanetGeometry`.
+ *
+ * Układ wejścia jest kontraktem `PlanetGeometry`: wierzchołek `cellVertexStart[i]` to ŚRODEK
+ * komórki `i`, a `cellVertexStart[i] + 1 .. + cellVertexCount[i] - 1` to jej narożniki w
+ * kolejności obiegu. Obrys komórki to zamknięta pętla po tych narożnikach, wciągnięta o
+ * `OUTLINE_INSET` do środka i uniesiona o `OUTLINE_LIFT` — patrz uzasadnienia przy obu
+ * stałych. Wyjście jest w układzie `LineSegments`: dwa kolejne wierzchołki to jeden odcinek,
+ * więc komórka o `n` narożnikach zajmuje `2n` wierzchołków.
+ *
+ * Zmierzone przy `frequency 12` (1442 komórki: 12 pentagonów + 1430 heksagonów):
+ * **8640 odcinków** (12×5 + 1430×6) → 17280 wierzchołków → 51840 floatów.
+ *
+ * @throws {RangeError} gdy `cellVertexStart` i `cellVertexCount` mają różne długości —
+ *   dwie tablice indeksowane tym samym `i`, których nic nie wiąże składniowo.
+ * @throws {RangeError} gdy któraś komórka ma mniej niż 4 wierzchołki (środek + 3 narożniki).
+ *   Bez tego zdegenerowane `cellVertexCount` (np. same zera) dałoby po cichu ZERO odcinków,
+ *   czyli pusty bufor, pustą siatkę i planetę wyglądającą dokładnie tak, jak przed tą
+ *   zmianą — awarię nie do odróżnienia od „nie zaimplementowano".
+ */
+export function buildCellOutlines(geo: PlanetGeometry): CellOutlines {
+  const cellCount = geo.cellVertexStart.length;
+  if (geo.cellVertexCount.length !== cellCount) {
+    throw new RangeError(
+      `buildCellOutlines: cellVertexCount.length (${geo.cellVertexCount.length}) must equal cellVertexStart.length (${cellCount})`,
+    );
+  }
+
+  let totalVertices = 0;
+  for (let i = 0; i < cellCount; i++) {
+    const vertexCount = geo.cellVertexCount[i];
+    if (vertexCount < 4) {
+      throw new RangeError(
+        `buildCellOutlines: cell ${i} has ${vertexCount} vertices, expected at least 4 (center + 3 corners)`,
+      );
+    }
+    totalVertices += (vertexCount - 1) * 2;
+  }
+
+  const positions = new Float32Array(totalVertices * 3);
+  const cellVertexStart = new Uint32Array(cellCount);
+  const cellVertexCount = new Uint32Array(cellCount);
+
+  const lift = 1 + OUTLINE_LIFT;
+  let cursor = 0;
+  for (let i = 0; i < cellCount; i++) {
+    const start = geo.cellVertexStart[i];
+    const cornerCount = geo.cellVertexCount[i] - 1;
+    const c = start * 3;
+    const cx = geo.positions[c];
+    const cy = geo.positions[c + 1];
+    const cz = geo.positions[c + 2];
+
+    cellVertexStart[i] = cursor;
+    cellVertexCount[i] = cornerCount * 2;
+
+    for (let k = 0; k < cornerCount; k++) {
+      // Oba końce odcinka liczone tą samą formułą; narożnik dzielony przez dwa kolejne
+      // odcinki jest liczony dwa razy, zamiast trzymać bufor pośredni — arytmetyka jest
+      // tańsza od alokacji, a ta funkcja i tak biegnie RAZ, przy budowie siatki.
+      const a = (start + 1 + k) * 3;
+      const b = (start + 1 + ((k + 1) % cornerCount)) * 3;
+      cursor = writeInsetCorner(positions, cursor, geo.positions, a, cx, cy, cz, lift);
+      cursor = writeInsetCorner(positions, cursor, geo.positions, b, cx, cy, cz, lift);
+    }
+  }
+
+  return { positions, cellVertexStart, cellVertexCount };
+}
+
+/** Jeden narożnik obrysu: wciągnięty do `(cx, cy, cz)` i uniesiony. Zwraca nowy kursor. */
+function writeInsetCorner(
+  out: Float32Array,
+  cursor: number,
+  source: Float32Array,
+  src: number,
+  cx: number,
+  cy: number,
+  cz: number,
+  lift: number,
+): number {
+  const o = cursor * 3;
+  out[o] = (source[src] + (cx - source[src]) * OUTLINE_INSET) * lift;
+  out[o + 1] = (source[src + 1] + (cy - source[src + 1]) * OUTLINE_INSET) * lift;
+  out[o + 2] = (source[src + 2] + (cz - source[src + 2]) * OUTLINE_INSET) * lift;
+  return cursor + 1;
 }
 
 /**
@@ -44,6 +210,29 @@ export interface PlanetMesh {
  * `writeCellColors` sama nie alokuje nic (Zadanie 3), a alokacja per klatka rzuciłaby
  * ~30 tys. floatów pod nogi odśmiecacza sześćdziesiąt razy na sekundę, dokładnie w pętli
  * renderu (budżet klatki 8 ms, `global-constraints.md`).
+ *
+ * ## Obrysy komórek (Faza 2B, Zadanie 2)
+ *
+ * Do Fazy 2A dzienna strona planety była przy przybliżeniu JEDNOLITĄ płaszczyzną bez jednej
+ * linii: materiał bez modelu oświetlenia (wyżej) plus jeden kolor na całe pasmo znaczą, że
+ * wewnątrz pasma nie ma NIC — ani krawędzi komórek, ani punktu odniesienia. Dla Fazy 2A to
+ * nie była wada; dla tower defense, w którym rozmieszczenie jest główną decyzją gracza, jest
+ * — nie widać kraty, na której się buduje.
+ *
+ * Krata wchodzi jako OSOBNA GEOMETRIA LINII (`LineSegments`), nie jako zróżnicowanie koloru
+ * wewnątrz pasma: wypełnienia komórek zostają co do bitu takie, jak były, więc odległość barw
+ * przez terminator zostaje dokładnie ta sama (0,9005 — zmierzone przed zmianą i po niej,
+ * `shading.test.ts` test 20). Wariant „subtelne zróżnicowanie w obrębie pasma" tej własności
+ * NIE MA z definicji: cokolwiek by robił z odcieniami, najciemniejszy odcień pasma jaśniejszego
+ * leży bliżej pasma ciemniejszego niż leżał jego kolor bazowy.
+ *
+ * `LineBasicMaterial` — tak samo jak teren, BEZ modelu oświetlenia (jedyne materiały Three.js
+ * z modelem oświetlenia to `MeshLambert/Phong/Standard/Physical`; linie i tak nie mają
+ * normalnych). Obrys jest DZIECKIEM siatki terenu, nie osobnym obiektem sceny — `visible`
+ * w Three.js jest dziedziczne, więc `readabilityGate.ts`, który chowa planetę w trybie
+ * kontroli pozytywnej (`planetMesh.mesh.visible = false`), chowa też kratę, bez wiedzy o niej.
+ * To jest ważne: krata widoczna w trybie kontrolnym byłaby cue pokazującym granicę tam, gdzie
+ * kontrola ma jej NIE pokazywać — czyli kontrola przestałaby móc oblać.
  */
 export function createPlanetMesh(geo: PlanetGeometry): PlanetMesh {
   const geometry = new BufferGeometry();
@@ -58,15 +247,44 @@ export function createPlanetMesh(geo: PlanetGeometry): PlanetMesh {
   const material = new MeshBasicMaterial({ vertexColors: true });
   const mesh = new Mesh(geometry, material);
 
+  const outlines = buildCellOutlines(geo);
+  const outlineGeometry = new BufferGeometry();
+  outlineGeometry.setAttribute('position', new BufferAttribute(outlines.positions, 3));
+  const outlineColors = new Float32Array(outlines.positions.length);
+  const outlineColorAttribute = new BufferAttribute(outlineColors, 3);
+  outlineGeometry.setAttribute('color', outlineColorAttribute);
+  const outlineMaterial = new LineBasicMaterial({ vertexColors: true });
+  const outline = new LineSegments(outlineGeometry, outlineMaterial);
+  mesh.add(outline);
+
   return {
     mesh,
-    updateColors(light: Float32Array, palette: Palette = DEFAULT_PALETTE): void {
+    outline,
+    updateColors(
+      light: Float32Array,
+      palette: Palette = DEFAULT_PALETTE,
+      outlinePalette: Palette = DEFAULT_OUTLINE_PALETTE,
+    ): void {
       writeCellColors(geo, light, colors, palette);
+      writeCellColors(outlines, light, outlineColors, outlinePalette);
       colorAttribute.needsUpdate = true;
+      outlineColorAttribute.needsUpdate = true;
+    },
+    updateColorsSmooth(
+      light: Float32Array,
+      palette: Palette = DEFAULT_PALETTE,
+      outlinePalette: Palette = DEFAULT_OUTLINE_PALETTE,
+    ): void {
+      writeCellColorsSmooth(geo, light, colors, palette);
+      writeCellColorsSmooth(outlines, light, outlineColors, outlinePalette);
+      colorAttribute.needsUpdate = true;
+      outlineColorAttribute.needsUpdate = true;
     },
     dispose(): void {
       geometry.dispose();
       material.dispose();
+      outlineGeometry.dispose();
+      outlineMaterial.dispose();
     },
   };
 }

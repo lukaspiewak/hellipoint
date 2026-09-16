@@ -1,10 +1,44 @@
-import type { PlanetGeometry } from './geometry.js';
-
 /**
  * Kolor w przestrzeni 0..1 na składową — tak jak oczekuje atrybut `color` na
  * `THREE.BufferGeometry` (Zadanie 4). Zero zależności od Three.js: to sama trójka liczb.
+ *
+ * ## Te liczby są LINIOWE, nie sRGB — zmierzone na żywym płótnie (Faza 2B, Zadanie 2)
+ *
+ * Three.js (od r152) ma zarządzanie barwą włączone domyślnie i traktuje atrybut `color`
+ * jako JUŻ w przestrzeni roboczej (linear-sRGB): koduje go do sRGB dopiero na wyjściu,
+ * nie dekoduje na wejściu. Odczytane `gl.readPixels` z `apps/client` (`#app`, pasmo dnia
+ * pośrodku tarczy): `[253, 246, 223]` — dokładnie `encodeSrgb([0.98, 0.92, 0.74]) × 255`.
+ * Gdyby te trójki były sRGB, na ekranie byłoby `[250, 235, 189]`.
+ *
+ * Ma to znaczenie przy KAŻDYM liczeniu kontrastu z tych stałych: kontrast WCAG liczy się
+ * z luminancji LINIOWEJ, więc bierze te liczby wprost, natomiast „jak bardzo te dwa kolory
+ * różnią się dla oka" (odległość barw postrzegana) trzeba liczyć po ZAKODOWANIU do sRGB.
+ * Zmierzone kontrasty WCAG tej palety: noc↔zmierzch **5,38**, zmierzch↔dzień **1,79**,
+ * noc↔dzień **9,62**. Policzone z tych samych trójek potraktowanych jako sRGB wyszłoby
+ * 5,6 / 2,90 / 16,2 — czyli LEPIEJ, niż jest naprawdę, i akurat na tym boku, który jest
+ * najsłabszy (zmierzch↔dzień). Patrz `shading.test.ts`, test 21.
  */
 export type Rgb = readonly [r: number, g: number, b: number];
+
+/**
+ * Minimalny kształt, jakiego potrzebuje pisanie koloru PER KOMÓRKA do bufora wierzchołków:
+ * bufor pozycji (tylko po to, żeby znać jego długość) i zakres `[start, start + count)`
+ * wierzchołków należących do komórki `i`.
+ *
+ * Wydzielone z `PlanetGeometry` w Fazie 2B, Zadanie 2 — bo obrysy komórek (`CellOutlines`
+ * w `planetMesh.ts`) mają DOKŁADNIE tę samą strukturę „komórka → zakres wierzchołków", tylko
+ * inny bufor i inną liczbę wierzchołków na komórkę (2 na krawędź zamiast 1 na narożnik + środek).
+ * Dzięki temu `writeCellColors` koloruje obrysy TĄ SAMĄ funkcją, z tą samą `light` i tym samym
+ * `lightBand` — więc własność „obrys komórki nigdy nie pokazuje innego pasma niż jej wypełnienie"
+ * zachodzi Z KONSTRUKCJI, a nie z powtórzonej, drugiej implementacji, którą trzeba by trzymać
+ * w zgodzie. `PlanetGeometry` spełnia ten kształt strukturalnie; nic po stronie Fazy 2A się
+ * nie zmienia.
+ */
+export interface CellVertexRanges {
+  readonly positions: Float32Array;
+  readonly cellVertexStart: Uint32Array;
+  readonly cellVertexCount: Uint32Array;
+}
 
 /**
  * Progi progowania światła — `[WYGLĄD]`. Rosnące, ściśle wewnątrz (0, 1). `lightBand`
@@ -107,6 +141,48 @@ export const DEFAULT_PALETTE: Palette = [
 ]; // [WYGLĄD]
 
 /**
+ * `[WYGLĄD]` Paleta OBRYSÓW komórek (Faza 2B, Zadanie 2) — po jednym kolorze na pasmo,
+ * dokładnie tak jak `DEFAULT_PALETTE`, bo obrysy koloruje TA SAMA funkcja `writeCellColors`
+ * z tym samym `light` i tym samym `lightBand` (patrz `CellVertexRanges`).
+ *
+ * ## Dlaczego obrys MUSI zależeć od pasma, a nie być jednym, stałym kolorem
+ *
+ * Zmierzone na pikselach płótna (`gl.readPixels`, patrz komentarz przy `Rgb`): pasma
+ * wyświetlają się jako sRGB `(0,190 0,248 0,381)` / `(0,931 0,680 0,437)` /
+ * `(0,991 0,964 0,876)` — czyli ciemny granat, ciepły pomarańcz i niemal biel. ŻADEN
+ * pojedynczy kolor linii nie jest widoczny na wszystkich trzech: linia ciemna ginie w nocy,
+ * linia jasna ginie w dniu. Jednolity obrys „naprawiłby" więc widoczność kraty wyłącznie po
+ * jednej stronie terminatora — a przy okazji sam stałby się WSKAZÓWKĄ, po której stronie
+ * granicy stoi komórka („widzę kratę ⇒ dzień"), czyli cue dołożonym do tego, co bramka
+ * Zadania 1 mierzy. Obrys zależny od pasma jest widoczny wszędzie i nie niesie ani bitu
+ * ponad to, co już niesie wypełnienie.
+ *
+ * ## Dobór wartości: krok obrysu ma być WIDOCZNY, ale WYRAŹNIE MNIEJSZY niż krok terminatora
+ *
+ * Każdy obrys jest przyciemnioną (pasma 1-2) albo rozjaśnioną (pasmo 0) wersją SWOJEGO
+ * pasma, dobraną tak, żeby odległość barw od własnego wypełnienia była dla oka mniej więcej
+ * ta sama we wszystkich pasmach — zmierzone w przestrzeni sRGB (bo to ona odpowiada
+ * postrzeganiu, patrz `Rgb`): **0,226 / 0,200 / 0,214**. Dla porównania skok przez
+ * terminator (pasmo 0 ↔ 1) wynosi w tej samej przestrzeni **0,860**, czyli 3,8 razy więcej.
+ * To jest właśnie ograniczenie, które te trzy trójki mają spełniać i którego pilnuje test
+ * 22 w `shading.test.ts`: krata ma dać punkt odniesienia, a NIE konkurować z granicą
+ * dnia i nocy. Gdyby obrysy stały się równie kontrastowe co terminator, tarcza z daleka
+ * zamieniłaby się w siatkę, w której granica jest jedną z tysięcy linii.
+ *
+ * Drugie ograniczenie, też sprawdzane testem: każdy obrys jest NAJBLIŻEJ wypełnienia
+ * WŁASNEGO pasma (margines 3,03× / 3,52× / 1,67×). Obrys, który dryfuje w stronę barwy
+ * pasma SĄSIEDNIEGO, czytałby się jak wąski pasek tamtego pasma — czyli rysowałby
+ * nieistniejącą granicę wewnątrz jednolitego obszaru. Najciaśniejszy margines ma dzień,
+ * bo to jego sąsiedztwo z pasmem zmierzchu jest w tej palecie najsłabsze (kontrast WCAG
+ * 1,79 — patrz `Rgb`).
+ */
+export const DEFAULT_OUTLINE_PALETTE: Palette = [
+  [0.084, 0.119, 0.223], // noc — granat ROZJAŚNIONY (na ciemnym tle tylko jaśniejsza linia jest widoczna)
+  [0.638, 0.274, 0.084], // terminator — pomarańcz przygaszony
+  [0.729, 0.674, 0.523], // dzień — biel przygaszona do ciepłego szarobeżu
+]; // [WYGLĄD]
+
+/**
  * Indeks pasma dla danej wartości `light` (0..1, jak zwraca `lightAt`/`lightField`): liczba
  * progów `LIGHT_BANDS`, które `light` przekroczyło ŚCIŚLE. Funkcja SCHODKOWA, celowo —
  * patrz uzasadnienie przy `LIGHT_BANDS`. Zakres wyniku: `0` (na pierwszym progu lub niżej)
@@ -168,7 +244,7 @@ export function lightBand(light: number): number {
  *   `shading.test.ts`.
  */
 export function writeCellColors(
-  geo: PlanetGeometry,
+  geo: CellVertexRanges,
   light: Float32Array,
   out: Float32Array,
   palette: Palette,
@@ -252,7 +328,7 @@ export function writeCellColors(
  * jest tu wymogiem.
  */
 export function writeCellColorsSmooth(
-  geo: PlanetGeometry,
+  geo: CellVertexRanges,
   light: Float32Array,
   out: Float32Array,
   palette: Palette = DEFAULT_PALETTE,

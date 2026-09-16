@@ -10,11 +10,13 @@ export const RENDER_VERSION = '0.0.0';
 // zostały usunięte zamiast zostać martwym, nieużywanym eksportem.
 export { buildPlanetGeometry, type PlanetGeometry } from './geometry.js';
 export {
+  DEFAULT_OUTLINE_PALETTE,
   DEFAULT_PALETTE,
   LIGHT_BANDS,
   lightBand,
   writeCellColors,
   writeCellColorsSmooth,
+  type CellVertexRanges,
   type Palette,
   type Rgb,
 } from './shading.js';
@@ -32,7 +34,14 @@ export {
   ORBIT_ZOOM_SPEED,
   type OrbitCamera,
 } from './camera.js';
-export { createPlanetMesh, type PlanetMesh } from './planetMesh.js';
+export {
+  buildCellOutlines,
+  createPlanetMesh,
+  OUTLINE_INSET,
+  OUTLINE_LIFT,
+  type CellOutlines,
+  type PlanetMesh,
+} from './planetMesh.js';
 export {
   cappedPixelRatio,
   CLEAR_COLOR,

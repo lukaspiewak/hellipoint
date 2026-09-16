@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GCProfiler } from 'node:v8';
 import { createPlanet, lightField, sunDirection } from '@heliopolis/sim';
 import { buildPlanetGeometry } from '../src/geometry.js';
+import { buildCellOutlines, createPlanetMesh } from '../src/planetMesh.js';
 import { DEFAULT_PALETTE, writeCellColors } from '../src/shading.js';
 import { median, percentile } from '../src/frameStats.js';
 
@@ -200,5 +201,80 @@ describe('writeCellColors — budżet 1442 komórek / 1000 wywołań (Zadanie 5,
     expect(Math.min(...measuredRuns)).toBe(0);
     expect(Math.min(...measuredRuns, measuredAfterControl)).toBe(0);
     expect(sink).not.toBe(0); // kontrola: kontrola faktycznie się wykonała, nie została usunięta
+  });
+});
+
+/**
+ * Faza 2B, Zadanie 2: krata komórek podwoiła liczbę buforów, które pętla renderu przepisuje
+ * co klatkę (wypełnienia + obrysy). Test wyżej mierzy SAMĄ `writeCellColors`; ten mierzy
+ * CAŁĄ ścieżkę klatki `PlanetMesh.updateColors`, czyli oba przejścia plus podniesienie
+ * `needsUpdate` na obu atrybutach — bo to jest to, co faktycznie biegnie 60 razy na sekundę,
+ * a najbardziej prawdopodobny sposób zepsucia tego zadania to przebudowywanie geometrii
+ * obrysów w pętli zamiast raz, przy konstrukcji siatki.
+ *
+ * Przyrząd i jego uzasadnienie — patrz długi komentarz przy teście GC wyżej.
+ */
+describe('PlanetMesh.updateColors — cała ścieżka klatki, po dołożeniu kraty (Faza 2B, Zadanie 2)', () => {
+  it('nie alokuje NICZEGO: 2000 wywołań nie wywołuje ani jednego cyklu odśmiecania', () => {
+    const planet = createPlanet({ seed: 20260915 });
+    const geo = buildPlanetGeometry(planet);
+    const light = lightField(planet, sunDirection(0, 180));
+    const planetMesh = createPlanetMesh(geo);
+    let sink = 0;
+
+    const ITERATIONS = 2000;
+    for (let i = 0; i < 400; i++) {
+      planetMesh.updateColors(light);
+      sink += allocatingVariant();
+    }
+
+    function gcCyclesDuring(run: () => void): number {
+      const profiler = new GCProfiler();
+      profiler.start();
+      run();
+      return profiler.stop().statistics.length;
+    }
+
+    /**
+     * Wariant kontrolny: DOKŁADNIE ta sama praca plus jedno przebudowanie geometrii obrysów
+     * na wywołanie — czyli konkretny, realny błąd („buduj kratę w pętli renderu"), nie
+     * abstrakcyjna alokacja.
+     */
+    function allocatingVariant(): number {
+      const outlines = buildCellOutlines(geo);
+      planetMesh.updateColors(light);
+      return outlines.positions[0]; // ucieczka wyniku — inaczej V8 ma prawo usunąć alokację
+    }
+
+    const emptyLoop = (): void => {
+      for (let i = 0; i < ITERATIONS; i++) sink += i;
+    };
+    const measuredLoop = (): void => {
+      for (let i = 0; i < ITERATIONS; i++) planetMesh.updateColors(light);
+    };
+    const controlLoop = (): void => {
+      for (let i = 0; i < ITERATIONS; i++) sink += allocatingVariant();
+    };
+
+    const emptyRuns = [gcCyclesDuring(emptyLoop), gcCyclesDuring(emptyLoop), gcCyclesDuring(emptyLoop)];
+    const measuredRuns = [gcCyclesDuring(measuredLoop), gcCyclesDuring(measuredLoop), gcCyclesDuring(measuredLoop)];
+    const controlRuns = [gcCyclesDuring(controlLoop), gcCyclesDuring(controlLoop), gcCyclesDuring(controlLoop)];
+    const measuredAfterControl = gcCyclesDuring(measuredLoop);
+
+    console.log(
+      `[BUDGET] cykle GC na ${ITERATIONS} wywołań updateColors (3 okna) — pusta pętla: ${emptyRuns.join('/')}, updateColors: ${measuredRuns.join('/')} (po kontroli: ${measuredAfterControl}), kontrola +buildCellOutlines/wyw.: ${controlRuns.join('/')}`,
+    );
+
+    // KONTROLA POZYTYWNA przyrządu: przebudowa kraty na wywołanie MUSI dać niezerowy odczyt
+    // w KAŻDYM oknie — inaczej „0 cykli" znaczyłoby tyle, co wyłączony przyrząd.
+    expect(Math.min(...controlRuns)).toBeGreaterThanOrEqual(3);
+    // KONTROLA PODŁOGI: pętla, która na pewno nie alokuje, czyta się jako dokładnie 0.
+    expect(Math.min(...emptyRuns)).toBe(0);
+    // WŁASNOŚĆ.
+    expect(Math.min(...measuredRuns)).toBe(0);
+    expect(Math.min(...measuredRuns, measuredAfterControl)).toBe(0);
+    expect(sink).not.toBe(0);
+
+    planetMesh.dispose();
   });
 });

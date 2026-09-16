@@ -14,9 +14,8 @@ import type { Planet, Vec3 } from '@heliopolis/sim';
 import { lightField } from '@heliopolis/sim';
 import { cappedPixelRatio, CLEAR_COLOR, type SceneRenderer } from './scene.js';
 import { createCamera, type OrbitCamera } from './camera.js';
-import { buildPlanetGeometry, type PlanetGeometry } from './geometry.js';
+import { buildPlanetGeometry } from './geometry.js';
 import { createPlanetMesh, type PlanetMesh } from './planetMesh.js';
-import { writeCellColorsSmooth } from './shading.js';
 import { buildSmearedGeometry, writeSmearedColors, type SmearedGeometry } from './positiveControl.js';
 import type { GateTrial } from './terminatorPairs.js';
 
@@ -259,8 +258,7 @@ export function createReadabilityGate(
 ): ReadabilityGate {
   validatePlans(plans);
 
-  const geo: PlanetGeometry = buildPlanetGeometry(planet);
-  const planetMesh: PlanetMesh = createPlanetMesh(geo);
+  const planetMesh: PlanetMesh = createPlanetMesh(buildPlanetGeometry(planet));
   const camera = createCamera(canvas, planet.radius);
 
   // Siatka kontroli pozytywnej: WSPÓŁDZIELONE wierzchołki, budowana RAZ obok normalnej.
@@ -309,9 +307,11 @@ export function createReadabilityGate(
     if (mode === 'threshold') {
       planetMesh.updateColors(lightField(planet, plan.trials[plan.index].sunDir));
     } else if (mode === 'smooth') {
-      const colorAttr = planetMesh.mesh.geometry.getAttribute('color') as BufferAttribute;
-      writeCellColorsSmooth(geo, lightField(planet, plan.trials[plan.index].sunDir), colorAttr.array as Float32Array);
-      colorAttr.needsUpdate = true;
+      // Przez `PlanetMesh`, nie wprost do atrybutu `color` tej siatki (tak było do Fazy 2B,
+      // Zadanie 2): od dołożenia obrysów komórek kolor planety mieszka w DWÓCH buforach i
+      // sięgnięcie po jeden zostawiłoby kratę progowaną w trybie, który ma pokazywać render
+      // BEZ progowania — patrz `PlanetMesh.updateColorsSmooth`.
+      planetMesh.updateColorsSmooth(lightField(planet, plan.trials[plan.index].sunDir));
     } else {
       // `sunDir` PRZED przycięciem, nie `light` — patrz `writeSmearedColors`: `lightField`
       // spłaszcza całą półkulę nocną do jednej wartości, a krawędź tej jednolitej łaty JEST

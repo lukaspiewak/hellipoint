@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createPlanet, sunDirection, lightField } from '@heliopolis/sim';
 import { buildPlanetGeometry, type PlanetGeometry } from '../src/geometry.js';
+import { BufferAttribute } from 'three';
+import { buildCellOutlines, createPlanetMesh } from '../src/planetMesh.js';
 import {
+  DEFAULT_OUTLINE_PALETTE,
   DEFAULT_PALETTE,
   LIGHT_BANDS,
   lightBand,
@@ -496,5 +499,173 @@ describe('granica renderu kontra granica symulacji (Faza 2B, Zadanie 1, Krok 3)'
       if (referenceLight[i] > 0 !== bandWithOldThreshold(referenceLight[i]) >= 1) oldDisagreements++;
     }
     expect(oldDisagreements).toBe(8); // zmierzone w Fazie 2A dla sunDirection(0, 180)
+  });
+});
+
+describe('krata komórek a terminator (Faza 2B, Zadanie 2)', () => {
+  /**
+   * Kodowanie liniowe → sRGB (ta sama krzywa, którą stosuje Three.js na wyjściu — zmierzone
+   * na pikselach płótna, patrz komentarz przy `Rgb` w `shading.ts`). Potrzebne, bo „jak
+   * bardzo te dwa kolory różnią się DLA OKA" nie jest odległością w przestrzeni liniowej:
+   * ta sama różnica liniowa 0,1 jest wielkim skokiem przy 0,03 i ledwie widoczna przy 0,9.
+   */
+  const encodeSrgb = (v: number): number => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+  const toSrgb = (c: Rgb): Rgb => [encodeSrgb(c[0]), encodeSrgb(c[1]), encodeSrgb(c[2])];
+  const distance = (a: Rgb, b: Rgb): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+  it('19. DEFAULT_OUTLINE_PALETTE ma dokładnie LIGHT_BANDS.length + 1 pozycji — ta sama kotwica na SAMĄ STAŁĄ co test 9 dla palety wypełnień', () => {
+    expect(DEFAULT_OUTLINE_PALETTE.length).toBe(LIGHT_BANDS.length + 1);
+  });
+
+  it('20. [KLUCZOWY] odległość barw przez terminator wynosi DOKŁADNIE 0,9005 na KAŻDEJ prawdziwej parze sąsiadów, w 12 fazach obrotu — wartość BEZWZGLĘDNA, nie „różnią się"', () => {
+    // To jest test, który pilnuje CAŁEGO zadania. Krata komórek weszła jako osobna geometria
+    // linii właśnie dlatego, że wypełnienia komórek zostają wtedy co do bitu takie, jakie
+    // były — a więc ta liczba też. Wariant „subtelne zróżnicowanie w obrębie pasma" musiałby
+    // ją OBNIŻYĆ z definicji: gdyby odcienie pasma jaśniejszego schodziły choć trochę w dół,
+    // najciemniejszy z nich stykałby się z pasmem ciemniejszym słabszym skokiem niż 0,9005.
+    //
+    // Asercja jest na WARTOŚĆ BEZWZGLĘDNĄ, zmierzoną przed zmianą (0,9005), a nie na
+    // „odległość obu kolorów palety" — bo ta druga poruszałaby się razem z paletą i nie
+    // mogłaby oblać dla palety, która zaciera granicę. To ten sam kształt defektu, który ta
+    // faza ma już na koncie trzykrotnie.
+    const PHASES = 12;
+    const out = new Float32Array(geo.positions.length);
+    const colorAt = (cellId: number): Rgb => {
+      const o = geo.cellVertexStart[cellId] * 3;
+      return [out[o], out[o + 1], out[o + 2]];
+    };
+
+    let d1Pairs = 0;
+    let d1Min = Number.POSITIVE_INFINITY;
+    let d1Max = 0;
+    let innerPairs = 0;
+    let innerMin = Number.POSITIVE_INFINITY;
+    let innerMax = 0;
+
+    for (let k = 0; k < PHASES; k++) {
+      const phaseLight = lightField(planet, sunDirection((k / PHASES) * 180, 180));
+      writeCellColors(geo, phaseLight, out, DEFAULT_PALETTE);
+      for (const cell of planet.cells) {
+        const bandA = lightBand(phaseLight[cell.id]);
+        for (const n of cell.neighbors) {
+          if (n <= cell.id) continue; // każda para raz
+          const bandB = lightBand(phaseLight[n]);
+          if (bandA === bandB) continue;
+          const d = distance(colorAt(cell.id), colorAt(n));
+          if (Math.min(bandA, bandB) === 0) {
+            d1Pairs++;
+            d1Min = Math.min(d1Min, d);
+            d1Max = Math.max(d1Max, d);
+          } else {
+            innerPairs++;
+            innerMin = Math.min(innerMin, d);
+            innerMax = Math.max(innerMax, d);
+          }
+        }
+      }
+    }
+
+    // KONTROLA POZYTYWNA: pętla miała na czym pracować, i to po OBU rodzajach granicy.
+    // Bez tego `Infinity`/`0` przeszłoby przez asercje niżej, gdyby żadna para się nie
+    // znalazła (np. `lightBand` zdegenerowane do stałej — wtedy granic nie ma wcale).
+    expect(d1Pairs).toBe(1636); // zmierzone: 12 faz × prawdziwe sąsiedztwa
+    expect(innerPairs).toBe(1508);
+
+    // WŁASNOŚĆ. Granica D1 (noc ↔ oświetlone) — ta, na której stoi spawn, spalanie i cała
+    // ekonomia dnia i nocy. Jedna wartość, bo progowanie daje skok między dwoma STAŁYMI
+    // kolorami, niezależnie od tego, jak blisko progu leży konkretna komórka.
+    expect(d1Min).toBeCloseTo(0.9005, 4);
+    expect(d1Max).toBeCloseTo(0.9005, 4);
+    // Granica wewnętrzna strony oświetlonej (zmierzch ↔ dzień) — słabsza, i to jest znane.
+    expect(innerMin).toBeCloseTo(0.7767, 4);
+    expect(innerMax).toBeCloseTo(0.7767, 4);
+  });
+
+  it('21. [KLUCZOWY] obrys jest WIDOCZNY na swoim paśmie, ale WYRAŹNIE słabszy niż skok przez terminator — i najbliżej barwy WŁASNEGO pasma', () => {
+    // Trzy własności palety obrysów, wszystkie na wartościach BEZWZGLĘDNYCH, wszystkie
+    // mierzone w sRGB — bo to jest przestrzeń, w której liczby odpowiadają temu, co widzi
+    // oko (patrz `encodeSrgb` wyżej i komentarz przy `Rgb` w `shading.ts`).
+    const fill = DEFAULT_PALETTE.map(toSrgb);
+    const outline = DEFAULT_OUTLINE_PALETTE.map(toSrgb);
+    const terminatorStep = distance(fill[0], fill[1]);
+
+    // Kontrola pozytywna na sam pomiar: skok przez terminator W TEJ SAMEJ przestrzeni i tym
+    // samym przyrządem, którym mierzone są kroki obrysu. Bez tego progi niżej byłyby trzema
+    // liczbami bez skali.
+    expect(terminatorStep).toBeCloseTo(0.8598, 4);
+
+    let checked = 0;
+    for (let band = 0; band < DEFAULT_PALETTE.length; band++) {
+      const step = distance(outline[band], fill[band]);
+      const label = `pasmo ${band}`;
+
+      // (1) Krata jest WIDOCZNA: linia, która nie odróżnia się od swojego wypełnienia, nie
+      //     jest kratą. Zmierzone: 0,226 / 0,200 / 0,214.
+      expect(step, label).toBeGreaterThan(0.12);
+
+      // (2) Krata NIE KONKURUJE z terminatorem. Gdyby obrysy były równie kontrastowe co
+      //     granica dnia i nocy, tarcza z daleka zamieniłaby się w siatkę, w której granica
+      //     jest jedną z tysięcy linii — czyli dokładnie to, przed czym ostrzega brief.
+      //     Próg 0,2866 to jedna trzecia zmierzonego skoku terminatora, wpisana jako liczba,
+      //     żeby nie poruszał się razem z paletą.
+      expect(step, label).toBeLessThan(0.2866);
+
+      // (3) Obrys jest NAJBLIŻEJ wypełnienia WŁASNEGO pasma. Obrys dryfujący w stronę barwy
+      //     pasma sąsiedniego czytałby się jak wąski pasek TAMTEGO pasma — czyli rysowałby
+      //     nieistniejącą granicę wewnątrz jednolitego obszaru.
+      for (let other = 0; other < fill.length; other++) {
+        if (other === band) continue;
+        expect(distance(outline[band], fill[other]), `${label} kontra wypełnienie ${other}`).toBeGreaterThan(step);
+      }
+      checked++;
+    }
+    expect(checked).toBe(DEFAULT_PALETTE.length); // pętla przeszła wszystkie pasma, nie zero
+  });
+
+  it('22. obrys KAŻDEJ komórki niesie DOKŁADNIE to pasmo, co jej wypełnienie — przez PlanetMesh.updateColors, 1442 komórki × 12 faz', () => {
+    // Mierzone przez `PlanetMesh.updateColors`, a NIE przez dwa własne wywołania
+    // `writeCellColors` — bo dwa wywołania tej samej czystej funkcji z tym samym `light`
+    // zgadzają się z definicji i taki test sprawdzałby własność swojego WEJŚCIA, nie kodu.
+    // Ryzyko jest w OKABLOWANIU: to `createPlanetMesh` decyduje, czy oba bufory dostają to
+    // samo `light` w tej samej klatce. Kolejne fazy przelatują tu przez JEDNĄ siatkę, więc
+    // pominięcie odświeżenia obrysu (krata sprzed klatki, przy odwróconym już słońcu) oblewa.
+    const planetMesh = createPlanetMesh(geo);
+    const outlines = buildCellOutlines(geo);
+    const fillAttr = planetMesh.mesh.geometry.getAttribute('color') as BufferAttribute;
+    const outlineAttr = planetMesh.outline.geometry.getAttribute('color') as BufferAttribute;
+
+    const indexOf = (palette: Palette, c: Rgb): number =>
+      palette.findIndex((p) => {
+        const q = froundRgb(p);
+        return q[0] === c[0] && q[1] === c[1] && q[2] === c[2];
+      });
+
+    const PHASES = 12;
+    let checked = 0;
+    const bandsSeen = new Set<number>();
+    for (let k = 0; k < PHASES; k++) {
+      planetMesh.updateColors(lightField(planet, sunDirection((k / PHASES) * 180, 180)));
+      const fillArr = fillAttr.array as Float32Array;
+      const outlineArr = outlineAttr.array as Float32Array;
+      for (let i = 0; i < planet.cells.length; i++) {
+        const f = geo.cellVertexStart[i] * 3;
+        const o = outlines.cellVertexStart[i] * 3;
+        const fillBand = indexOf(DEFAULT_PALETTE, [fillArr[f], fillArr[f + 1], fillArr[f + 2]]);
+        const outlineBand = indexOf(DEFAULT_OUTLINE_PALETTE, [outlineArr[o], outlineArr[o + 1], outlineArr[o + 2]]);
+        // Kontrola: oba kolory MUSZĄ pochodzić ze swojej palety. `-1` znaczyłoby, że któryś
+        // bufor niesie kolor spoza palety (np. został niezapisany, czyli same zera) — i bez
+        // tej pary asercji `-1 === -1` przeszłoby jako „zgodne pasma".
+        expect(fillBand, `komórka ${i}, faza ${k}`).toBeGreaterThanOrEqual(0);
+        expect(outlineBand, `komórka ${i}, faza ${k}`).toBeGreaterThanOrEqual(0);
+        expect(outlineBand, `komórka ${i}, faza ${k}`).toBe(fillBand);
+        bandsSeen.add(fillBand);
+        checked++;
+      }
+    }
+    expect(checked).toBe(planet.cells.length * PHASES);
+    // KONTROLA POZYTYWNA: przyrząd widział WSZYSTKIE pasma, nie jedno powtórzone 17 tysięcy
+    // razy — „zawsze zgodne" nic nie znaczy, gdy porównuje się dwa razy to samo pasmo 0.
+    expect(bandsSeen.size).toBe(DEFAULT_PALETTE.length);
+    planetMesh.dispose();
   });
 });
