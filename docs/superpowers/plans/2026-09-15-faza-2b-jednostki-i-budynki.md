@@ -184,20 +184,15 @@ Zaimplementuj oba, obejrzyj oba w ruchu i **zaraportuj, co widzisz**. Nie zgaduj
 ### Task 5: Bramka pełnego obrazu
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-09-15-faza-2b-czytelnosc.md`
+- Modify: `packages/render/src/readabilityGate.ts` (Krok 1 — uszczelnienie kontroli)
+- Modify: `packages/render/test/readabilityGate.test.ts`
+- Modify: `apps/client/gate.html` i towarzyszące źródła panelu (Krok 2 — pełna scena, pięć pytań)
+- Modify: `packages/render/test/budget.test.ts` (Krok 3 — budżet przy pełnej scenie)
+- Modify: `docs/superpowers/specs/2026-09-15-faza-2b-czytelnosc.md` (zapis wyników)
 
-Bramka z Zadania 1 badała sam teren. Ta bada **scenę, którą gracz naprawdę zobaczy**: teren plus siatka plus budynki plus jednostki, w ruchu.
+Bramka z Zadania 1 badała sam teren. Ta bada **scenę, którą gracz naprawdę zobaczy**: teren plus krata plus budynki plus jednostki, w ruchu.
 
-- [ ] **Krok 1: Trzy pytania, każde do osobnego werdyktu człowieka**
-
-1. **Czy terminator nadal jest czytelny** przy pełnej scenie? Regresja wobec Zadania 1 jest tu najgroźniejszym możliwym wynikiem i **musi zostać zapisana, nie obejdzona**.
-2. **Czy widać, który budynek jest niezasilony**, bez najeżdżania kursorem?
-3. **Czy widać, że jednostka się pali**, zanim zginie?
-4. **Czy widać cieniowanie jednostki czynnikiem 0,8464?** Zadanie 4 rozstrzygnęło pomiarem, że jednostki nie są cieniowane światłem — i dla trybu **progowego** rozstrzygnięcie jest mocne: stroboskopowanie do 20 zmian pasma na sekundę u jednostek stojących dokładnie na terminatorze, potwierdzone dwoma niezależnymi pomiarami. Ale drugie ogniwo argumentu — „łagodnego cieniowania gładkiego i tak nie widać" — **nie zostało obejrzane w granicach legalnych**. Maksymalne legalne cieniowanie zmienia rdzeń o **18/255 sRGB**; obserwacja wzrokowa, na której oparto wniosek, była przy czynniku 0,55, czyli Δ **59/255**. Ani wykonawca, ani recenzent nie rozstrzygnęli tego wzrokiem. Weź **0,8464**, nie 0,8463 ani 0,846334: granica jest **kresem dolnym, nie osiągalnym minimum** — `passesAt` zwraca `false` dla samej liczby 0,846334, a `true` dopiero od 0,8464, więc pokazanie 0,8463 pokazałoby wariant leżący o włos **poniżej** progu 3:1, czyli poza budżetem, którego ma dowodzić. (Wcześniejsza wersja tego akapitu mówiła 0,8463 — mój błąd, wykryty przy domykaniu Zadania 4.) Pokaż człowiekowi jednostkę bez cieniowania i z cieniowaniem 0,8464, na wszystkich trzech pasmach, i **zapisz odpowiedź jako wynik** — jeśli różnicy nie widać, argument domyka się i `flat` zostaje bez zastrzeżeń; jeśli widać, jest to ustalenie do Fazy 4, nie powód do zmiany teraz.
-
-5. **Czy widać, że pierścień alarmu pulsuje?** Zadanie 3 potwierdziło puls mechanicznie, ale wzrokowo dopiero po podniesieniu amplitudy do 1,0 — przy docelowej szczyt wynosi 3,808 przy obrysie najmniejszej komórki 3,913, więc sufitem jest ROZMIAR KOMÓRKI, nie dobór wartości. Wykonawca uznał puls za kanał drugi, a za pierwszy obecność pierścienia, która sufitu nie ma. **To rozstrzyga człowiek, nie pomiar**: jeśli pulsu nie widać, zapisz to jako wynik i zostaw pierścień bez pulsu, zamiast podnosić amplitudę ponad rozmiar komórki.
-
-- [ ] **Krok 0 (przed przebiegiem): uszczelnij kontrolę — kamera nie może celować w pytaną komórkę**
+- [ ] **Krok 1: uszczelnij kontrolę — PRZED jakimkolwiek przebiegiem — kamera nie może celować w pytaną komórkę**
 
 Znalezione w Zadaniu 2 i **nienaprawione tam świadomie**: `setupTrial` celuje kamerą wzdłuż normalnej pytanej komórki, więc komórka zawsze ląduje na środku tarczy. W trybie kontrolnym jasność jest monotoniczną, nieprzyciętą funkcją `dot(normal, sunDir)`, a tarcza pokazuje oba końce zakresu — więc **bezwzględna jasność środka jest częściową wskazówką**. Wykonawca Zadania 2 dostał w kontroli 12/15 przy oczekiwanych 7,5.
 
@@ -207,11 +202,23 @@ Naprawa: **kamera celuje w punkt przesunięty względem pytanej komórki o losow
 
 Po naprawie **powtórz kontrolę** i zapisz oba wyniki — przed i po. Jeśli kontrola po uszczelnieniu nadal daje istotnie więcej niż przypadek, zapisz to jako wynik, nie szukaj trzeciej poprawki: znaczyłoby to, że gładkie cieniowanie niesie więcej informacji, niż Faza 0 zmierzyła, i to jest ustalenie o grze, nie o instrumencie.
 
-- [ ] **Krok 2: Zmierz budżet klatki przy pełnej scenie**
+- [ ] **Krok 2: Pięć pytań, każde do osobnego werdyktu CZŁOWIEKA**
 
-Najpierw usuń wzorzec migający, bo będziesz w tym pliku i tak. Zadanie 4 znalazło, że asercja `expect(Math.min(...okna)).toBe(0)` na cyklach odśmiecania stwierdza **BRAK zdarzenia, które mogą wywołać inne procesy** — bezczynne okno 122 ms potrafi dać 3 cykle. Wykonawca Zadania 4 naprawił swój test (mierzy teraz RÓŻNICĘ odporną na szum); ten sam wzorzec został w `budget.test.ts:199,201` i w teście 16 `buildingMesh.test.ts`. **ODTWORZONE** przy domykaniu Zadania 4: trzy kolejne pełne przebiegi dały 577 / 576 / 575 zielonych, a log podał mechanizm wprost — bezczynne okno rejestruje **3 i 2 cykle**, mierzona pętla 0/1/1/1, czyli sygnał jest mniejszy od szumu tła. (Wcześniej zapisałem tu, że nie odtwarzam tego w dziesięciu przebiegach — puściłem je na luźnej maszynie; pod obciążeniem równoległym wychodzi natychmiast.) Naprawa wylądowała w Zadaniu 4 jako runda blokująca, bo z czerwonym pakietem nie da się zamknąć zadania; ten akapit zostaje jako zapis, skąd wada się wzięła. Napraw wzorcem z Zadania 4, nie podnoszeniem progu.
+Tych pytań **nie rozstrzyga wykonawca zadania ani przegląd** — rozstrzyga je człowiek patrzący na ekran. Zadaniem wykonawcy jest zbudować przebieg i panel tak, żeby dało się na nie odpowiedzieć, przeprowadzić własny przebieg jako sprawdzenie przyrządu (**wyraźnie oznaczony jako NIE werdykt**), i przekazać bramkę do przejścia.
+
+1. **Czy terminator nadal jest czytelny** przy pełnej scenie? Regresja wobec Zadania 1 jest tu najgroźniejszym możliwym wynikiem i **musi zostać zapisana, nie obejdzona**.
+2. **Czy widać, który budynek jest niezasilony**, bez najeżdżania kursorem?
+3. **Czy widać, że jednostka się pali**, zanim zginie?
+4. **Czy widać cieniowanie jednostki czynnikiem 0,8464?** Zadanie 4 rozstrzygnęło pomiarem, że jednostki nie są cieniowane światłem — i dla trybu **progowego** rozstrzygnięcie jest mocne: stroboskopowanie do 20 zmian pasma na sekundę u jednostek stojących dokładnie na terminatorze, potwierdzone dwoma niezależnymi pomiarami. Ale drugie ogniwo argumentu — „łagodnego cieniowania gładkiego i tak nie widać" — **nie zostało obejrzane w granicach legalnych**. Maksymalne legalne cieniowanie zmienia rdzeń o **18/255 sRGB**; obserwacja wzrokowa, na której oparto wniosek, była przy czynniku 0,55, czyli Δ **59/255**. Ani wykonawca, ani recenzent nie rozstrzygnęli tego wzrokiem. Weź **0,8464**, nie 0,8463 ani 0,846334: granica jest **kresem dolnym, nie osiągalnym minimum** — `passesAt` zwraca `false` dla samej liczby 0,846334, a `true` dopiero od 0,8464, więc pokazanie 0,8463 pokazałoby wariant leżący o włos **poniżej** progu 3:1, czyli poza budżetem, którego ma dowodzić. (Wcześniejsza wersja tego akapitu mówiła 0,8463 — mój błąd, wykryty przy domykaniu Zadania 4.) Pokaż człowiekowi jednostkę bez cieniowania i z cieniowaniem 0,8464, na wszystkich trzech pasmach, i **zapisz odpowiedź jako wynik** — jeśli różnicy nie widać, argument domyka się i `flat` zostaje bez zastrzeżeń; jeśli widać, jest to ustalenie do Fazy 4, nie powód do zmiany teraz.
+
+5. **Czy widać, że pierścień alarmu pulsuje?** Zadanie 3 potwierdziło puls mechanicznie, ale wzrokowo dopiero po podniesieniu amplitudy do 1,0 — przy docelowej szczyt wynosi 3,808 przy obrysie najmniejszej komórki 3,913, więc sufitem jest ROZMIAR KOMÓRKI, nie dobór wartości. Wykonawca uznał puls za kanał drugi, a za pierwszy obecność pierścienia, która sufitu nie ma. **To rozstrzyga człowiek, nie pomiar**: jeśli pulsu nie widać, zapisz to jako wynik i zostaw pierścień bez pulsu, zamiast podnosić amplitudę ponad rozmiar komórki.
+
+
+- [ ] **Krok 3: Zmierz budżet klatki przy pełnej scenie**
 
 2A mierzyła 0,200 ms mediany przy samym terenie, przy budżecie 8 ms. Zmierz przy szczycie z Fazy 1C — **481 jednostek i kilkadziesiąt budynków** — i zapisz maszynę, na której mierzyłeś.
+
+Wzorzec migający w testach cykli odśmiecania (`expect(Math.min(...okna)).toBe(0)`) **został już naprawiony w Zadaniu 4**, w czterech miejscach, przyrządem wyniesionym do `packages/render/test/support/gcWindows.ts`. Nie naprawiaj go ponownie — **użyj go**. Próg stoi na oknie bezczynnym plus jeden cykl, a nie na zerze i nie na kontroli pozytywnej: kontrola to „mierzona praca plus jedna alokacja na element", więc rośnie razem z defektem i podnosi próg przed nim. Kontrola zostaje jako asercja czułości.
 
 ---
 
