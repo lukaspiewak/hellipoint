@@ -70,12 +70,33 @@ import { lightBand, LIGHT_BANDS, type Rgb } from './shading.js';
  * `unitShade`) i obejrzane w ruchu, na obu skalach. Wynik jest w raporcie zadania; sam
  * mechanizm zostaje, bo bramka Zadania 5 może chcieć obejrzeć go jeszcze raz cudzymi oczami.
  *
- * Domyślny tryb to `'flat'` — jednostka NIE jest cieniowana światłem — i stoi za tym
- * rachunek, nie gust: dwutonowość zjada CAŁY budżet kontrastu tej palety, więc dowolne
- * przyciemnienie jednostki poniżej czynnika **0,8463** łamie próg 3:1 wobec obrysu nocy
- * (to obrys, nie wypełnienie, jest tu wiążący — wypełnienie nocy znosi jeszcze 0,4672).
- * Powyżej tego czynnika cieniowania po prostu nie widać. Pilnuje tego test 17, który liczy
- * tę granicę, zamiast ją przepisywać.
+ * Domyślny tryb to `'flat'` — jednostka NIE jest cieniowana światłem. Decyzja stoi na
+ * STROBOSKOPOWANIU trybu progowego, zmierzonym dwukrotnie i niezależnie (raz przeze mnie,
+ * raz przez przegląd, własnym rusztowaniem i własnym układem budynków — te same liczby):
+ * jednostka stojąca na terminatorze zmienia pasmo do **20 razy na sekundę**, co jest falą
+ * prostokątną 10 Hz o amplitudzie 0,23 jasności; **15% tych zmian zachodzi na jednostkach,
+ * które się nie ruszyły** — to sam terminator po nich przechodzi, więc nie usunie tego żadne
+ * wygładzanie trajektorii. Wariant gładki tego nie ma (największy skok 0,0444 w ticku).
+ *
+ * Drugą przesłanką jest budżet kontrastu: dwutonowość zjada go CAŁY, więc przyciemnienie
+ * jednostki poniżej czynnika **0,846334** łamie próg 3:1 wobec obrysu nocy (to obrys, nie
+ * wypełnienie, jest tu wiążący — wypełnienie nocy znosi jeszcze 0,467232; cieniowanie samego
+ * rdzenia daje IDENTYCZNĄ granicę, więc obwódka nigdy nie wiąże). Pilnuje tego test 17, który
+ * liczy tę granicę bisekcją, zamiast ją przepisywać.
+ *
+ * ## Czego NIE wiem: jak wygląda łagodne cieniowanie GŁADKIE w granicach legalnych
+ *
+ * Obserwacja wzrokowa („cały wiersz SWARM-a gaśnie w tło na nocnej półkuli") została zrobiona
+ * przy czynniku **0,55**, czyli przy zmianie rdzenia o **59/255** w sRGB. Maksymalne LEGALNE
+ * przyciemnienie (0,846334) zmienia rdzeń o **18/255**, a obwódkę o 5/255 — i tego **nikt nie
+ * obejrzał**, ani ja, ani przegląd. Zdanie „powyżej tej granicy cieniowania nie widać" stało
+ * tu do rundy naprawczej 1 jako twierdzenie i było nieuprawnione: 18/255 to nie jest zero.
+ *
+ * Nie zmienia to werdyktu, bo werdykt niesie stroboskopowanie, a ono dotyczy WYŁĄCZNIE trybu
+ * progowego i jest potwierdzone dwoma niezależnymi pomiarami. Ale zostawia otwarte pytanie
+ * **czy łagodne cieniowanie GŁADKIE w granicach legalnych coś dowozi** — rozstrzyga to
+ * człowiek przy bramce Zadania 5, dlatego oba tryby zostają w kodzie (klawisze 1/2/3 w
+ * podglądzie), a nie zostały usunięte.
  */
 
 // --- Stałe wizualne — [WYGLĄD] ---------------------------------------------------------
@@ -94,10 +115,27 @@ import { lightBand, LIGHT_BANDS, type Rgb } from './shading.js';
  *   rdzeń przy PEŁNEJ ekspozycji (tuż przed śmiercią) ≥ 1 px
  *   SKOK promienia rdzenia między 0 a pełną ekspozycją ≥ 1 px
  *
- * Dwie ostatnie sumują się do promienia rdzenia przy zerowej ekspozycji, więc promień
- * najmniejszej jednostki nie może zejść poniżej **3 px = 0,88 jednostki świata**. Stoi na
- * 1,00 (3,41 px), czyli 13% zapasu. Mniejsza jednostka nie jest „mniej czytelna" — ma
- * kanał poniżej piksela, czyli nieistniejący.
+ * Dwie ostatnie sumują się do promienia rdzenia przy zerowej ekspozycji, czyli do
+ * `promień − obwódka`. **Obwódka ma STAŁĄ szerokość i wchodzi do tego rachunku swoją
+ * FAKTYCZNĄ wartością (0,35 j. = 1,1935 px), nie swoim własnym minimum.** Stąd
+ *
+ *   promień ≥ obwódka + 2 px = 0,35 + 0,58651 = **0,93651 jednostki świata (3,194 px)**
+ *
+ * SWARM stoi na 1,00 (3,41 px), czyli **6,8% zapasu**. Runda naprawcza 1 poprawiła tu liczbę:
+ * stało 0,88 j. i „13% zapasu", co zakładało, że obwódka JEDNOCZEŚNIE skurczy się do własnego
+ * progu 1 px — konfiguracja, której ten moduł nie wysyła na ekran. Zaniżona granica jest
+ * gorsza niż żadna: Faza 4, sięgając po nią, zmniejszyłaby SWARM-a o 12% w przekonaniu, że
+ * robi to legalnie, i skasowała kanał spalania na najmniejszym typie.
+ *
+ * Granica JEST egzekwowana — nie osobną asercją, tylko testem 6, który mierzy oba progi
+ * rdzenia na faktycznych macierzach NAJMNIEJSZEGO typu; osobna asercja na `0,93651` byłaby
+ * algebraicznym powtórzeniem tamtych dwóch, czyli dokładnie wadą, którą runda 1 usunęła
+ * z końca tego samego testu. Sprawdzone parą mutacji: `SWARM: 0.94` przechodzi,
+ * `SWARM: 0.93` oblewa test 6.
+ *
+ * Liczba zależy od `UNIT_RIM_FACTOR`: przy innej obwódce granica się przesuwa (`obwódka +
+ * 2 px`). Mniejsza jednostka nie jest „mniej czytelna" — ma kanał poniżej piksela, czyli
+ * nieistniejący.
  *
  * Górna granica: największy typ (1,70) jest MNIEJSZY od najmniejszego promienia wpisanego
  * komórki (**3,1720** — zmierzone w Zadaniu 3 na wszystkich 1442 komórkach), więc żadna
@@ -230,8 +268,14 @@ const UNIT_SIDES = 16; // [WYGLĄD]
  *
  * Wartości dobrane tak, żeby różnicę BYŁO WIDAĆ — inaczej porównanie obu wariantów niczego
  * by nie rozstrzygało. Kosztem jest kontrast: 0,55 łamie próg 3:1 wobec obrysu nocy
- * (granica wypada na **0,8463**, patrz komentarz modułu i test 17). Właśnie ten koszt jest
+ * (granica wypada na **0,846334**, patrz komentarz modułu i test 17). Właśnie ten koszt jest
  * jedną z dwóch przesłanek werdyktu Kroku 3 — drugą jest to, co widać w ruchu.
+ *
+ * **Kto będzie ustawiał tu wariant LEGALNY (bramka Zadania 5), niech weźmie 0,8464, nie
+ * 0,8463 ani 0,846334.** Granica jest KRESEM DOLNYM, nie osiągalnym minimum: `passesAt`
+ * zwraca `false` zarówno dla 0,8463, jak i dla samej liczby 0,846334 (zaokrąglonej w dół do
+ * sześciu cyfr), a `true` dopiero od 0,8464. Czynnik ustawiony dokładnie na wypisanej
+ * granicy leży o włos PONIŻEJ progu 3:1, czyli poza budżetem, którego ma dowodzić.
  */
 export const UNIT_BAND_SHADE: readonly number[] = [0.55, 0.78, 1.0]; // [WYGLĄD]
 

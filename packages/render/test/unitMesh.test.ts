@@ -422,24 +422,55 @@ describe('kodowanie spalania — minimum po populacji, w pikselach', () => {
 
     let previous = Infinity;
     const sizes: number[] = [];
+    const bodies: number[] = [];
     for (let slot = 0; slot <= steps; slot++) {
       const r = basisColumn(matrixAt(layer.core, slot), 0).length();
       expect(r, `krok ${slot}`).toBeLessThan(previous); // ŚCIŚLE malejąca
       previous = r;
       sizes.push(r);
+      bodies.push(basisColumn(matrixAt(layer.body, slot), 0).length());
     }
 
     const full = sizes[0];
     const burnt = sizes[steps];
     expect(px(burnt), 'rdzeń SWARM tuż przed śmiercią').toBeGreaterThanOrEqual(MIN_VISIBLE_PX);
     expect(px(full - burnt), 'skok promienia rdzenia SWARM').toBeGreaterThanOrEqual(MIN_VISIBLE_PX);
-    // Obwódka ROŚNIE o dokładnie tyle, o ile kurczy się rdzeń — to jest ten sam sygnał,
-    // przeczytany od strony pasma, na którym spalanie w ogóle zachodzi (zmierzch i dzień,
-    // gdzie widoczny jest wyłącznie ton ciemny).
-    const bodyRadius = basisColumn(matrixAt(layer.body, steps), 0).length();
-    expect(px(bodyRadius - burnt), 'obwódka SWARM przy pełnej ekspozycji').toBeGreaterThanOrEqual(
-      px(bodyRadius - full) + MIN_VISIBLE_PX,
-    );
+
+    // --- Ciemna plama ROŚNIE, i to jest OSOBNA własność, nie przeliczenie tamtych dwóch ----
+    //
+    // Do rundy naprawczej 1 stała tu asercja `px(tarcza − rdzeń_spalony) ≥ px(tarcza −
+    // rdzeń_świeży) + 1`, która po skróceniu `tarcza` redukuje się do linijki wyżej — dwa
+    // strażniki policzone tam, gdzie stoi jeden. Dowód, nie podejrzenie: przegląd puścił
+    // mutację „tarcza kurczy się RAZEM z rdzeniem, obwódka NIE rośnie" i **test 6 przeszedł**.
+    //
+    // Treścią, której tamte dwie asercje NIE niosą, jest ROSNĄCA OBWÓDKA: to ona czyni z
+    // płonącej jednostki rosnącą czarną plamę na paśmie, na którym spalanie zachodzi — a
+    // spalanie zachodzi wyłącznie tam, gdzie `light > 0`, czyli tam, gdzie widoczny jest
+    // TYLKO ton ciemny. Mierzona na WSZYSTKICH krokach rampy i na NAJMNIEJSZYM typie, jako
+    // ścisła monotoniczność `tarcza − rdzeń`.
+    //
+    // Granica jest ostra i ma sens fizyczny, nie tolerancyjny: gdyby tarcza kurczyła się z
+    // czynnikiem `1 − k·ułamek`, obwódka rośnie wtedy i tylko wtedy, gdy
+    // `k < 0,5·(promień − obwódka)/promień` = 0,325 dla SWARM-a. Przy `k = 0,5` (czyli
+    // „tarcza kurczy się RAZEM z rdzeniem" — dokładnie ta mutacja, którą przegląd puścił i
+    // którą poprzednia wersja tego testu PRZEPUŚCIŁA) obwódka nie rośnie wcale, tylko maleje.
+    //
+    // Czego tu ŚWIADOMIE NIE MA:
+    //  • osobnej asercji na STAŁOŚĆ tarczy — wiąże ją DOKŁADNIE test 9, porównując macierz
+    //    tarczy tej samej jednostki między dwoma wywołaniami `update`; tam basis jest ten sam,
+    //    więc równość co do bitu jest uprawniona. Tutaj każdy krok rampy stoi na INNEJ
+    //    komórce, więc promienie różnią się szumem float32 (zmierzone: do 3,9·10⁻⁸) i
+    //    jakakolwiek tolerancja byłaby luźniejsza od tamtego strażnika, czyli nigdy by nie
+    //    zadziałała. Dwa strażniki policzone tam, gdzie stoi jeden — to jest ta sama wada,
+    //    którą runda naprawcza 1 usunęła z tego miejsca, tylko w drugiej postaci.
+    //  • asercji na to, O ILE obwódka urosła — przy stałej tarczy to jest co do bitu
+    //    `full − burnt`, czyli liczba, którą wiąże już asercja „skok promienia rdzenia" wyżej.
+    let previousRim = -Infinity;
+    for (let slot = 0; slot <= steps; slot++) {
+      const rim = bodies[slot] - sizes[slot];
+      expect(rim, `obwódka na kroku ${slot}`).toBeGreaterThan(previousRim);
+      previousRim = rim;
+    }
     layer.dispose();
   });
 
@@ -870,18 +901,34 @@ describe('Krok 3: cieniowanie jednostki światłem', () => {
         }
         return worst >= WCAG_MIN;
       });
+    /**
+     * BISEKCJA, nie skan po siatce 10⁻⁴ (runda naprawcza 1). Siatka zwracała pierwszy punkt
+     * PRZECHODZĄCY, czyli 0,8464, a prawdziwa granica to 0,846334 — i z tej różnicy wzięły się
+     * dwie pisownie jednej stałej, jedna w module i jedna w raporcie. Dwie pisownie w
+     * dokumencie decyzyjnym są zaproszeniem do „ujednolicenia" w złą stronę, więc przyrząd
+     * podaje teraz sześć cyfr, a nie cztery.
+     *
+     * Bisekcja jest poprawna, bo `passesAt` jest na tym zakresie monotoniczne: wiążącym tłem
+     * jest zawsze ciemne (obrys nocy albo wypełnienie nocy), a wobec ciemnego tła kontrast
+     * jaśniejszego tonu rośnie z czynnikiem. Poprawność założenia trzymają dwie kontrole
+     * niżej: `passesAt(1)` musi być prawdą, `passesAt(0)` fałszem.
+     */
     const floorFor = (backgrounds: readonly (readonly [string, Rgb])[]): number => {
-      for (let i = 10000; i >= 0; i--) {
-        if (!passesAt(i / 10000, backgrounds)) return (i + 1) / 10000;
+      let below = 0;
+      let above = 1;
+      for (let i = 0; i < 60; i++) {
+        const middle = (below + above) / 2;
+        if (passesAt(middle, backgrounds)) above = middle;
+        else below = middle;
       }
-      return 0;
+      return above;
     };
 
     const floor = floorFor(BACKGROUNDS);
     const fillsOnly = BACKGROUNDS.filter(([name]) => !name.startsWith('obrys'));
     const floorWithoutGrid = floorFor(fillsOnly);
     console.log(
-      `[KROK 3] najmniejszy czynnik cieniowania, przy którym jednostka nadal czyta się na każdym tle: ${floor.toFixed(4)} (bez kraty: ${floorWithoutGrid.toFixed(4)})`,
+      `[KROK 3] najmniejszy czynnik cieniowania, przy którym jednostka nadal czyta się na każdym tle: ${floor.toFixed(6)} (bez kraty: ${floorWithoutGrid.toFixed(6)})`,
     );
 
     // KONTROLE POZYTYWNE NA SAM PRZYRZĄD: tryb wysyłany na ekran przechodzi, a czynnik
@@ -891,15 +938,26 @@ describe('Krok 3: cieniowanie jednostki światłem', () => {
     expect(passesAt(0, BACKGROUNDS)).toBe(false);
 
     // WŁASNOŚĆ, nie kotwica: granicę wyznacza OBRYS nocy, nie jej wypełnienie. Kotwicy na
-    // dzisiejsze 0,8463 tu NIE MA i to jest poprawka z pary mutacji — okno „0,8 < x < 0,9"
+    // dzisiejsze 0,846334 tu NIE MA i to jest poprawka z pary mutacji — okno „0,8 < x < 0,9"
     // stało tu wcześniej i oblewało przy DOWOLNEJ zmianie barwy rdzenia, także takiej, która
     // wszystkie progi czytelności spełnia. To była kotwica na dzisiejszą paletę przebrana za
     // próg (wzorzec z katalogu wad tej fazy), a nie strażnik czegokolwiek.
+    //
+    // Słabość tej asercji, wskazana przez przegląd i zapisana, a nie zakryta: jest ona
+    // prawdziwa Z KONSTRUKCJI dla każdej palety kraty poza jednym przypadkiem (krata
+    // ciemniejsza od wypełnienia nocy). Nie jest więc strażnikiem — jest zapisem tego, GDZIE
+    // wypada granica, po to, żeby zmiana palety kraty w Fazie 4 pokazała nową liczbę w logu.
     expect(floor).toBeGreaterThan(floorWithoutGrid);
 
     // PRZESŁANKA WERDYKTU KROKU 3, jako asercja: czynniki `UNIT_BAND_SHADE` — najmniejsze,
     // przy których różnicę w ogóle WIDAĆ — leżą PONIŻEJ tej granicy. Czyli oba warianty
     // cieniowania kupują spójność za czytelność, i dlatego na ekran idzie `'flat'`.
+    //
+    // **To jest JEDYNA asercja w całym pakiecie, która broni werdyktu Kroku 3.** Reszta tego
+    // testu opisuje przyrząd; ta jedna linia mówi, że dobrane czynniki cieniowania leżą poza
+    // budżetem czytelności. Gdyby Faza 4 zmieniła paletę tak, że cieniowanie zaczyna się
+    // mieścić, ta linia oblei i zmusi do ponownego rozstrzygnięcia — zamiast po cichu
+    // przepuścić decyzję podjętą na innych liczbach.
     expect(Math.min(...UNIT_BAND_SHADE)).toBeLessThan(floor);
 
     // Warstwa startuje w trybie domyślnym i daje się przełączyć (bramka Zadania 5).
