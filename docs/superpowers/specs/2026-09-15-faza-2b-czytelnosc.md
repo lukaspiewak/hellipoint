@@ -310,17 +310,30 @@ Fazy 2A są z tej bramki **nieporównywalne** — tamta zadawała inne pytanie.
 
 ---
 
-## 6. Surowa tabela piętnastu osądów (do wklejenia z `gate.html`)
+## 6. Surowa tabela piętnastu osądów
 
-<!-- Wklej tu dosłownie zawartość pola tekstowego z gate.html, wariant "Progowany (oceniany)". -->
+Wklejone dosłownie z `gate.html` przez właściciela projektu. Tryb **progowany (oceniany)**,
+oceniany z widoku całej tarczy zgodnie z §5 punkt 5.
 
 | # | Faza | Komórka | Prawda | Odpowiedź | Wynik |
 |---|---|---|---|---|---|
-|  |  |  |  |  |  |
+| 1 | 1 | 97 | oświetlona | oświetlona | OK |
+| 2 | 1 | 215 | oświetlona | oświetlona | OK |
+| 3 | 1 | 933 | oświetlona | oświetlona | OK |
+| 4 | 1 | 1169 | oświetlona | oświetlona | OK |
+| 5 | 1 | 11 | ciemna | ciemna | OK |
+| 6 | 2 | 95 | oświetlona | oświetlona | OK |
+| 7 | 2 | 96 | ciemna | ciemna | OK |
+| 8 | 2 | 426 | oświetlona | oświetlona | OK |
+| 9 | 2 | 282 | ciemna | ciemna | OK |
+| 10 | 2 | 875 | ciemna | ciemna | OK |
+| 11 | 3 | 4 | ciemna | ciemna | OK |
+| 12 | 3 | 3 | oświetlona | oświetlona | OK |
+| 13 | 3 | 243 | ciemna | ciemna | OK |
+| 14 | 3 | 988 | ciemna | ciemna | OK |
+| 15 | 3 | 757 | oświetlona | oświetlona | OK |
 
-Wynik: __ / 15
-
----
+**15/15.**
 
 ## 7. WERDYKT — CZEKA NA WŁAŚCICIELA PROJEKTU
 
@@ -328,25 +341,78 @@ Wynik: __ / 15
 
 ### 7.1 Werdykt
 
-<!-- PASS wymaga kompletu piętnastu. -->
+# PASS — 15/15
 
-# ____
+Orzeczony przez właściciela projektu. **I tym razem, w odróżnieniu od bramki Fazy 2A, jest to
+dowód**, bo przyrząd wykazał zdolność oblania — patrz §7.3.
 
-### 7.2 Co ten werdykt znaczy, a czego nie znaczy
+### ### 7.2 Co ten werdykt znaczy, a czego nie znaczy
 
-<!-- Do wypełnienia przez człowieka. -->
+**Znaczy:** przy progowaniu z `LIGHT_BANDS = [0; 0,4]` i porównaniem ścisłym człowiek
+**bezbłędnie orzeka, po której stronie granicy leży pojedyncza komórka**, bez pary odniesienia,
+bez UI i bez nakładki prawdy — a przy cieniowaniu rozlanym po powierzchni **nie potrafi tego
+wcale**. To jest treść D1 i po raz pierwszy w tym projekcie jest zmierzona przyrządem
+o wykazanej czułości.
 
-### 7.3 Przebieg kontrolny (jeśli wykonany)
+**Nie znaczy:** że paleta jest docelowa. Trzy pasma to najtańsza rzecz spełniająca kryterium,
+nie decyzja artystyczna; §8.1 specu wymienia alternatywy dla Fazy 4 i wszystkie zachowują
+nieciągłość na terminatorze. Nie znaczy też, że scena z jednostkami i budynkami pozostanie
+czytelna — to bada dopiero Zadanie 5 tej fazy.
 
-> **Uwaga:** wynik **14/15**, który padł w kontroli przed korektą rundy 1, dotyczy kontroli
-> z `saturate(dot)` i jest **nieaktualny** — tamta kontrola przeciekała (§3.4). Obecna używa
-> `(dot + 1) / 2`; wykonawca dostaje w niej 5/15 z tego samego widoku całej tarczy.
+### ### 7.3 Przebieg kontrolny — DWA, i dopiero drugi coś dowodzi
 
-Wynik w trybie kontrolnym: __ / 15.
+**Pierwszy, na kontroli z `saturate(dot)`: 14/15.** Kontrola nie oblała. Werdykt z trybu
+progowanego pozostawał wtedy obserwacją, nie dowodem — dokładnie jak w Fazie 2A.
 
-Czy w trybie kontrolnym granica była widoczna? (tak/nie, i co dokładnie było widać)
+**Wyciek zdiagnozowany i zmierzony:** `saturate` przycina całą półkulę nocną do dokładnego
+zera, więc **673 z 1442 komórek (46,7 %) było nieodróżnialnych od wszystkich swoich sąsiadów**.
+Jednolity obszar ma widoczną krawędź, a ta krawędź JEST terminatorem. Interpolacja po
+powierzchni zacierała ją lokalnie o mniej więcej komórkę — i dlatego wykonawca, oceniający
+z bliska, dostał poziom przypadku, a właściciel, oceniający z widoku całej tarczy zgodnie
+z protokołem, trafił prawie komplet. **Ta sama różnica skali obserwacji obaliła wcześniej
+bramkę Fazy 2A.**
 
-### 7.4 Jeśli werdykt jest inny niż PASS — co zapisać
+**Drugi, po naprawie na `(dot + 1) / 2`: 8/15.** Komórek nieodróżnialnych od wszystkich
+sąsiadów: **0 / 0 / 0** we wszystkich trzech fazach (zweryfikowane niezależnie przez kontrolera
+własną sondą na skompilowanym module).
+
+| # | Faza | Komórka | Prawda | Odpowiedź | Wynik |
+|---|---|---|---|---|---|
+| 1 | 1 | 119 | oświetlona | oświetlona | OK |
+| 2 | 1 | 221 | oświetlona | oświetlona | OK |
+| 3 | 1 | 941 | oświetlona | oświetlona | OK |
+| 4 | 1 | 1171 | oświetlona | oświetlona | OK |
+| 5 | 1 | 96 | ciemna | oświetlona | BŁĄD |
+| 6 | 2 | 108 | oświetlona | oświetlona | OK |
+| 7 | 2 | 109 | ciemna | oświetlona | BŁĄD |
+| 8 | 2 | 621 | oświetlona | oświetlona | OK |
+| 9 | 2 | 399 | ciemna | oświetlona | BŁĄD |
+| 10 | 2 | 884 | ciemna | oświetlona | BŁĄD |
+| 11 | 3 | 28 | ciemna | oświetlona | BŁĄD |
+| 12 | 3 | 27 | oświetlona | oświetlona | OK |
+| 13 | 3 | 735 | ciemna | oświetlona | BŁĄD |
+| 14 | 3 | 1032 | ciemna | oświetlona | BŁĄD |
+| 15 | 3 | 763 | oświetlona | oświetlona | OK |
+
+> **8/15 NIE znaczy „poziom przypadku" i nie wolno tego tak czytać.** Wszystkie piętnaście
+> odpowiedzi brzmiało **„oświetlona"** — to odpowiedź stała, a plan jest zrównoważony 8/7,
+> więc stała odpowiedź daje dokładnie 8. Informację niesie **wzorzec, nie wynik**: właściciel
+> nie rozróżniał wcale i zaczął obstawiać.
+>
+> Jego komentarz tłumaczy, dlaczego akurat tę stałą: *„wygląda to jakby 3/4 planety było
+> oświetlone"*. Odwzorowanie `(dot + 1) / 2` przesuwa całą kulę w jasność, więc „oświetlona"
+> jest naturalnym domyślnym strzałem.
+
+**Dowodem czułości jest KONTRAST między tymi dwoma przebiegami**, nie wynik któregokolwiek
+z osobna: ta sama osoba, ten sam przyrząd, zmieniona jedna funkcja — z 14/15 do niemożności
+udzielenia odpowiedzi. Tego nie da się wytłumaczyć niczym poza tym, że naprawa usunęła
+realny wyciek.
+
+**Do poprawienia w harnessie (nie blokuje):** panel powinien **wykrywać odpowiedź stałą**
+i raportować ją wprost, zamiast pokazywać wynik, który wygląda na losowość. Dziś „8/15"
+w dokumencie mógłby za pół roku zostać odczytany jako czysty przypadek.
+
+### ### 7.4 Jeśli werdykt jest inny niż PASS — co zapisać
 
 - **Które konkretnie próby (numery z §6) zawiodły** i, jeśli pamiętasz, dlaczego: komórka
   wyglądała dwuznacznie, pierścień obejmował więcej niż jedną łatę, kamera stała niewygodnie,
