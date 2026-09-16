@@ -92,6 +92,25 @@ describe('createPlanetMesh — dispose() zwalnia geometrię i materiał', () => 
   });
 });
 
+/**
+ * Kąt (w radianach) między kierunkiem `center` a kierunkiem wierzchołka `offset` w buforze —
+ * czyli „jak daleko od środka komórki, mierzone po kuli".
+ *
+ * Kąt, a nie odległość: uniesienie promieniowe (`OUTLINE_LIFT`) skaluje wektor, a skalowanie
+ * go NIE OBRACA, więc ta miara jest na uniesienie odporna i mierzy wyłącznie wciągnięcie.
+ * Nie używa `OUTLINE_INSET` — po to, żeby porównanie z narożnikiem nie zgadzało się ze stałą
+ * z definicji (runda naprawcza 2).
+ */
+function angleFromCenter(buffer: Float32Array, offset: number, center: readonly number[]): number {
+  const unit = (x: number, y: number, z: number): [number, number, number] => {
+    const n = Math.hypot(x, y, z);
+    return [x / n, y / n, z / n];
+  };
+  const c = unit(center[0], center[1], center[2]);
+  const v = unit(buffer[offset], buffer[offset + 1], buffer[offset + 2]);
+  return Math.acos(Math.min(1, Math.max(-1, c[0] * v[0] + c[1] * v[1] + c[2] * v[2])));
+}
+
 describe('buildCellOutlines — geometria kraty (Faza 2B, Zadanie 2)', () => {
   it('23. każda komórka dostaje ZAMKNIĘTĄ pętlę: 2 wierzchołki na krawędź, zakresy rozłączne i pokrywające bufor dokładnie raz', () => {
     const outlines = buildCellOutlines(geo);
@@ -133,6 +152,15 @@ describe('buildCellOutlines — geometria kraty (Faza 2B, Zadanie 2)', () => {
     // nawisa 0,9 średnicy komórki nad kulą) przechodziły komplet 167 testów. Obie stałe mają
     // teraz OKNO: dolny próg broni przed zapadnięciem się kraty w teren, górny przed jej
     // oderwaniem się od komórki.
+    //
+    // RUNDA NAPRAWCZA 2: to okno nadal nie miało ZNAKU. `OUTLINE_INSET = -0,07` przechodziło
+    // ten test w komplecie, bo wszystkie miary wciągnięcia szły przez `Math.hypot` (wielkość
+    // bezwzględna), a wzorzec pozycji był budowany z TEJ SAMEJ zaimportowanej stałej, więc
+    // zgadzał się z nią z definicji. Ujemne wciągnięcie WYPYCHA obrys NA ZEWNĄTRZ komórki —
+    // obrysy dwóch sąsiadów przechodzą wtedy przez wspólną krawędź i krzyżują się za nią,
+    // czyli dokładnie ta wada, przed którą ta stała broni, w wersji GORSZEJ niż obrys leżący
+    // na krawędzi. Stąd własność 5 niżej: asercja KIERUNKOWA, liczona z FAKTYCZNEGO bufora
+    // i bez użycia `OUTLINE_INSET`.
     const outlines = buildCellOutlines(geo);
     const radius = planet.radius;
 
@@ -141,6 +169,7 @@ describe('buildCellOutlines — geometria kraty (Faza 2B, Zadanie 2)', () => {
     let minLiftWorld = Number.POSITIVE_INFINITY;
     let maxLiftWorld = 0;
     let minKeptFraction = Number.POSITIVE_INFINITY;
+    let maxKeptFraction = 0;
     let minCellDiameter = Number.POSITIVE_INFINITY;
     let maxSagittaWorld = 0;
     for (let i = 0; i < planet.cells.length; i++) {
@@ -189,16 +218,26 @@ describe('buildCellOutlines — geometria kraty (Faza 2B, Zadanie 2)', () => {
         minLiftWorld = Math.min(minLiftWorld, lifted - flat);
         maxLiftWorld = Math.max(maxLiftWorld, lifted - flat);
 
-        // WŁASNOŚĆ 3 (górna granica wciągnięcia): obrys ma nadal OBRYSOWYWAĆ komórkę, a nie
-        // kurczyć się w kropkę przy jej środku. Mierzone jako ułamek odległości narożnika od
-        // środka, jaki obrysowi zostaje.
         const cornerRadius = Math.hypot(
           corner[0] - center[0],
           corner[1] - center[1],
           corner[2] - center[2],
         );
         minCellDiameter = Math.min(minCellDiameter, 2 * cornerRadius);
-        minKeptFraction = Math.min(minKeptFraction, (cornerRadius - insetWorld) / cornerRadius);
+
+        // WŁASNOŚĆ 3+5: JAK DALEKO od środka komórki leży obrys — mierzone KĄTOWO, z
+        // FAKTYCZNEGO bufora i BEZ `OUTLINE_INSET`, więc ani znak, ani wielkość stałej nie
+        // wchodzą do wzorca. Kąt jest tu właściwą miarą, bo uniesienie promieniowe go NIE
+        // zmienia (skalowanie wektora nie obraca go), więc ta liczba mierzy wyłącznie
+        // wciągnięcie, niezależnie od `OUTLINE_LIFT`.
+        //
+        // < 1 znaczy „bliżej środka niż narożnik" (obrys WEWNĄTRZ komórki),
+        // = 1 „dokładnie na krawędzi", > 1 „na zewnątrz komórki" — czyli obrysy sąsiadów
+        // krzyżujące się za wspólną krawędzią.
+        const keptFraction =
+          angleFromCenter(outlines.positions, first, center) / angleFromCenter(geo.positions, src, center);
+        minKeptFraction = Math.min(minKeptFraction, keptFraction);
+        maxKeptFraction = Math.max(maxKeptFraction, keptFraction);
 
         // WŁASNOŚĆ 4 (dolna granica uniesienia, wyprowadzona z GEOMETRII, nie zgadnięta):
         // najgłębszy punkt cięciwy środek→narożnik schodzi pod sferę o strzałkę; poniżej niej
@@ -233,11 +272,21 @@ describe('buildCellOutlines — geometria kraty (Faza 2B, Zadanie 2)', () => {
     expect(maxLiftWorld).toBeLessThan(0.05 * minCellDiameter);
     expect(maxLiftWorld).toBeCloseTo(0.2, 2); // zmierzone: 0,200 = 2,4% średnicy komórki
 
-    // WCIĄGNIĘCIE — góra. Obrys zachowuje co najmniej 75% odległości narożnika od środka
-    // komórki, czyli nadal jest OBRYSEM, a nie kropką przy jej środku. Przy `INSET = 0,48`
-    // zostaje 52%, przy `0,97` — 3%; oba przechodziły, dopóki test mierzył tylko dół.
+    // WCIĄGNIĘCIE — ZNAK (runda naprawcza 2). Obrys leży ŚCIŚLE BLIŻEJ środka swojej komórki
+    // niż odpowiadający mu narożnik, dla KAŻDEGO z 8640 narożników. To jest asercja
+    // kierunkowa: `>= 1` znaczy „na krawędzi albo za nią", a za krawędzią obrysy dwóch
+    // sąsiadów się krzyżują. Przy `OUTLINE_INSET = -0,07` wychodzi 1,07 i to oblewa.
+    expect(maxKeptFraction).toBeLessThan(1);
+
+    // WCIĄGNIĘCIE — góra. Obrys zachowuje co najmniej 75% kątowej odległości narożnika od
+    // środka komórki, czyli nadal jest OBRYSEM, a nie kropką przy jej środku. Przy
+    // `INSET = 0,48` zostaje 52%, przy `0,97` — 3%; oba przechodziły, dopóki test mierzył
+    // tylko dół.
     expect(minKeptFraction).toBeGreaterThan(0.75);
-    expect(minKeptFraction).toBeCloseTo(0.93, 2); // zmierzone: dokładnie 1 − OUTLINE_INSET
+    // Zmierzone na faktycznym buforze: 0,930016 .. 0,930038 (kąt, nie odległość — stąd
+    // mikroskopijny rozrzut wobec 1 − OUTLINE_INSET; cięciwa i łuk to nie to samo).
+    expect(minKeptFraction).toBeCloseTo(0.93, 3);
+    expect(maxKeptFraction).toBeCloseTo(0.93, 3);
   });
 
   it('25. buildCellOutlines rzuca RangeError na niezgodnych długościach i na zdegenerowanej komórce', () => {
@@ -359,12 +408,21 @@ describe('createPlanetMesh — krata jako DZIECKO siatki terenu', () => {
 });
 
 describe('createPlanetMesh — okablowanie geometrii kraty (runda naprawcza 1)', () => {
-  it('29. atrybut position kraty NIESIE prawdziwe obrysy: powłoka promieniowa, rozpiętość po całej kuli i zgodność co do wierzchołka z buildCellOutlines', () => {
+  it('29. [OKABLOWANIE] atrybut position kraty dostaje WYNIK buildCellOutlines, a nie inny bufor tej samej długości — poprawności SAMEJ funkcji pilnuje test 24', () => {
     // Przegląd zmierzył lukę: podmiana bufora pozycji obrysów na `new Float32Array(len)`
     // (krata zapada się w jeden punkt w środku planety, czyli znika z ekranu CAŁKOWICIE)
     // zostawiała komplet 167 testów zielonym. Testy 23-24 badały `buildCellOutlines` jako
     // funkcję czystą, test 26 sprawdzał tylko ZGODNOŚĆ DŁUGOŚCI atrybutów. Nic nie sprawdzało,
     // że do geometrii trafia WYNIK tej funkcji.
+    //
+    // ZAKRES TEGO TESTU — i czego on NIE gwarantuje (runda naprawcza 2). Asercja (4) używa
+    // `buildCellOutlines` jako WŁASNEJ WYROCZNI, więc weryfikuje OKABLOWANIE, nie poprawność
+    // funkcji: defekt WEWNĄTRZ `buildCellOutlines` przepisze się zgodnie do obu stron
+    // porównania i ten test zostanie zielony. Pokazane mutacją przez recenzenta: zamiana
+    // kanałów X/Z wewnątrz funkcji oblewa test 24 (który liczy oczekiwane pozycje własnym
+    // wzorem), a 29 przechodzi. Tak ma być — to są dwie różne straże na dwa różne ryzyka,
+    // i dopiero razem pokrywają drogę „narożnik → piksel". Asercje (1)-(3) są niezależne od
+    // tej wyroczni i bronią przed buforem, który jest geometrycznie bez sensu.
     const planetMesh = createPlanetMesh(geo);
     const pos = (planetMesh.outline.geometry.getAttribute('position') as BufferAttribute)
       .array as Float32Array;

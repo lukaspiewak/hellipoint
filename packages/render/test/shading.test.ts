@@ -649,7 +649,7 @@ describe('krata komórek a terminator (Faza 2B, Zadanie 2)', () => {
 
   });
 
-  it('23. [PRZYPIĘCIE] kontrasty WCAG palety to 5,38 / 1,79 / 9,62 — i wychodzą tak TYLKO przy potraktowaniu jej wartości jako LINIOWYCH', () => {
+  it('23. [PRZYPIĘCIE] kontrasty WCAG palety — czyli SAMA LUMINANCJA, bez odcienia — to 5,38 / 1,79 / 9,62, i wychodzą tak tylko przy potraktowaniu jej wartości jako LINIOWYCH', () => {
     // Dwa powody istnienia tego testu, oba z przeglądu rundy naprawczej 1:
     //
     // (1) Te trzy liczby siedzą w `global-constraints.md` jako podstawa doboru barw budynków
@@ -661,6 +661,17 @@ describe('krata komórek a terminator (Faza 2B, Zadanie 2)', () => {
     //     z żywego płótna) i już raz kosztował błąd: brief fazy podawał 5,6 / 2,90 / 16,2,
     //     bo liczył kontrast, traktując te same trójki jako sRGB. Test liczy OBIEMA drogami i
     //     przypina obie, więc następna osoba zobaczy, która jest która, zamiast wybierać.
+    //
+    // CZEGO TEN TEST NIE ZŁAPIE, i to nie jest jego wada (runda naprawcza 2). Kontrast WCAG
+    // Z DEFINICJI zależy wyłącznie od luminancji, więc obrót ODCIENIA zachowujący luminancję
+    // (np. zamiana pasma zmierzchu z ciepłego pomarańczu na zimny błękit o tej samej jasności)
+    // zostawia wszystkie sześć liczb niżej bez zmian. Ten test przypina JASNOŚCI palety i
+    // przestrzeń barw, i tyle. Przed zmianą palety zachowującą luminancję bronią testy
+    // **19/20/21**, które mierzą odległość EUKLIDESOWĄ (a więc widzą odcień): 20 przypina skok
+    // przez terminator na 0,9005, 21 kroki obrysów i marginesy, 19 długość palety obrysów.
+    // ŻADEN z nich sam nie wystarcza: 20 i 21 są ślepe na przesunięcie zachowujące odległości,
+    // a ten — na przesunięcie zachowujące luminancję. Zmiana palety musi przejść przez oba
+    // sita naraz.
     const luminance = (c: Rgb): number => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
     const contrast = (a: Rgb, b: Rgb): number => {
       const la = luminance(a);
