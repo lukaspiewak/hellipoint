@@ -1,9 +1,10 @@
 import { PerspectiveCamera, Scene, WebGLRenderer } from 'three';
-import type { Building, Planet, Vec3 } from '@heliopolis/sim';
+import type { Building, Planet, Unit, Vec3 } from '@heliopolis/sim';
 import { createBuildingLayer } from './buildingMesh.js';
 import { createCamera, type OrbitCamera } from './camera.js';
 import { buildPlanetGeometry } from './geometry.js';
 import { createPlanetMesh } from './planetMesh.js';
+import { createUnitLayer, type UnitShadingMode } from './unitMesh.js';
 
 /**
  * Scena widoczna na ekranie: planeta (Zadanie 2 + 3) + kamera K1 (ten plik). `render`
@@ -33,6 +34,21 @@ export interface PlanetScene {
    * Bez parametru czasu: warstwa budynków jest statyczna wobec zegara (`BuildingLayer.update`).
    */
   updateBuildings(buildings: readonly (Building | null)[]): void;
+  /**
+   * Przepisuje warstwę jednostek (Faza 2B, Zadanie 4) z bieżącego `SimState.units`.
+   * OSOBNO od `render` z tego samego powodu formalnego co `updateBuildings` — podpis
+   * `render` jest wymagany briefem Zadania 4 Fazy 2A i nie ma powodu go łamać — ale z
+   * PRZECIWNYM uzasadnieniem merytorycznym: jednostki zmieniają się co klatkę, więc
+   * wywołujący ma wołać to co klatkę, tuż przed `render`, tym samym `light`.
+   *
+   * `light` jest tu drugi raz (po `render`) i to jest świadome: warstwa jednostek czyta
+   * je wyłącznie po to, żeby dało się przełączyć tryb cieniowania Kroku 3 briefu
+   * (`setUnitShading`), a scena nie trzyma kopii pola oświetlenia między wywołaniami —
+   * trzymanie go byłoby czwartym miejscem, w którym ta sama tablica musiałaby być aktualna.
+   */
+  updateUnits(units: readonly Unit[], light: Float32Array): void;
+  /** Tryb cieniowania jednostek światłem — patrz `UnitShadingMode` (Zadanie 4, Krok 3). */
+  setUnitShading(mode: UnitShadingMode): void;
   readonly camera: OrbitCamera;
   /**
    * Przelicza proporcje kamery i `devicePixelRatio` renderera na podstawie bieżących
@@ -120,6 +136,13 @@ export function createSceneWithRenderer(
   const buildings = createBuildingLayer(planet, geo);
   planetMesh.mesh.add(buildings.object);
 
+  // Jednostki — TAK SAMO dzieckiem siatki terenu i z tego samego powodu (Zadanie 4).
+  // Rozstrzygnięcie jest tu nawet mocniejsze niż przy budynkach: jednostka pokazuje, po
+  // której stronie terminatora stoi (pali się albo nie), więc zostawiona widoczna w trybie
+  // kontroli pozytywnej bramki byłaby WPROST podpowiedzią do pytania, które bramka zadaje.
+  const units = createUnitLayer(planet);
+  planetMesh.mesh.add(units.object);
+
   const threeScene = new Scene();
   threeScene.add(planetMesh.mesh);
 
@@ -163,6 +186,12 @@ export function createSceneWithRenderer(
     updateBuildings(list: readonly (Building | null)[]): void {
       buildings.update(list);
     },
+    updateUnits(list: readonly Unit[], light: Float32Array): void {
+      units.update(list, light);
+    },
+    setUnitShading(mode: UnitShadingMode): void {
+      units.setShadingMode(mode);
+    },
     dispose(): void {
       if (typeof window !== 'undefined') {
         window.removeEventListener('resize', resize);
@@ -170,6 +199,7 @@ export function createSceneWithRenderer(
       camera.dispose();
       planetMesh.dispose();
       buildings.dispose();
+      units.dispose();
       renderer.dispose();
     },
   };

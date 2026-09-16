@@ -240,14 +240,15 @@ describe('createSceneWithRenderer — dispose() zwalnia WSZYSTKO, co posiada', (
     scene.dispose();
 
     expect(cameraDisposeSpy).toHaveBeenCalledTimes(1);
-    // PIĘĆ geometrii i PIĘĆ materiałów od Fazy 2B, Zadanie 3: teren (`MeshBasicMaterial`),
-    // obrysy komórek (`LineBasicMaterial`, dziecko siatki terenu) oraz trzy warstwy
-    // budynków — bryła, rdzeń i pierścień alarmu (`buildingMesh.ts`, każda własny
-    // `InstancedMesh`). Liczba jest tu wpisana wprost, a nie wyprowadzona z czegokolwiek w
-    // kodzie produkcyjnym — dołożenie kolejnego zasobu bez dołożenia mu `dispose()` ma ten
-    // test OBLAĆ, a nie przesunąć wraz z nim. (Do Zadania 3 stały tu dwójki.)
-    expect(geometryDisposeSpy).toHaveBeenCalledTimes(5);
-    expect(materialDisposeSpy).toHaveBeenCalledTimes(5);
+    // SIEDEM geometrii i SIEDEM materiałów od Fazy 2B, Zadanie 4: teren
+    // (`MeshBasicMaterial`), obrysy komórek (`LineBasicMaterial`, dziecko siatki terenu),
+    // trzy warstwy budynków — bryła, rdzeń i pierścień alarmu (`buildingMesh.ts`) — oraz
+    // dwie warstwy jednostek: tarcza i rdzeń (`unitMesh.ts`). Liczba jest tu wpisana wprost,
+    // a nie wyprowadzona z czegokolwiek w kodzie produkcyjnym — dołożenie kolejnego zasobu
+    // bez dołożenia mu `dispose()` ma ten test OBLAĆ, a nie przesunąć wraz z nim. (Do
+    // Zadania 3 stały tu dwójki, do Zadania 4 piątki.)
+    expect(geometryDisposeSpy).toHaveBeenCalledTimes(7);
+    expect(materialDisposeSpy).toHaveBeenCalledTimes(7);
     expect(fakeRenderer.disposeCalls).toBe(1);
 
     geometryDisposeSpy.mockRestore();

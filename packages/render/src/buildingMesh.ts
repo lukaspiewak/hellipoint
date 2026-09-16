@@ -488,8 +488,15 @@ function buildShellGeometry(sides: number): BufferGeometry {
   return geometry;
 }
 
-/** Płaski wielobok o `sides` bokach i promieniu 1 w `z = 0`, wachlarz wokół środka. */
-function buildDiscGeometry(sides: number): BufferGeometry {
+/**
+ * Płaski wielobok o `sides` bokach i promieniu 1 w `z = 0`, wachlarz wokół środka.
+ *
+ * Eksportowany (Faza 2B, Zadanie 4), bo `unitMesh.ts` potrzebuje DOKŁADNIE tej samej bryły
+ * — łącznie z nawinięciem, które w tym zadaniu raz już było odwrotne i skasowało całą
+ * warstwę z ekranu (patrz `buildAlertGeometry`). Druga kopia tych piętnastu linii byłaby
+ * drugim miejscem, w którym ten sam błąd może wrócić osobno.
+ */
+export function buildDiscGeometry(sides: number): BufferGeometry {
   const positions = new Float32Array((sides + 1) * 3);
   for (let i = 0; i < sides; i++) {
     const a = (i / sides) * Math.PI * 2;

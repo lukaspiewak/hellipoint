@@ -36,6 +36,7 @@ export {
 } from './camera.js';
 export {
   buildCellBases,
+  buildDiscGeometry,
   coreScale,
   createBuildingLayer,
   healthFraction,
@@ -57,6 +58,27 @@ export {
   SURFACE_LIFT_FACTOR,
   type BuildingLayer,
 } from './buildingMesh.js';
+export {
+  burnCoreScale,
+  createUnitLayer,
+  exposureFraction,
+  unitShade,
+  writeUnitCoreColor,
+  writeUnitRimColor,
+  INITIAL_UNIT_CAPACITY,
+  UNIT_BAND_SHADE,
+  UNIT_CORE_COLOR_COOL,
+  UNIT_CORE_COLOR_HOT,
+  UNIT_CORE_LIFT_FACTOR,
+  UNIT_CORE_SCALE_MIN,
+  UNIT_LIFT_FACTOR,
+  UNIT_RADIUS_FACTOR,
+  UNIT_RIM_COLOR,
+  UNIT_RIM_FACTOR,
+  UNIT_SHAPES,
+  type UnitLayer,
+  type UnitShadingMode,
+} from './unitMesh.js';
 export {
   buildCellOutlines,
   createPlanetMesh,

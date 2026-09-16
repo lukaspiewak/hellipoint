@@ -913,9 +913,13 @@ describe('warstwa jako całość', () => {
       return out;
     };
 
-    // Teren + krata + trzy warstwy budynków = pięć rysowalnych, wszystkie widoczne.
+    // Teren + krata + trzy warstwy budynków + dwie warstwy jednostek (Zadanie 4) = siedem
+    // rysowalnych, wszystkie widoczne. Liczba jest PRZYPIĘTA, nie „co najmniej": dołożenie
+    // czegokolwiek do sceny ma przejść przez ten test, bo dokładnie tego dotyczy jego
+    // druga połowa (schowanie planety gasi WSZYSTKO). Podniesiona z 5 na 7 w Zadaniu 4 —
+    // asercja na zbiorach i sam mechanizm zostały nietknięte.
     const before = drawables();
-    expect(before.length).toBe(5);
+    expect(before.length).toBe(7);
     expect(before.every((d) => d.visible)).toBe(true);
     const terrain = before.find((d) => d.object.parent === lastScene);
     expect(terrain, 'siatka terenu jest jedynym rysowalnym dzieckiem sceny').toBeDefined();
@@ -923,7 +927,7 @@ describe('warstwa jako całość', () => {
     // Schowanie SAMEJ planety — nic nie wie o budynkach — musi wygasić wszystko.
     terrain!.object.visible = false;
     const after = drawables();
-    expect(after.length).toBe(5);
+    expect(after.length).toBe(7);
     expect(after.filter((d) => d.visible)).toEqual([]);
 
     scene.dispose();
