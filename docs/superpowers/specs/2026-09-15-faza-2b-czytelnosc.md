@@ -831,8 +831,10 @@ raporcie zadania.
      komórce, piętnaście osądów. Zamrożona celowo: jedyną rzeczą, która ma się różnić wobec
      bramki terenowej, jest obecność pełnej sceny.
    - **SWOBODNY** (pytania 2-5): słońce orbituje, jednostki idą i płoną, pierścień ukryty.
-     Przełącznik cieniowania jednostek (klawisze 1-4), przełącznik pulsu alarmu, przełącznik
-     zatrzymania słońca (do porównań na tym samym tle).
+     Cztery grupy przełączników, po jednej na pytanie, **wszystkie widoczne bez przewijania**
+     (sprawdzone przy wysokości okna 480 px): tempo i zatrzymanie słońca + odczyt „obrót …%"
+     (pytanie 2), cztery presety cieniowania jednostek, klawisze 1-4 (pytanie 4), przełącznik
+     pulsu alarmu (pytanie 5), licznik spalonych przez słońce (pytanie 3).
 4. **Oceniaj z widoku całej tarczy** (ten sam punkt protokołu co §5.5) oraz z bliska.
 5. Panel składa gotowy blok Markdown — wklej go do §13.6.
 
@@ -840,6 +842,17 @@ raporcie zadania.
 decyzja protokolarna, nie ułatwienie: obiekt stojący DOKŁADNIE na pytanej komórce zasłania to,
 o co pytanie dotyczy, czyli czyni je nieodpowiadalnym, a nie trudniejszym. **Sąsiedzi pytanych
 komórek NIE są czyszczeni.**
+
+**PUŁAPKA, w którą wpadł pierwszy przechodzący — czytaj przed pytaniem 4.** Klawisze 1/2/3 w
+GŁÓWNEJ APLIKACJI (`/`) używają `UNIT_BAND_SHADE` = **0,55**, czyli wariantu, który ta faza
+zmierzyła jako **poza budżetem** kontrastu 3:1 (Δ 59/255, widoczny bez trudu, znany od Zadania
+4). Pytanie 4 dotyczy **0,8464** (Δ 18/255). **Odpowiedź udzielona z głównej aplikacji nie jest
+odpowiedzią na pytanie 4.** Wariant legalny dają WYŁĄCZNIE presety na `/scene-gate.html`.
+
+**Tempo obrotu.** Pełny obrót trwa w grze 180 s, więc przez kilka sekund ruch słońca jest
+niedostrzegalny — panel pokazuje więc odczyt „obrót …%" i daje przełącznik **×8** (obrót w 22,5
+s ekranowych). Przyspieszenie **jest odnotowywane w eksportowanym bloku**: wynik oglądany przy
+×8 jest wynikiem o czymś innym niż wynik oglądany w tempie gry.
 
 **Znana niedogodność:** przy mocnym przybliżeniu pytana komórka potrafi wyjść poza kadr, bo
 kamera celuje OBOK niej (Krok 1). Cofnij zoom. Skrót „wróć do zaznaczonej komórki" to Faza 2C
@@ -899,10 +912,10 @@ rozdzielczość tego pomiaru jest zapisana w komentarzu testu, razem z mutacją,
 
 | # | pytanie | werdykt | uwagi |
 |---|---|---|---|
-| 1 | Czy terminator nadal jest czytelny przy pełnej scenie? | — | **regresja wobec 15/15 z §6 jest najgroźniejszym możliwym wynikiem tej fazy i ma zostać ZAPISANA, nie obejdzona** |
+| 1 | Czy terminator nadal jest czytelny przy pełnej scenie? | **PASS — 15/15** | orzeczone przez właściciela projektu. **Zero regresji** wobec 15/15 z §6 po dołożeniu kraty, budynków i jednostek |
 | 2 | Czy widać, który budynek jest niezasilony, bez najeżdżania kursorem? | — | |
 | 3 | Czy widać, że jednostka się pali, zanim zginie? | — | |
-| 4 | Czy widać cieniowanie jednostki czynnikiem 0,8464? | — | jeśli NIE — argument Zadania 4 domyka się i `flat` zostaje bez zastrzeżeń; jeśli TAK — ustalenie do Fazy 4, nie powód do zmiany teraz |
+| 4 | Czy widać cieniowanie jednostki czynnikiem 0,8464? | — | **odpowiedź musi pochodzić z presetów `/scene-gate.html`**; klawisze w głównej aplikacji dają 0,55, czyli wariant POZA budżetem — patrz pułapka w §13.3. Jeśli NIE — argument Zadania 4 domyka się i `flat` zostaje bez zastrzeżeń; jeśli TAK — ustalenie do Fazy 4, nie powód do zmiany teraz |
 | 5 | Czy widać, że pierścień alarmu pulsuje? | — | jeśli NIE — pierścień zostaje bez pulsu; amplitudy NIE wolno podnosić ponad rozmiar komórki |
 
 #### Materiał, na którym te pytania stoją — zmierzony, nie oszacowany
@@ -967,7 +980,41 @@ testu 22 przypinała `Math.min(...UNIT_BAND_SHADE_LEGAL) === 0,8464` **kotwicą 
 liczbę**, zamiast własnością „to jest najmniejszy czynnik, który przechodzi". Przepisane na
 minimalność; oblewa teraz obie strony, a nie tylko jedną.
 
-### 13.8 Stan po zadaniu
+### 13.8 Runda naprawcza 1 — panel stawiał swoje uzasadnienie NAD swoimi instrumentami
+
+Człowiek przeszedł bramkę. **Pytanie 1: 15/15 PASS — zero regresji terminatora po dołożeniu
+kraty, budynków i jednostek.** Tabela piętnastu prób jest kompletna i stoi.
+
+**Pytania 2-5 nie zostały zmierzone tym instrumentem, i przyczyna była jedna.** Wszystkie
+przełączniki trybu swobodnego istniały i działały, ale leżały **pod krawędzią przewijania**, za
+trzema akapitami metodologii. Człowiek przewinął przez prozę, zobaczył przyciski faz i do
+przełączników **nigdy nie dotarł**: odpowiedział na pytania 2, 3 i 4 z głównej aplikacji, a na
+5 wpisał „nie da się rozstrzygnąć", co znaczyło „nie znalazłem przełącznika".
+
+**Jedna z tych odpowiedzi była gorsza niż brak odpowiedzi.** Pytanie 4 dostało „TAK — widać
+delikatną różnicę", ale klawisze w głównej aplikacji dają **0,55**, czyli wariant, który ten
+sam panel opisuje jako poza budżetem. Potwierdzało to Δ 59/255, o czym wiadomo od Zadania 4; o
+**0,8464** (Δ 18/255) — jedynym otwartym pytaniu — nadal nie wiemy nic. Wpisanie tego „TAK" do
+§13.6 byłoby **fałszywym wynikiem**.
+
+Cztery naprawy, wszystkie w panelu i w tym, co on mówi — **żadna nie dotyka tego, co renderuje**:
+
+| co | naprawa |
+|---|---|
+| przyrządy pod prozą | kontrolki pytań 2-5 **zaraz pod przyciskami faz**, proza w zwijanych `<details>` na dole; sprawdzone programowo przy oknie **480 px**: `scrollTop = 0`, wszystkie cztery grupy w kadrze |
+| pytanie 4: pułapka głównej aplikacji | jednolinijkowe **ostrzeżenie przy samych przyciskach** + pełne w `<details>` + w treści pytania |
+| pytanie 3: „nie giną" | „linijka" (rampa 3×5) **nie była rysowana w trybie swobodnym** — realna wada, naprawiona; dołożony licznik **spalonych przez słońce** (`SimState.killsBySun`) i opis, czego szukać |
+| pytanie 2: „słońce się nie rusza" | odczyt **„obrót …%"** z paskiem + przełącznik tempa **×8**, odnotowywany w eksporcie |
+
+Wada z pytania 3 była realna: `unitsToDraw = sim.units` pomijało `rulerUnits`, więc odniesienia
+— w tym stanu tuż przed śmiercią — **na ekranie nie było**, choć panel o nim pisał. Jednostki
+ginęły przez cały czas (licznik po kilkudziesięciu sekundach pokazuje setki), tylko nie było z
+czym porównać.
+
+Metoda sprawdzenia jest tą samą, co „patrz na obu skalach": **instrument obejrzany w warunkach
+użycia, nie we własnych.** Przy 1080 px defekt jest niewidoczny.
+
+### 13.9 Stan po zadaniu
 
 `587 testów w 39 plikach`, `pnpm typecheck` czysty, `pnpm test` zielony (trzy pełne przebiegi
 pod obciążeniem równoległym). Testy 33, 15 i 14 — zapadki zastawione na to zadanie —
@@ -977,3 +1024,5 @@ Zrobiony przy okazji ruling zapisany po werdykcie Zadania 1: **panel wykrywa ODP
 mówi to wprost** w eksportowanym logu, zamiast pokazywać liczbę wyglądającą na przypadek.
 Zadanie 5 wyprodukowało ten przypadek dwa razy z rzędu (oba przebiegi kontroli), więc adnotacja
 stoi już przy obu tabelach z §13.2.
+
+**Pytanie 1 rozstrzygnięte przez człowieka: 15/15 PASS.** Pytania 2-5 czekają — patrz §13.8.

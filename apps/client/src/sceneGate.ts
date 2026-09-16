@@ -352,23 +352,53 @@ pulseBtn.addEventListener('click', () => {
   pulseBtn.textContent = pulseOn ? 'Puls: MAKSYMALNY LEGALNY' : 'Puls: brak (produkcja)';
 });
 
-// --- Zatrzymanie słońca (pytania 2 i 4) ---------------------------------------------------
+// --- Słońce: zatrzymanie i tempo (pytania 2 i 4) ------------------------------------------
+//
 // Pytanie 4 wymaga porównania DWÓCH wariantów cieniowania na TYM SAMYM tle: przy ruchomym
 // słońcu tło zmienia się między jednym a drugim spojrzeniem i porównanie przestaje być
 // porównaniem. Zatrzymanie dotyczy WYŁĄCZNIE słońca — jednostki idą i płoną dalej, bo
 // pytanie 3 potrzebuje ruchu.
+//
+// Tempo: runda naprawcza 1. Człowiek napisał „nie ma ruchu słońca", choć słońce orbitowało —
+// przy `DEFAULT_RUN.rotationPeriod` = 180 s ruch przez kilka sekund jest niedostrzegalny, a
+// pytanie 2 wymaga obejrzenia budynku na WSZYSTKICH TRZECH pasmach. Dwie naprawy naraz i obie
+// są o tym, żeby nie trzeba było zgadywać: (1) odczyt stanu obrotu w procentach, (2) jawne
+// przyspieszenie — **opisane w panelu i w eksporcie**, bo przyspieszony obrót NIE jest tempem
+// gry i wynik zapisany bez tej informacji byłby wynikiem o czymś innym.
 let sunPaused = false;
 let sunFrozenAtSeconds = 0;
+/** [WYGLĄD] Mnożnik przyspieszenia — 180 s obrotu / 8 = 22,5 s, czyli pasmo zmienia się w kilka sekund. */
+const SUN_FAST_MULTIPLIER = 8; // [WYGLĄD]
+let sunMultiplier = 1;
+/** Czas słońca liczony WŁASNYM akumulatorem, nie `elapsed × mnożnik` — inaczej zmiana tempa
+ *  teleportowałaby słońce, bo przeskalowałaby całą przeszłość, a nie dalszy bieg. */
+let sunSeconds = 0;
+let lastSunSampleAt = performance.now();
+
 const sunBtn = requireElement<HTMLButtonElement>('#sun-toggle');
+const sunSpeedBtn = requireElement<HTMLButtonElement>('#sun-speed');
+const sunReadoutEl = requireElement<HTMLDivElement>('#sun-readout');
+const burnReadoutEl = requireElement<HTMLDivElement>('#burn-readout');
 sunBtn.addEventListener('click', () => {
   sunPaused = !sunPaused;
   sunBtn.classList.toggle('active', sunPaused);
   sunBtn.textContent = sunPaused ? 'Słońce: ZATRZYMANE' : 'Słońce: orbituje';
 });
+sunSpeedBtn.addEventListener('click', () => {
+  sunMultiplier = sunMultiplier === 1 ? SUN_FAST_MULTIPLIER : 1;
+  sunSpeedBtn.classList.toggle('active', sunMultiplier !== 1);
+  sunSpeedBtn.textContent =
+    sunMultiplier === 1 ? 'Tempo: ×1 (gra)' : `Tempo: ×${SUN_FAST_MULTIPLIER} — NIE jest to tempo gry`;
+  refreshExport();
+});
 
-/** Wychylenie promienia pierścienia w tej klatce: 0 przy wyłączonym pulsie. */
+/**
+ * Wychylenie promienia pierścienia w tej klatce: 0 przy wyłączonym pulsie **oraz zawsze w
+ * fazie PRÓB**. Faza prób ma być zamrożona — jedyną rzeczą różniącą ją od bramki terenowej
+ * jest OBECNOŚĆ pełnej sceny, nie to, czy ktoś zostawił włączony przełącznik pytania 5.
+ */
 function alertPulseAt(seconds: number): number {
-  if (!pulseOn) return 0;
+  if (!pulseOn || phase !== 'free') return 0;
   // Rośnie WYŁĄCZNIE w górę od spoczynku: konfiguracja spoczynkowa maksymalizuje szerokość
   // obu pasów obręczy, więc nie ma z czego zejść w dół (patrz `ALERT_RADIUS_FACTOR`).
   return MAX_ALERT_PULSE * 0.5 * (1 - Math.cos((2 * Math.PI * seconds) / ALERT_PULSE_PERIOD_SECONDS));
@@ -399,7 +429,7 @@ const QUESTIONS: Question[] = [
     id: 2,
     title: 'Czy widać, który budynek jest niezasilony — bez najeżdżania kursorem?',
     body:
-      'Co czwarty budynek w tej scenie jest bez prądu i dostaje bursztynowo-czarny pierścień wokół podstawy. Sprawdź na WSZYSTKICH TRZECH PASMACH (poczekaj, aż terminator przejdzie po skupisku) i na obu skalach — z bliska i z widoku całej tarczy.',
+      'Co czwarty budynek w tej scenie jest bez prądu i dostaje bursztynowo-czarny pierścień wokół podstawy. Sprawdź na WSZYSTKICH TRZECH PASMACH i na obu skalach. Terminator przechodzi po budynku sam — odczyt „obrót: …%” wyżej pokazuje, ile z obrotu minęło; jeśli czekanie 180 s jest za długie, włącz „Tempo ×8” (jest odnotowywane w eksporcie).',
     verdict: null,
     note: '',
   },
@@ -407,7 +437,7 @@ const QUESTIONS: Question[] = [
     id: 3,
     title: 'Czy widać, że jednostka się pali — ZANIM zginie?',
     body:
-      'Jasny rdzeń kurczy się do połowy promienia i przechodzi z chłodnego fioletu w rozżarzenie, a ciemna obwódka rośnie. „Linijka” koło komórki startowej pokazuje całą rampę naraz (3 typy × 5 poziomów ekspozycji, nieruchome); reszta jednostek pali się naprawdę. Pytanie brzmi: czy stan da się odczytać ZANIM jednostka zniknie.',
+      'Jednostki GINĄ naprawdę — licznik „spalonych przez słońce” wyżej rośnie przy każdej śmierci, a populacja jest dosypywana do 481, więc na ekranie są ciągle nowe. Szukaj: kurczący się jasny rdzeń, rosnąca ciemna obwódka, barwa rdzenia z fioletu w rozżarzenie, potem zniknięcie. Odniesienie: „linijka” koło komórki startowej (3 typy × 5 poziomów ekspozycji) jest NIERUCHOMA i NIE podlega spalaniu, więc pokazuje całą rampę naraz, łącznie ze stanem tuż przed śmiercią.',
     verdict: null,
     note: '',
   },
@@ -415,7 +445,7 @@ const QUESTIONS: Question[] = [
     id: 4,
     title: 'Czy widać cieniowanie jednostki czynnikiem 0,8464?',
     body:
-      'Przełącz „brak (produkcja)” ⇄ „gładkie 0,8464 (legalne)” klawiszami 1/2 i patrz na te same jednostki, na wszystkich trzech pasmach. JEŚLI RÓŻNICY NIE WIDAĆ — argument Zadania 4 domyka się i `flat` zostaje bez zastrzeżeń. JEŚLI WIDAĆ — to jest ustalenie do Fazy 4, a nie powód do zmiany teraz.',
+      'UWAGA: klawisze 1/2/3 w GŁÓWNEJ APLIKACJI (/) dają czynnik 0,55, czyli wariant POZA budżetem kontrastu — odpowiedź udzielona stamtąd NIE JEST odpowiedzią na to pytanie. Użyj presetów na TEJ stronie: przełącz „brak (produkcja)” ⇄ „gładkie 0,8464 (legalne)” i patrz na te same jednostki, na wszystkich trzech pasmach; najłatwiej przy ZATRZYMANYM słońcu. JEŚLI RÓŻNICY NIE WIDAĆ — argument Zadania 4 domyka się i `flat` zostaje bez zastrzeżeń. JEŚLI WIDAĆ — to jest ustalenie do Fazy 4, a nie powód do zmiany teraz.',
     verdict: null,
     note: '',
   },
@@ -423,7 +453,7 @@ const QUESTIONS: Question[] = [
     id: 5,
     title: 'Czy widać, że pierścień alarmu pulsuje?',
     body:
-      'Włącz puls. Amplituda to CAŁY zapas, jaki został między pierścieniem (3,0300) a krawędzią najmniejszej komórki (3,1720): 0,13 jednostki, czyli 0,44 piksela z widoku domyślnego, przy progu widoczności 1 px. Większej nie ma — sufitem jest rozmiar komórki, nie dobór wartości. JEŚLI PULSU NIE WIDAĆ, to jest wynik: pierścień zostaje bez pulsu.',
+      'Przełącznik „Puls: brak (produkcja)” wyżej — kliknij, żeby włączyć maksymalny LEGALNY puls. Amplituda to CAŁY zapas, jaki został między pierścieniem (3,0300) a krawędzią najmniejszej komórki (3,1720): 0,13 jednostki, czyli 0,44 piksela z widoku domyślnego, przy progu widoczności 1 px. Większej nie ma — sufitem jest rozmiar komórki, nie dobór wartości. JEŚLI PULSU NIE WIDAĆ, to jest wynik: pierścień zostaje bez pulsu. „Nie znalazłem przełącznika” to NIE jest odpowiedź na to pytanie.',
     verdict: null,
     note: '',
   },
@@ -569,6 +599,12 @@ function refreshExport(): void {
     `Scena: ${buildingCount} budynków, ${TARGET_UNITS} jednostek żywych (tryb swobodny), ${frozenUnits.length} jednostek (tryb prób).`,
   );
   lines.push(`Budżet klatki: ${lastBudgetLine || '(przełącz na tryb swobodny i odczekaj 1000 klatek)'}`);
+  // Tempo obrotu w eksporcie, bo wynik oglądany przy ×8 jest wynikiem o czymś innym niż
+  // wynik oglądany w tempie gry — a z samej odpowiedzi „TAK/NIE" tego nie odtworzysz.
+  lines.push(
+    `Tempo obrotu podczas oglądania: ×${sunMultiplier}` +
+      (sunMultiplier === 1 ? ' (tempo gry)' : ` — PRZYSPIESZONE, w grze pełny obrót trwa ${rotationPeriod} s`),
+  );
   lines.push('');
   for (const mode of ['threshold', 'smooth', 'control'] as const) {
     const answers = gate.answersFor(mode);
@@ -598,6 +634,8 @@ let totalFrames = 0;
 let lastBudgetLine = '';
 
 const light = new Float32Array(planet.cells.length); // bufor zaalokowany RAZ, poza pętlą
+/** Bufor sklejki „linijka + żywe jednostki", zaalokowany RAZ — patrz komentarz w `tick`. */
+const drawBuffer: Unit[] = [];
 const startTime = performance.now();
 let lastFrameAt = startTime;
 let simAccumulator = 0;
@@ -623,8 +661,12 @@ function tick(): void {
     lightFieldInto(planet, sunDir, light);
     unitsToDraw = frozenUnits;
   } else {
-    if (!sunPaused) sunFrozenAtSeconds = elapsedSeconds;
-    sunDir = sunDirection(sunFrozenAtSeconds, rotationPeriod);
+    // Własny akumulator czasu słońca — patrz `sunSeconds`.
+    const deltaSeconds = Math.min(frameStart - lastSunSampleAt, 250) / 1000;
+    lastSunSampleAt = frameStart;
+    if (!sunPaused) sunSeconds += deltaSeconds * sunMultiplier;
+    sunFrozenAtSeconds = sunSeconds;
+    sunDir = sunDirection(sunSeconds, rotationPeriod);
     lightFieldInto(planet, sunDir, light);
     // Symulacja w STAŁYM kroku (§7.2), z sufitem na liczbę kroków w jednej klatce —
     // mierzona OSOBNO i odejmowana od czasu klatki: budżet 8 ms dotyczy RENDERU.
@@ -639,9 +681,19 @@ function tick(): void {
       updateBurning(sim, light);
       topUpUnits(); // utrzymanie szczytu z Fazy 1C — patrz `TARGET_UNITS`
     }
+    // „Linijka" spalania jest rysowana TAKŻE w trybie swobodnym — runda naprawcza 1.
+    // Pierwsza wersja rysowała tu samo `sim.units`, więc odniesienia (rampa 3×5, w tym stan
+    // tuż przed śmiercią) na ekranie po prostu NIE BYŁO, choć panel o niej pisał. Pytanie 3
+    // brzmi „czy widać, że się pali, ZANIM zginie" — bez rampy nie ma z czym porównać.
+    //
+    // Sklejka idzie do bufora zaalokowanego RAZ i mieści się w mierzonym OSOBNO czasie
+    // rusztowania, nie w budżecie renderu — ten sam podział co w `main.ts`.
+    drawBuffer.length = rulerUnits.length + sim.units.length;
+    for (let i = 0; i < rulerUnits.length; i++) drawBuffer[i] = rulerUnits[i];
+    for (let i = 0; i < sim.units.length; i++) drawBuffer[rulerUnits.length + i] = sim.units[i];
     simMs = performance.now() - simStart;
     simTimes.push(simMs);
-    unitsToDraw = sim.units;
+    unitsToDraw = drawBuffer;
     // Teren i krata idą za orbitującym słońcem — w trybie prób maluje je sam harness,
     // światłem BIEŻĄCEJ próby (`applyPhaseColoring`).
     world.paintTerrain(light);
@@ -671,6 +723,19 @@ function tick(): void {
       `jednostek rysowanych: ${unitsToDraw.length} · budynków: ${buildingCount}\n` +
       `rusztowanie symulacji (poza budżetem): ${simLine}\n` +
       `cieniowanie [1-4]: ${SHADING_PRESETS[shadingIndex].label} · puls: ${pulseOn ? 'legalny' : 'brak'}`;
+
+    // Odczyty stanu — runda naprawcza 1: człowiek ma WIDZIEĆ, że słońce się rusza i że
+    // jednostki giną, zamiast wnioskować to z braku zmian na ekranie.
+    if (phase === 'free') {
+      const turns = sunSeconds / rotationPeriod;
+      const fraction = turns - Math.floor(turns);
+      const bar = '█'.repeat(Math.round(fraction * 20)).padEnd(20, '·');
+      sunReadoutEl.textContent =
+        `obrót ${(fraction * 100).toFixed(1)}% [${bar}] ` +
+        `${sunPaused ? 'ZATRZYMANE' : `pełny obrót ${(rotationPeriod / sunMultiplier).toFixed(0)} s`}`;
+      burnReadoutEl.textContent =
+        `spalonych przez słońce: ${sim.killsBySun} · żywych ${sim.units.length}/${TARGET_UNITS} · linijka ${rulerUnits.length}`;
+    }
     if (samples.length >= FRAME_WINDOW) {
       lastBudgetLine = `mediana ${med.toFixed(3)} ms, p95 ${p95.toFixed(3)} ms przy ${unitsToDraw.length} jednostkach i ${buildingCount} budynkach (budżet 8 ms, n=${samples.length})`;
     }
