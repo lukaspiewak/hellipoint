@@ -905,18 +905,37 @@ Osobno, bez GPU: `budget.test.ts` mierzy CAŁĄ pracę CPU per klatka pełnej sc
 terenu i kraty + budynki + jednostki) i pilnuje, że **nie alokuje niczego**. Zmierzona
 rozdzielczość tego pomiaru jest zapisana w komentarzu testu, razem z mutacją, której NIE łapie.
 
-### 13.6 PIĘĆ PYTAŃ — CZEKA NA WŁAŚCICIELA PROJEKTU
+### 13.6 PIĘĆ PYTAŃ — WERDYKT WŁAŚCICIELA PROJEKTU
 
-**To jest sekcja, której wykonawca nie wypełnia.** Wklej tu blok z panelu
-(`/scene-gate.html`, pole „Do wklejenia w dokument wyników").
+**Wszystkie pięć: TAK.** Orzeczone przez właściciela projektu, uwagi cytowane dosłownie.
 
-| # | pytanie | werdykt | uwagi |
+| # | pytanie | werdykt | uwaga człowieka |
 |---|---|---|---|
-| 1 | Czy terminator nadal jest czytelny przy pełnej scenie? | **PASS — 15/15** | orzeczone przez właściciela projektu. **Zero regresji** wobec 15/15 z §6 po dołożeniu kraty, budynków i jednostek |
-| 2 | Czy widać, który budynek jest niezasilony, bez najeżdżania kursorem? | — | |
-| 3 | Czy widać, że jednostka się pali, zanim zginie? | — | |
-| 4 | Czy widać cieniowanie jednostki czynnikiem 0,8464? | — | **odpowiedź musi pochodzić z presetów `/scene-gate.html`**; klawisze w głównej aplikacji dają 0,55, czyli wariant POZA budżetem — patrz pułapka w §13.3. Jeśli NIE — argument Zadania 4 domyka się i `flat` zostaje bez zastrzeżeń; jeśli TAK — ustalenie do Fazy 4, nie powód do zmiany teraz |
-| 5 | Czy widać, że pierścień alarmu pulsuje? | — | jeśli NIE — pierścień zostaje bez pulsu; amplitudy NIE wolno podnosić ponad rozmiar komórki |
+| 1 | Czy terminator nadal jest czytelny przy pełnej scenie? | **TAK — 15/15 PASS** | „terminator jest bardzo kontrastową granicą" |
+| 2 | Czy widać, który budynek jest niezasilony, bez najeżdżania kursorem? | **TAK** | „jeżeli niezasilane są te z bursztynowo-czarną otoczką to są bardzo widoczne. poza tym najazd kursorem nic nie zmienia" |
+| 3 | Czy widać, że jednostka się pali, zanim zginie? | **TAK** | — |
+| 4 | Czy widać cieniowanie jednostki czynnikiem 0,8464? | **TAK** | „widać delikatną zmianę jasności, nic poza tym" |
+| 5 | Czy widać, że pierścień alarmu pulsuje? | **TAK** | — |
+
+Warunki przebiegu: **tempo obrotu ×1 (tempo gry, bez przyspieszenia)**, budżet klatki mediana
+0,900 ms / p95 1,400 ms przy 496 jednostkach i 148 budynkach wobec 8 ms, Apple M5. Pytanie 1
+zmierzone w pierwszym przebiegu, w fazie prób, która w rundzie naprawczej 1 została nietknięta.
+
+**Pytanie 1 to wynik, o który w tej fazie chodziło: pełny obraz nie zepsuł terminatora.** Te
+same piętnaście komórek i te same odpowiedzi co w tabeli §6 — zero regresji po dołożeniu kraty,
+budynków i jednostek.
+
+#### Dwa zastrzeżenia do pytania 2 — zapisane, bo nie są wadami
+
+1. **„Jeżeli niezasilane są te z bursztynowo-czarną otoczką…"** — to jest wniosek z wyglądu, a
+   nie potwierdzone odwzorowanie. Pytanie brzmiało „czy widać, KTÓRY", a człowiek widzi wyraźną
+   KLASĘ i zakłada, że to ta właściwa. Werdykt TAK zostaje, bo klasa jest jednoznacznie
+   widoczna i o widoczność pytano; potwierdzenie odwzorowania (pierścień ⟺ `powered === false`)
+   niesie test 6 w `buildingMesh.test.ts`, nie oko.
+2. **„Najazd kursorem nic nie zmienia"** — poprawne i **nie jest wadą**. W Fazie 2B nie ma
+   żadnego UI pod kursorem; sformułowanie pytania („bez najeżdżania kursorem") zakładało coś,
+   czego jeszcze nie ma. Artefakt planu, nie renderu — zapisane, żeby nie wróciło jako
+   zgłoszenie.
 
 #### Materiał, na którym te pytania stoją — zmierzony, nie oszacowany
 
@@ -975,6 +994,15 @@ granicy. Baseline: 587 zielonych w 39 plikach.
 | M11b | — | adnotacja drukowana ZAWSZE | **oblewa** 24b |
 | M12 | *(kontrola na samą tabelę)* rozluźnienie `toBe(8)` → `toBeGreaterThanOrEqual(1)` w 33b | — | przechodzi, czyli rozluźnienie JEST wykrywalne tylko przez czytanie diffu |
 
+Runda naprawcza 2 (puls domyślnie włączony — §13.10, U2):
+
+| # | złamana własność | mutacja | wynik |
+|---|---|---|---|
+| R2-M1 | pierścień mieści się w komórce NA SZCZYCIE pulsu | amplituda `0,0015` (tuż za sufitem) | **oblewa** 8, 23 |
+| R2-M1b | — | amplituda `0,0014` (tuż przed sufitem) | przechodzi |
+| R2-M2 | faza pulsu nie przekracza legalnej amplitudy | `(1 − cos)` → `(1,001 − cos)` | **oblewa** 25 |
+| R2-M3 | szczyt fazy SIĘGA amplitudy (puls nie jest cichszy, niż wolno) | `0,5` → `0,45` | **oblewa** 25 |
+
 Połówka „ma przejść" wykryła w tym zadaniu jedną wadę: przy M5b okazało się, że pierwsza wersja
 testu 22 przypinała `Math.min(...UNIT_BAND_SHADE_LEGAL) === 0,8464` **kotwicą na dzisiejszą
 liczbę**, zamiast własnością „to jest najmniejszy czynnik, który przechodzi". Przepisane na
@@ -1016,7 +1044,7 @@ użycia, nie we własnych.** Przy 1080 px defekt jest niewidoczny.
 
 ### 13.9 Stan po zadaniu
 
-`587 testów w 39 plikach`, `pnpm typecheck` czysty, `pnpm test` zielony (trzy pełne przebiegi
+`588 testów w 39 plikach`, `pnpm typecheck` czysty, `pnpm test` zielony (pełne przebiegi
 pod obciążeniem równoległym). Testy 33, 15 i 14 — zapadki zastawione na to zadanie —
 **nietknięte**; zamiast nich dołożone 33b (pełna scena) i 34 (faza swobodna).
 
@@ -1025,4 +1053,56 @@ mówi to wprost** w eksportowanym logu, zamiast pokazywać liczbę wyglądając�
 Zadanie 5 wyprodukowało ten przypadek dwa razy z rzędu (oba przebiegi kontroli), więc adnotacja
 stoi już przy obu tabelach z §13.2.
 
-**Pytanie 1 rozstrzygnięte przez człowieka: 15/15 PASS.** Pytania 2-5 czekają — patrz §13.8.
+**Wszystkie pięć pytań rozstrzygnięte przez człowieka: TAK** (§13.6). Dwa z tych „TAK" obaliły
+przesłanki, na których stały decyzje Zadań 3 i 4 — patrz §13.10; jedna z nich zmieniła kod
+(puls włączony domyślnie), druga nie i nie miała.
+
+### 13.10 Dwa ustalenia — oba obalają przesłankę, na której stał dzisiejszy kod
+
+To jest właściwa treść odpowiedzi człowieka. Oba „TAK" były przewidziane jako możliwe i oba
+mają rozstrzygnięty skutek; jeden zmienia kod, drugi nie.
+
+#### U1. Cieniowanie jednostek: `flat` zostaje, ale jedno z dwóch jego uzasadnień UPADŁO
+
+Zadanie 4 odrzuciło cieniowanie jednostek **dwoma** argumentami:
+
+1. **Stroboskopowanie** — jednostka stojąca na terminatorze zmienia pasmo do **20 razy na
+   sekundę**, 15% tych zmian u jednostek, które się nie ruszyły. Potwierdzone dwoma
+   niezależnymi pomiarami. **Stoi nietknięte.** Dotyczy jednak **wyłącznie trybu PROGOWEGO**.
+2. **„Powyżej granicy cieniowania i tak nie widać"** — osłabione w rundzie naprawczej 1 Zadania
+   4 do zmierzonego, bo obserwacja, na której stało, była przy czynniku 0,55 (Δ 59/255), a
+   maksimum legalne to 0,8464 (Δ 18/255) i **nikt go nie obejrzał**. Teraz obejrzał.
+   **Widać.** „Widać delikatną zmianę jasności, nic poza tym".
+
+**Skutek, precyzyjnie:** wybrany wariant zostaje — `flat` idzie na ekran — ale **broni się już
+tylko stroboskopowaniem**. Cieniowanie **gładkie** w granicach legalnych **nie jest wykluczone
+przez niewidoczność**; jest po prostu **niewybrane**. To czyni je **żywą opcją Fazy 4**, a nie
+zamkniętą. Zgodnie z planem: ustalenie do Fazy 4, **nie powód do zmiany teraz**.
+
+Zdanie „łagodnego cieniowania gładkiego i tak nie widać" nie wolno już nigdzie napisać.
+
+#### U2. Próg 1,00 px obowiązuje dla cech NIERUCHOMYCH — ruch jest wykrywalny poniżej niego
+
+Próg widoczności, którym mierzy cała ta faza (`MIN_VISIBLE_PX = 1`), pochodzi z §5.3 raportu
+Zadania 3, gdzie ustalono go **obejrzeniem cechy NIERUCHOMEJ**: pas obręczy alarmu cieńszy niż
+piksel znikał z widoku całej tarczy. Człowiek przy bramce Zadania 5 zobaczył **puls o
+amplitudzie 0,44 px**.
+
+**Ustalenie jest ogólniejsze niż ta faza:** próg 1,00 px wiąże ROZMIARY, a nie RUCH. Żaden próg
+Zadań 3 i 4 nie traci przez to ważności — wszystkie dotyczą rozmiarów (szerokość obwódki, pasy
+obręczy, promień rdzenia, rozstęp sylwetek) — ale **granica ich stosowalności ma teraz nazwę**.
+Kto w Fazie 4 będzie szukał kanału w komórce, która nie ma już miejsca na nic nieruchomego, ma
+tu zapisane, że ruch kosztuje mniej niż piksel.
+
+**Konsekwencja w kodzie, wykonana:** Zadanie 3 wyłączyło puls rachunkiem „trzy wielkości, każda
+ponad 1 px, nie mieszczą się w 3,8 px". Rachunek był poprawny, ale milcząco stosował próg
+nieruchomy do wychylenia. **Przesłanka upadła, więc puls jest domyślnie WŁĄCZONY** — także w
+grze (`/`), nie tylko w bramce — na maksymalnej legalnej amplitudzie. Uzasadnienie kierunku:
+stan „bez prądu" boli (brownout gasi obronę w środku ataku, §5.1), a drugi kanał jest darmowy —
+mieści się w budżecie komórki i jest zmierzony jako widoczny.
+
+**Amplitudy NIE podniesiono i nie wolno jej podnosić.** Sufitem jest ROZMIAR KOMÓRKI i to się
+nie zmieniło: szczyt 3,1600 wobec krawędzi 3,1720. Para mutacji w §13.7 (R2-M1/M1b).
+
+Warstwa nadal nie zna zegara — fazę liczy funkcja czysta `alertPulse(radius, seconds)`, wspólna
+dla gry i dla bramki, więc nie ma dwóch wzorów, które mogłyby się rozjechać.

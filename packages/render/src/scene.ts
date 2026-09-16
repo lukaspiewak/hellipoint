@@ -1,6 +1,6 @@
 import { PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 import type { Building, Planet, Unit, Vec3 } from '@heliopolis/sim';
-import { createBuildingLayer } from './buildingMesh.js';
+import { alertPulse, createBuildingLayer } from './buildingMesh.js';
 import { createCamera, type OrbitCamera } from './camera.js';
 import { buildPlanetGeometry } from './geometry.js';
 import { createPlanetMesh } from './planetMesh.js';
@@ -31,9 +31,13 @@ export interface PlanetScene {
    * wołający, który jeszcze nie ma symulacji (Faza 2C wnosi `Sim`), po prostu tego nie woła
    * i widzi planetę bez budynków, zamiast musieć wymyślać pustą tablicę na każdą klatkę.
    *
-   * Bez parametru czasu: warstwa budynków jest statyczna wobec zegara (`BuildingLayer.update`).
+   * `alertPulseSeconds` — czas dla pulsu pierścienia alarmu (runda naprawcza 2 Zadania 5,
+   * puls jest domyślnym wyglądem gry). Pominięty ⇒ pierścień w spoczynku; to jest wyjście dla
+   * wywołującego, który zegara nie ma (np. test albo zrzut pojedynczej klatki), a nie
+   * deklaracja, że produkcja nie pulsuje. Fazę liczy `alertPulse` — funkcja czysta, żeby
+   * warstwa pozostała funkcją swojego wejścia.
    */
-  updateBuildings(buildings: readonly (Building | null)[]): void;
+  updateBuildings(buildings: readonly (Building | null)[], alertPulseSeconds?: number): void;
   /**
    * Przepisuje warstwę jednostek (Faza 2B, Zadanie 4) z bieżącego `SimState.units`.
    * OSOBNO od `render` z tego samego powodu formalnego co `updateBuildings` — podpis
@@ -183,8 +187,8 @@ export function createSceneWithRenderer(
       planetMesh.updateColors(light);
       renderer.render(threeScene, camera.object);
     },
-    updateBuildings(list: readonly (Building | null)[]): void {
-      buildings.update(list);
+    updateBuildings(list: readonly (Building | null)[], alertPulseSeconds?: number): void {
+      buildings.update(list, alertPulseSeconds === undefined ? 0 : alertPulse(planet.radius, alertPulseSeconds));
     },
     updateUnits(list: readonly Unit[], light: Float32Array): void {
       units.update(list, light);

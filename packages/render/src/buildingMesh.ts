@@ -96,12 +96,25 @@ import type { Rgb } from './shading.js';
  * możliwy przez OBRACANIE obręczy z segmentów zamiast jej skalowania; rozstrzyga to bramka
  * Zadania 5.
  *
- * Zadanie 5 dołożyło do `update` opcjonalne `alertPulse` — wychylenie promienia, domyślnie
- * zero — żeby człowiek przy bramce mógł ZOBACZYĆ puls o maksymalnej LEGALNEJ amplitudzie
- * (0,13 jednostki = 0,44 px) zamiast czytać o nim w raporcie. Nie jest to cofnięcie decyzji
- * Zadania 3: pierścień domyślnie nadal nie pulsuje, a górna granica amplitudy jest
- * egzekwowana wyjątkiem i pilnowana testem 8 NA SZCZYCIE pulsu — patrz
- * `ALERT_PULSE_AMPLITUDE_FACTOR`.
+ * **Runda naprawcza 2 Zadania 5: PULS WRÓCIŁ i jest domyślnym wyglądem gry.** Przesłanka, na
+ * której Zadanie 3 go wyłączyło, upadła — nie przez zmianę geometrii, tylko przez OBEJRZENIE.
+ * Rachunek Zadania 3 mówił: trzy wielkości, każda ponad progiem widoczności 1 px, nie mieszczą
+ * się w budżecie 3,8 px między bryłą a krawędzią komórki. Był poprawny. Milcząco zakładał
+ * jednak, że próg 1 px obowiązuje TAKŻE dla wychylenia — a ten próg pochodzi z §5.3 raportu
+ * Zadania 3, gdzie ustalono go obejrzeniem **cechy NIERUCHOMEJ** (pas obręczy cieńszy niż
+ * piksel znikał). Człowiek przy bramce Zadania 5 zobaczył puls o amplitudzie **0,44 px**.
+ *
+ * Czyli: **próg 1 px obowiązuje dla ROZMIARÓW, a ruch jest wykrywalny poniżej niego.** Żaden
+ * próg Zadań 3 i 4 nie traci przez to ważności — wszystkie dotyczą rozmiarów — ale granica ich
+ * stosowalności ma teraz nazwę.
+ *
+ * Stąd puls domyślnie WŁĄCZONY, na maksymalnej legalnej amplitudzie: stan „bez prądu" jest
+ * stanem, który boli (brownout gasi obronę w środku ataku, §5.1), a drugi kanał jest darmowy —
+ * mieści się w budżecie komórki i został zmierzony jako widoczny. **Amplitudy NIE wolno
+ * podnosić**: sufitem jest rozmiar komórki i to się nie zmieniło (test 8 pilnuje tego NA
+ * SZCZYCIE pulsu, `update` egzekwuje wyjątkiem).
+ *
+ * Warstwa nadal nie zna zegara — fazę liczy wywołujący, funkcją czystą `alertPulse`.
  *
  * ## Dlaczego `hp` jest kodowane POLEM, a nie samą barwą
  *
@@ -281,6 +294,27 @@ export const ALERT_RADIUS_FACTOR = 0.0303; // [WYGLĄD]
  * jest ROZMIAR KOMÓRKI, nie dobór wartości — i dokładnie tę różnicę bramka pokazuje.
  */
 export const ALERT_PULSE_AMPLITUDE_FACTOR = 0.0013; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Okres pulsu w sekundach. Wolniej niż tętno spoczynkowe — puls ma czytać się jako
+ * RUCH, nie jako migotanie, a gracz ma go zauważyć peryferyjnie, nie zostać nim zmęczony.
+ */
+export const ALERT_PULSE_PERIOD_SECONDS = 1.6; // [WYGLĄD]
+
+/**
+ * Wychylenie promienia pierścienia alarmu w chwili `seconds` — funkcja CZYSTA, żeby zegar
+ * został u wywołującego, a warstwa pozostała funkcją swojego wejścia (`BuildingLayer.update`
+ * nie zna czasu i to jest własność z Zadania 3, nie niedopatrzenie).
+ *
+ * Kosinus podniesiony do `[0, 1]`, więc puls rośnie WYŁĄCZNIE W GÓRĘ od spoczynku: konfiguracja
+ * spoczynkowa maksymalizuje szerokość obu pasów obręczy (patrz `ALERT_RADIUS_FACTOR`), więc nie
+ * ma z czego zejść w dół. Szczyt wypada DOKŁADNIE na `ALERT_PULSE_AMPLITUDE_FACTOR` i ani o
+ * bit wyżej — to jest ta sama granica, którą `update` egzekwuje wyjątkiem.
+ */
+export function alertPulse(planetRadius: number, seconds: number): number {
+  const phase = (2 * Math.PI * seconds) / ALERT_PULSE_PERIOD_SECONDS;
+  return planetRadius * ALERT_PULSE_AMPLITUDE_FACTOR * 0.5 * (1 - Math.cos(phase));
+}
 
 /**
  * `[WYGLĄD]` Wewnętrzna krawędź pierścienia alarmu, jako ułamek jego promienia (1,8786).
@@ -687,9 +721,12 @@ export interface BuildingLayer {
    *
    * Nadal bez parametru CZASU, i to jest ta sama decyzja co po rundzie naprawczej 2 Zadania
    * 3: warstwa nie zna zegara. `alertPulse` to gotowe WYCHYLENIE PROMIENIA w jednostkach
-   * świata (domyślnie 0 — pierścień w spoczynku, bit w bit jak dotąd); fazę liczy wywołujący,
-   * więc jeden zegar zostaje w jednym miejscu, a warstwa pozostaje funkcją swojego wejścia.
-   * Materiał do pytania 5 bramki Zadania 5 — patrz `ALERT_PULSE_AMPLITUDE_FACTOR`.
+   * świata; fazę liczy wywołujący funkcją czystą `alertPulse(radius, seconds)`, więc jeden
+   * zegar zostaje w jednym miejscu, a warstwa pozostaje funkcją swojego wejścia.
+   *
+   * **Domyślne 0 nie znaczy „produkcja nie pulsuje"** — znaczy „bez argumentu nie ma
+   * wychylenia", bo warstwa bez zegara nie ma skąd go wziąć. Pulsowanie jest dziś domyślnym
+   * wyglądem gry i wnosi je wywołujący (`scene.ts` → `apps/client`); patrz komentarz modułu.
    *
    * @throws {RangeError} gdy `alertPulse` jest ujemny albo przekracza
    *   `planet.radius × ALERT_PULSE_AMPLITUDE_FACTOR`. Amplituda ponad sufit wyprowadza

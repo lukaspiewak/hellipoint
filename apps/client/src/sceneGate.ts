@@ -6,7 +6,7 @@ import {
   median,
   percentile,
   RENDER_VERSION,
-  ALERT_PULSE_AMPLITUDE_FACTOR,
+  alertPulse,
   UNIT_BAND_SHADE,
   UNIT_BAND_SHADE_LEGAL,
   type GateMode,
@@ -341,16 +341,19 @@ function applyShading(index: number): void {
 
 // --- Sterowanie pulsem pierścienia alarmu (pytanie 5) ------------------------------------
 
-const MAX_ALERT_PULSE = planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR;
-/** Okres pulsu w sekundach — [WYGLĄD]. Wolniej niż tętno, żeby ruch był ruchem, a nie migotaniem. */
-const ALERT_PULSE_PERIOD_SECONDS = 1.6; // [WYGLĄD]
-let pulseOn = false;
+// Puls jest od rundy naprawczej 2 DOMYŚLNYM wyglądem gry, więc bramka startuje z nim
+// włączonym; przełącznik służy teraz do porównania „z pulsem ⇄ bez", a nie do jego szukania.
+let pulseOn = true;
 const pulseBtn = requireElement<HTMLButtonElement>('#pulse-toggle');
+function refreshPulseButton(): void {
+  pulseBtn.classList.toggle('active', pulseOn);
+  pulseBtn.textContent = pulseOn ? 'Puls: WŁĄCZONY (produkcja)' : 'Puls: wyłączony (do porównania)';
+}
 pulseBtn.addEventListener('click', () => {
   pulseOn = !pulseOn;
-  pulseBtn.classList.toggle('active', pulseOn);
-  pulseBtn.textContent = pulseOn ? 'Puls: MAKSYMALNY LEGALNY' : 'Puls: brak (produkcja)';
+  refreshPulseButton();
 });
+refreshPulseButton();
 
 // --- Słońce: zatrzymanie i tempo (pytania 2 i 4) ------------------------------------------
 //
@@ -399,9 +402,9 @@ sunSpeedBtn.addEventListener('click', () => {
  */
 function alertPulseAt(seconds: number): number {
   if (!pulseOn || phase !== 'free') return 0;
-  // Rośnie WYŁĄCZNIE w górę od spoczynku: konfiguracja spoczynkowa maksymalizuje szerokość
-  // obu pasów obręczy, więc nie ma z czego zejść w dół (patrz `ALERT_RADIUS_FACTOR`).
-  return MAX_ALERT_PULSE * 0.5 * (1 - Math.cos((2 * Math.PI * seconds) / ALERT_PULSE_PERIOD_SECONDS));
+  // Ta sama funkcja czysta, co w głównej aplikacji — nie druga kopia wzoru, bo dwa wzory
+  // rozjechałyby się przy pierwszym strojeniu okresu.
+  return alertPulse(planet.radius, seconds);
 }
 
 // --- Pięć pytań --------------------------------------------------------------------------

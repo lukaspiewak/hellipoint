@@ -14,7 +14,9 @@ import {
   ALERT_COLOR_DARK,
   ALERT_COLOR_LIGHT,
   ALERT_INNER_FACTOR,
+  alertPulse,
   ALERT_PULSE_AMPLITUDE_FACTOR,
+  ALERT_PULSE_PERIOD_SECONDS,
   ALERT_RADIUS_FACTOR,
   BUILDING_HEIGHT_FACTOR,
   BUILDING_RADIUS_FACTOR,
@@ -1146,10 +1148,12 @@ describe('puls pierścienia alarmu — materiał do pytania 5 bramki (Zadanie 5)
     );
   });
 
-  it('24. [NIEZMIENNIK] `update` bez wychylenia daje macierze IDENTYCZNE co do bitu jak przed Zadaniem 5', () => {
-    // Puls jest opcją bramki, nie zmianą produktu. Gdyby domyślna ścieżka choć o bit różniła
-    // się od poprzedniej, Zadanie 5 po cichu zmieniłoby wygląd gry — a wszystkie pomiary
-    // pasów obręczy z Zadania 3 przestałyby opisywać to, co jest na ekranie.
+  it('24. [NIEZMIENNIK] `update` bez wychylenia daje macierze IDENTYCZNE co do bitu jak w spoczynku', () => {
+    // Warstwa nie zna zegara i to jest własność z Zadania 3, nie niedopatrzenie: bez
+    // argumentu nie ma wychylenia, bo nie ma skąd go wziąć. **To NIE znaczy „produkcja nie
+    // pulsuje"** — od rundy naprawczej 2 Zadania 5 pulsuje, a wnosi to wywołujący
+    // (`scene.ts` → `apps/client`), funkcją czystą `alertPulse`. Strażnik jest tu po to, żeby
+    // wywołanie bez zegara (test, zrzut pojedynczej klatki) było DETERMINISTYCZNE.
     const layer = createBuildingLayer(planet, geo);
     const list = emptyBuildings();
     ALL_TYPES.forEach((type, k) => place(list, 100 + k * 7, type, { powered: false }));
@@ -1164,6 +1168,49 @@ describe('puls pierścienia alarmu — materiał do pytania 5 bramki (Zadanie 5)
     // „identyczne" byłoby prawdą dla implementacji, która ignoruje argument w ogóle.
     layer.update(list, planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR);
     expect(Array.from(layer.alert.instanceMatrix.array)).not.toEqual(implicit);
+    layer.dispose();
+  });
+
+  it('25. [PARA MUTACJI] faza pulsu nigdy nie przekracza legalnej amplitudy, a jej SZCZYT sięga jej dokładnie', () => {
+    // Runda naprawcza 2 Zadania 5 włączyła puls domyślnie, więc `alertPulse` jest teraz
+    // częścią wyglądu gry, a nie materiałem bramki. Wiąże go ta sama granica co przedtem:
+    // sufitem jest ROZMIAR KOMÓRKI i to się nie zmieniło.
+    //
+    // Dwie połówki: faza nie wychodzi ponad amplitudę (inaczej `update` rzuci w połowie
+    // sekundy, na losowej klatce) ORAZ szczyt sięga jej dokładnie (inaczej puls byłby cichszy,
+    // niż pozwala budżet, a to jest jedyny kanał, którego ta komórka jeszcze nie zajmuje).
+    const maxPulse = planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR;
+    const SAMPLES = 2000;
+    let peak = -Infinity;
+    let trough = Infinity;
+    for (let i = 0; i <= SAMPLES; i++) {
+      const seconds = (i / SAMPLES) * ALERT_PULSE_PERIOD_SECONDS * 3; // trzy pełne okresy
+      const value = alertPulse(planet.radius, seconds);
+      expect(value, `faza ${seconds.toFixed(3)} s`).toBeGreaterThanOrEqual(0);
+      expect(value, `faza ${seconds.toFixed(3)} s`).toBeLessThanOrEqual(maxPulse);
+      peak = Math.max(peak, value);
+      trough = Math.min(trough, value);
+    }
+    expect(peak).toBeCloseTo(maxPulse, 9);
+    expect(trough).toBeCloseTo(0, 9);
+    // OKRESOWOŚĆ: ten sam moment w kolejnym okresie daje tę samą wartość.
+    expect(alertPulse(planet.radius, 0.37)).toBeCloseTo(
+      alertPulse(planet.radius, 0.37 + ALERT_PULSE_PERIOD_SECONDS),
+      9,
+    );
+    // ...i faza faktycznie SIĘ RUSZA — inaczej „w granicach" byłoby prawdą dla stałej zero.
+    expect(alertPulse(planet.radius, ALERT_PULSE_PERIOD_SECONDS / 2)).toBeGreaterThan(maxPulse * 0.99);
+
+    // KAŻDA wartość, jaką faza produkuje, jest przyjmowana przez `update` — czyli puls nie
+    // może wysadzić renderu na losowej klatce. To jest ta druga połówka pary: gdyby szczyt
+    // wychodził choć o bit ponad amplitudę, `update` rzuciłby.
+    const layer = createBuildingLayer(planet, geo);
+    const list = emptyBuildings();
+    place(list, 300, 'CORE', { powered: false });
+    for (let i = 0; i <= 200; i++) {
+      const seconds = (i / 200) * ALERT_PULSE_PERIOD_SECONDS;
+      expect(() => layer.update(list, alertPulse(planet.radius, seconds))).not.toThrow();
+    }
     layer.dispose();
   });
 });

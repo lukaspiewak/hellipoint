@@ -212,10 +212,16 @@ function tick(): void {
   const elapsedSeconds = (frameStart - startTime) / 1000;
   const sunDir = sunDirection(elapsedSeconds, DEFAULT_RUN.rotationPeriod);
   lightFieldInto(planet, sunDir, light);
-  // Co klatkę, mimo że `demoBuildings` się nie zmienia i warstwa jest statyczna wobec
-  // zegara: to jest dokładnie ten koszt, który w prawdziwej rozgrywce (Faza 2C) będzie
-  // płacony co klatkę i ma się mieścić w budżecie 8 ms. Licznik klatek go obejmuje.
-  scene.updateBuildings(demoBuildings);
+  // Co klatkę, mimo że `demoBuildings` się nie zmienia: to jest dokładnie ten koszt, który
+  // w prawdziwej rozgrywce (Faza 2C) będzie płacony co klatkę i ma się mieścić w budżecie
+  // 8 ms. Licznik klatek go obejmuje.
+  //
+  // Drugi argument to czas dla PULSU pierścienia alarmu. Puls jest domyślnym wyglądem gry od
+  // rundy naprawczej 2 Zadania 5 — człowiek przy bramce zobaczył go przy amplitudzie 0,44 px,
+  // co obaliło przesłankę, na której Zadanie 3 go wyłączyło (próg widoczności 1 px pochodzi z
+  // obejrzenia cechy NIERUCHOMEJ, a ruch jest wykrywalny poniżej niego). Zegar zostaje TUTAJ,
+  // bo warstwa ma pozostać funkcją swojego wejścia.
+  scene.updateBuildings(demoBuildings, elapsedSeconds);
 
   // Symulacja w STAŁYM kroku (`TICK_SECONDS`), nie w kroku klatki — §7.2: nic w symulacji
   // nie wolno wiązać z czasem ściennym. Sufit na liczbę kroków w jednej klatce chroni przed
