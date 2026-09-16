@@ -295,12 +295,38 @@ const WCAG_MIN = 3;
 //
 // **Każdy próg poniżej wiąże MINIMUM po populacji, wyrażone w pikselach.**
 //
-// Przelicznik: z widoku DOMYŚLNEGO (`INITIAL_DISTANCE_FACTOR = 3`, kamera 300 jednostek od
-// środka planety, pole widzenia 50°) sylwetka planety zajmuje 0,7148 wysokości kadru, czyli
-// przy płótnie 900 px ma 643 px średnicy na 200 jednostek świata — **3,22 px na jednostkę**.
-// To jest miara UŚREDNIONA po tarczy; w jej środku, gdzie powierzchnia jest zwrócona wprost
-// do kamery, skala wynosi 4,83 px/j. Biorę zachowawczą.
-const PIXELS_PER_UNIT = 3.22;
+// ## Przelicznik jednostek świata na piksele — i pomyłka, którą runda 2 tu miała
+//
+// Z widoku DOMYŚLNEGO (`INITIAL_DISTANCE_FACTOR = 3`, czyli kamera 300 jednostek od środka
+// planety, pole widzenia 50°):
+//
+//   sylwetka kuli to OKRĄG STYCZNOŚCI, nie równik — jej promień kątowy widziany z kamery
+//   wynosi `asin(R/d) = asin(1/3) = 19,4712°`, a kamera perspektywiczna odwzorowuje promień
+//   pod kątem α na promień obrazu proporcjonalny do `tan α`. Stąd
+//
+//       udział wysokości kadru = tan(asin(1/3)) / tan(25°) = 0,353553 / 0,466308 = **0,758198**
+//
+//   czyli przy płótnie 900 px sylwetka ma **682,4 px** średnicy na 200 jednostek świata —
+//   **3,4119 px na jednostkę**.
+//
+// Runda naprawcza 2 miała tu **0,7148 i 3,22**, i to była POMYŁKA, nie zaokrąglenie.
+// Odtworzona: policzyłem odsunięcie punktu styczności od osi (94,281) i podzieliłem przez
+// połowę wysokości kadru wziętą na odległości **SKOŚNEJ** od kamery (282,843) zamiast na
+// **OSIOWEJ** (266,667). Dzielenie perspektywiczne używa głębokości wzdłuż osi, nie
+// odległości od kamery; ten sam rachunek z odległością osiową daje 0,758198 co do szóstej
+// cyfry. (Naiwne `R/d = 0,3333` zamiast `tan(asin(R/d)) = 0,353553` daje dokładnie tę samą
+// błędną liczbę — obie drogi mylą to samo.)
+//
+// Kierunek błędu był ZACHOWAWCZY: prawdziwa skala jest WIĘKSZA, więc progi wyrażone w
+// jednostkach świata były o 6% surowsze, niż wymaga próg pikselowy. Żadna liczba z tabeli
+// „najgorszy członek populacji" nie stała się przez to nieprawdziwa — wszystkie rosną.
+// Po poprawieniu skali sprawdziłem parami, że każdy próg NADAL wiąże, w tym dwa leżące
+// najbliżej granicy (obwódka rdzenia i rdzeń przy `hp = 0`).
+//
+// To jest miara UŚREDNIONA po tarczy. W jej środku, gdzie powierzchnia jest zwrócona wprost
+// do kamery, skala wynosi `900 / (2 · (300 − 100) · tan 25°) = ` **4,825 px/j** — i ta liczba
+// była poprawna od początku. Biorę uśrednioną, bo jest zachowawcza.
+const PIXELS_PER_UNIT = 3.41;
 const px = (world: number): number => world * PIXELS_PER_UNIT;
 
 /**
