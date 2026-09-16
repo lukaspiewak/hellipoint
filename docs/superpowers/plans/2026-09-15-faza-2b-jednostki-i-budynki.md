@@ -207,6 +207,8 @@ Po naprawie **powtórz kontrolę** i zapisz oba wyniki — przed i po. Jeśli ko
 
 - [ ] **Krok 2: Zmierz budżet klatki przy pełnej scenie**
 
+Najpierw usuń wzorzec migający, bo będziesz w tym pliku i tak. Zadanie 4 znalazło, że asercja `expect(Math.min(...okna)).toBe(0)` na cyklach odśmiecania stwierdza **BRAK zdarzenia, które mogą wywołać inne procesy** — bezczynne okno 122 ms potrafi dać 3 cykle. Wykonawca Zadania 4 naprawił swój test (mierzy teraz RÓŻNICĘ odporną na szum); ten sam wzorzec został w `budget.test.ts:199,201` i w teście 16 `buildingMesh.test.ts`. **Nie odtworzyłem tego w dziesięciu przebiegach** (sześć pakietu renderu, cztery pełnych), więc nie jest to wada wykazana — jest strukturalna. Napraw wzorcem z Zadania 4, nie podnoszeniem progu.
+
 2A mierzyła 0,200 ms mediany przy samym terenie, przy budżecie 8 ms. Zmierz przy szczycie z Fazy 1C — **481 jednostek i kilkadziesiąt budynków** — i zapisz maszynę, na której mierzyłeś.
 
 ---
