@@ -193,6 +193,7 @@ Bramka z Zadania 1 badała sam teren. Ta bada **scenę, którą gracz naprawdę 
 1. **Czy terminator nadal jest czytelny** przy pełnej scenie? Regresja wobec Zadania 1 jest tu najgroźniejszym możliwym wynikiem i **musi zostać zapisana, nie obejdzona**.
 2. **Czy widać, który budynek jest niezasilony**, bez najeżdżania kursorem?
 3. **Czy widać, że jednostka się pali**, zanim zginie?
+4. **Czy widać, że pierścień alarmu pulsuje?** Zadanie 3 potwierdziło puls mechanicznie, ale wzrokowo dopiero po podniesieniu amplitudy do 1,0 — przy docelowej szczyt wynosi 3,808 przy obrysie najmniejszej komórki 3,913, więc sufitem jest ROZMIAR KOMÓRKI, nie dobór wartości. Wykonawca uznał puls za kanał drugi, a za pierwszy obecność pierścienia, która sufitu nie ma. **To rozstrzyga człowiek, nie pomiar**: jeśli pulsu nie widać, zapisz to jako wynik i zostaw pierścień bez pulsu, zamiast podnosić amplitudę ponad rozmiar komórki.
 
 - [ ] **Krok 0 (przed przebiegiem): uszczelnij kontrolę — kamera nie może celować w pytaną komórkę**
 
@@ -218,6 +219,7 @@ Po naprawie **powtórz kontrolę** i zapisz oba wyniki — przed i po. Jeśli ko
 - [ ] `LIGHT_BANDS[0] = 0`, a liczba komórek rozjeżdżających się między renderem a symulacją wynosi **zero**
 - [ ] Siatka komórek widoczna, a odległość barw przez terminator **nie spadła**
 - [ ] Dziesięć typów budynków na ekranie, stan `powered` i uszkodzenie czytelne bez UI
+- [ ] Rozstrzygnięte przez człowieka, czy puls pierścienia alarmu jest widoczny przy docelowej amplitudzie
 - [ ] Trzy typy jednostek, płynny ruch, spalanie widoczne
 - [ ] Budżet klatki zmierzony przy 481 jednostkach, z zapisaną maszyną
 - [ ] Render nadal nie mutuje `SimState` ani `Planet`
