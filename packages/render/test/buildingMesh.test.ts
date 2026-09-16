@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GCProfiler } from 'node:v8';
+import { describeGcWindows, gcNoiseLimit, measureGcWindows } from './support/gcWindows.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Matrix4, Vector3, type BufferAttribute, type BufferGeometry, type Object3D, type Scene } from 'three';
@@ -935,7 +935,7 @@ describe('warstwa jako całość', () => {
 });
 
 describe('budżet klatki', () => {
-  it('16. update() nie alokuje NICZEGO: 600 wywołań przy komplecie 1442 budynków nie wywołuje ani jednego cyklu odśmiecania', () => {
+  it('16. update() nie alokuje NICZEGO: 600 wywołań przy komplecie 1442 budynków nie wychodzi ponad podłogę szumu odśmiecania', () => {
     // Ta warstwa przepisuje do 1442 × 3 macierze co klatkę — to jest dokładnie to miejsce,
     // w którym alokacja per budynek (jeden `Matrix4`, jeden `Vector3`, jedna tablica barwy)
     // byłaby niewidoczna w zegarze, a zauważalna w odśmiecaniu. Przyrząd i jego uzasadnienie:
@@ -949,13 +949,6 @@ describe('budżet klatki', () => {
       });
     }
     let sink = 0;
-
-    function gcCyclesDuring(run: () => void): number {
-      const profiler = new GCProfiler();
-      profiler.start();
-      run();
-      return profiler.stop().statistics.length;
-    }
 
     /** Kontrola: DOKŁADNIE ta sama praca plus jedna macierz na budynek — realny błąd. */
     function allocatingVariant(): number {
@@ -980,28 +973,31 @@ describe('budżet klatki', () => {
       sink += allocatingVariant();
     }
 
-    const emptyLoop = (): void => {
-      for (let i = 0; i < ITERATIONS; i++) sink += i;
-    };
-    const measuredLoop = (): void => {
-      for (let i = 0; i < ITERATIONS; i++) layer.update(list);
-    };
-    const controlLoop = (): void => {
-      for (let i = 0; i < ITERATIONS; i++) sink += allocatingVariant();
-    };
-
-    const emptyRuns = [gcCyclesDuring(emptyLoop), gcCyclesDuring(emptyLoop), gcCyclesDuring(emptyLoop)];
-    const measuredRuns = [gcCyclesDuring(measuredLoop), gcCyclesDuring(measuredLoop), gcCyclesDuring(measuredLoop)];
-    const controlRuns = [gcCyclesDuring(controlLoop), gcCyclesDuring(controlLoop)];
-    const measuredAfterControl = gcCyclesDuring(measuredLoop);
+    const windows = measureGcWindows({
+      empty: () => {
+        for (let i = 0; i < ITERATIONS; i++) sink += i;
+      },
+      measured: () => {
+        for (let i = 0; i < ITERATIONS; i++) layer.update(list);
+      },
+      control: () => {
+        for (let i = 0; i < ITERATIONS; i++) sink += allocatingVariant();
+      },
+    });
 
     console.log(
-      `[BUDGET] cykle GC na ${ITERATIONS} wywołań BuildingLayer.update @ ${CELL_COUNT} budynków — pusta pętla: ${emptyRuns.join('/')}, update: ${measuredRuns.join('/')} (po kontroli: ${measuredAfterControl}), kontrola +${CELL_COUNT} Matrix4/wyw.: ${controlRuns.join('/')}`,
+      `[BUDGET] cykle GC na ${ITERATIONS} wywołań BuildingLayer.update @ ${CELL_COUNT} budynków, kontrola +${CELL_COUNT} Matrix4/wyw. — ${describeGcWindows(windows)}`,
     );
 
-    expect(Math.min(...controlRuns)).toBeGreaterThanOrEqual(3);
-    expect(Math.min(...emptyRuns)).toBe(0);
-    expect(Math.min(...measuredRuns, measuredAfterControl)).toBe(0);
+    // Trzy asercje, ten sam kształt co w `budget.test.ts` i `unitMesh.test.ts` —
+    // uzasadnienie i historia w `support/gcWindows.ts`. Poprzednia wersja żądała
+    // `min(okna) === 0` i migała pod obciążeniem równoległym, bo szum tła bywa większy od
+    // mierzonego sygnału.
+    expect(Math.min(...windows.empty), 'przyrząd nie potrafi zwrócić zera').toBe(0);
+    expect(Math.min(...windows.control), 'kontrola alokująca nie odstaje od szumu tła').toBeGreaterThan(
+      Math.max(...windows.idle),
+    );
+    expect(Math.max(...windows.measured), 'BuildingLayer.update alokuje').toBeLessThanOrEqual(gcNoiseLimit(windows));
     expect(sink).not.toBe(0);
     layer.dispose();
   });

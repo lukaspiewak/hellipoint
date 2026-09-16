@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GCProfiler } from 'node:v8';
+import { describeGcWindows, gcNoiseLimit, measureGcWindows } from './support/gcWindows.js';
 import { createPlanet, lightField, sunDirection } from '@heliopolis/sim';
 import { buildPlanetGeometry } from '../src/geometry.js';
 import { buildCellOutlines, createPlanetMesh } from '../src/planetMesh.js';
@@ -118,19 +118,26 @@ describe('writeCellColors — budżet 1442 komórek / 1000 wywołań (Zadanie 5,
    * odśmiecania w tym izolacie w oknie pomiaru. Dlaczego to jest odczyt alokacji, a nie
    * przybliżenie: odśmiecanie w V8 uruchamia WYŁĄCZNIE alokacja (przydział w młodej
    * generacji albo zgłoszona pamięć zewnętrzna), a mierzona pętla jest w pełni
-   * SYNCHRONICZNA — nic innego w tym izolacie nie może się w jej trakcie wykonać. Zero
-   * cykli GC w oknie 2000 wywołań to więc nie "mało śmieci", tylko "żaden przydział nie
-   * przepełnił młodej generacji przez 2000 wywołań".
+   * SYNCHRONICZNA — nic innego w tym izolacie nie może się w jej trakcie wykonać.
+   *
+   * **Ostatnie zdanie tego akapitu brzmiało wcześniej: „zero cykli GC w oknie 2000 wywołań to
+   * nie »mało śmieci«, tylko »żaden przydział nie przepełnił młodej generacji«" — i było
+   * fałszywe.** `GCProfiler` liczy odśmiecanie CAŁEGO PROCESU, a vitest uruchamia pliki
+   * testowe RÓWNOLEGLE w jednym procesie; pętla mierzona jest synchroniczna w swoim izolacie,
+   * ale izolat nie jest sam. Zmierzone w rundzie naprawczej 2 Zadania 4: okno BEZCZYNNE
+   * (aktywne czekanie, zero alokacji z definicji) tej samej długości daje **2-4 cykle**, a
+   * mierzona pętla 0-1. Asercja żądająca zera pytała więc o zajętość maszyny. Dlatego pomiar
+   * i kształt asercji mieszkają teraz w `support/gcWindows.ts` i porównują mierzoną pętlę z
+   * OKNEM BEZCZYNNYM i z KONTROLĄ POZYTYWNĄ, a nie z zerem.
    *
    * Dlaczego NIE próbnik sterty (`inspector` / `HeapProfiler.startSampling`), który wydaje
    * się bardziej bezpośredni: zmierzone w tej sesji — próbnik NIE WIDZI pamięci bufora
    * `Float32Array` (backing store powyżej ~64 kB leży poza stertą V8), więc dla mutacji
    * "jeden `Float32Array(30246)` na wywołanie" pokazał 912 B na 1000 wywołań przy
    * faktycznych 121 MB, a jego własny szum na PUSTEJ pętli wynosił 6288 B. Licznik cykli GC
-   * widzi oba rodzaje pamięci (`GCProfiler`: 0 / 9 dla tych samych dwóch wariantów) i ma
-   * podłogę dokładnie zero.
+   * widzi oba rodzaje pamięci (`GCProfiler`: 0 / 9 dla tych samych dwóch wariantów).
    */
-  it('nie alokuje NICZEGO: 2000 wywołań nie wywołuje ani jednego cyklu odśmiecania', () => {
+  it('nie alokuje NICZEGO: 2000 wywołań nie wychodzi ponad podłogę szumu odśmiecania', () => {
     const planet = createPlanet({ seed: 20260915 });
     const geo = buildPlanetGeometry(planet);
     const light = lightField(planet, sunDirection(0, 180));
@@ -145,13 +152,6 @@ describe('writeCellColors — budżet 1442 komórek / 1000 wywołań (Zadanie 5,
       sink += allocatingVariant(geo, light, out);
     }
 
-    function gcCyclesDuring(run: () => void): number {
-      const profiler = new GCProfiler();
-      profiler.start();
-      run();
-      return profiler.stop().statistics.length;
-    }
-
     /** Wariant kontrolny: DOKŁADNIE ta sama praca + jeden pełnowymiarowy bufor na wywołanie. */
     function allocatingVariant(g: typeof geo, l: Float32Array, o: Float32Array): number {
       const scratch = new Float32Array(o.length);
@@ -160,46 +160,38 @@ describe('writeCellColors — budżet 1442 komórek / 1000 wywołań (Zadanie 5,
       return scratch[0]; // ucieczka wyniku — inaczej V8 ma prawo usunąć alokację w całości
     }
 
-    const emptyLoop = (): void => {
-      for (let i = 0; i < ITERATIONS; i++) sink += i;
-    };
-    const measuredLoop = (): void => {
-      for (let i = 0; i < ITERATIONS; i++) writeCellColors(geo, light, out, DEFAULT_PALETTE);
-    };
-    const controlLoop = (): void => {
-      for (let i = 0; i < ITERATIONS; i++) sink += allocatingVariant(geo, light, out);
-    };
-
-    // MINIMUM z trzech okien pomiarowych, nie pojedyncze okno — i to NIE jest osłabienie
-    // asercji, tylko poprawne postawienie mierzonej własności. V8 potrafi dokończyć
-    // rozpoczęte wcześniej znakowanie przyrostowe na przerwaniu kontroli stosu w środku
-    // długiej pętli, niezależnie od tego, czy ta pętla cokolwiek alokuje (zaobserwowane pod
-    // Vitest w `packages/sim/test/light.test.ts`, gdzie okno pomiarowe jest dłuższe).
-    // Własność brzmi więc: ISTNIEJE okno 2000 synchronicznych wywołań bez ani jednego cyklu.
-    // Dla funkcji alokującej takie okno NIE ISTNIEJE — co pilnuje kontrola pozytywna, od
-    // której wymagamy niezerowego odczytu w KAŻDYM oknie.
-    const emptyRuns = [gcCyclesDuring(emptyLoop), gcCyclesDuring(emptyLoop), gcCyclesDuring(emptyLoop)];
-    const measuredRuns = [gcCyclesDuring(measuredLoop), gcCyclesDuring(measuredLoop), gcCyclesDuring(measuredLoop)];
-    const controlRuns = [gcCyclesDuring(controlLoop), gcCyclesDuring(controlLoop), gcCyclesDuring(controlLoop)];
-    // Powtórzony pomiar PO kontroli: zero nie jest artefaktem kolejności (np. "sterta
-    // akurat była świeżo posprzątana"), tylko własnością funkcji.
-    const measuredAfterControl = gcCyclesDuring(measuredLoop);
+    const windows = measureGcWindows({
+      empty: () => {
+        for (let i = 0; i < ITERATIONS; i++) sink += i;
+      },
+      measured: () => {
+        for (let i = 0; i < ITERATIONS; i++) writeCellColors(geo, light, out, DEFAULT_PALETTE);
+      },
+      control: () => {
+        for (let i = 0; i < ITERATIONS; i++) sink += allocatingVariant(geo, light, out);
+      },
+    });
 
     console.log(
-      `[BUDGET] cykle GC na ${ITERATIONS} wywołań (3 okna) — pusta pętla: ${emptyRuns.join('/')}, writeCellColors: ${measuredRuns.join('/')} (po kontroli: ${measuredAfterControl}), kontrola +1 Float32Array(${out.length})/wyw.: ${controlRuns.join('/')}`,
+      `[BUDGET] cykle GC na ${ITERATIONS} wywołań writeCellColors, kontrola +1 Float32Array(${out.length})/wyw. — ${describeGcWindows(windows)}`,
     );
 
-    // KONTROLA POZYTYWNA przyrządu: ta sama pętla z JEDNĄ dodatkową alokacją na wywołanie
-    // MUSI dać wyraźnie niezerowy odczyt, w każdym oknie. Bez tego "0 cykli GC" znaczyłoby
-    // tyle samo, co wyłączony przyrząd — dokładnie ten tryb awarii, który ta gałąź ma już
-    // na koncie siedmiokrotnie.
-    expect(Math.min(...controlRuns)).toBeGreaterThanOrEqual(3);
-    // KONTROLA PODŁOGI: pętla, która na pewno nie alokuje, czyta się jako dokładnie 0 —
-    // więc 0 poniżej jest odczytem, nie zaokrągleniem czegoś małego w dół.
-    expect(Math.min(...emptyRuns)).toBe(0);
-    // WŁASNOŚĆ: 2000 wywołań `writeCellColors` nie wywołuje ANI JEDNEGO cyklu GC.
-    expect(Math.min(...measuredRuns)).toBe(0);
-    expect(Math.min(...measuredRuns, measuredAfterControl)).toBe(0);
+    // Trzy asercje, ten sam kształt co w `buildingMesh.test.ts` i `unitMesh.test.ts` —
+    // uzasadnienie i historia w `support/gcWindows.ts`. W skrócie: poprzednia wersja żądała
+    // `min(okna) === 0`, czyli mierzyła, czy inne pliki testowe akurat nic nie alokowały.
+    //
+    // 1. PODŁOGA: przyrząd potrafi zwrócić 0 (pętla mikrosekundowa, szum tła jej nie sięga).
+    expect(Math.min(...windows.empty), 'przyrząd nie potrafi zwrócić zera').toBe(0);
+    // 2. CZUŁOŚĆ: ta sama praca z JEDNĄ dodatkową alokacją na wywołanie odstaje od szumu tła.
+    //    Bez tego „mało cykli" znaczyłoby tyle, co wyłączony przyrząd — tryb awarii, który
+    //    ta gałąź ma już na koncie siedmiokrotnie.
+    expect(Math.min(...windows.control), 'kontrola alokująca nie odstaje od szumu tła').toBeGreaterThan(
+      Math.max(...windows.idle),
+    );
+    // 3. WŁASNOŚĆ: mierzona pętla nie wychodzi ponad sufit zmierzonego szumu tła (plus jeden
+    //    cykl rozdzielczości przyrządu). Próg NIE zależy od badanego kodu — okno bezczynne go
+    //    nie zawiera — więc defekt nie może go podnieść razem ze sobą.
+    expect(Math.max(...windows.measured), 'writeCellColors alokuje').toBeLessThanOrEqual(gcNoiseLimit(windows));
     expect(sink).not.toBe(0); // kontrola: kontrola faktycznie się wykonała, nie została usunięta
   });
 });
@@ -215,7 +207,7 @@ describe('writeCellColors — budżet 1442 komórek / 1000 wywołań (Zadanie 5,
  * Przyrząd i jego uzasadnienie — patrz długi komentarz przy teście GC wyżej.
  */
 describe('PlanetMesh.updateColors — cała ścieżka klatki, po dołożeniu kraty (Faza 2B, Zadanie 2)', () => {
-  it('nie alokuje NICZEGO: 2000 wywołań nie wywołuje ani jednego cyklu odśmiecania', () => {
+  it('nie alokuje NICZEGO: 2000 wywołań nie wychodzi ponad podłogę szumu odśmiecania', () => {
     const planet = createPlanet({ seed: 20260915 });
     const geo = buildPlanetGeometry(planet);
     const light = lightField(planet, sunDirection(0, 180));
@@ -226,13 +218,6 @@ describe('PlanetMesh.updateColors — cała ścieżka klatki, po dołożeniu kra
     for (let i = 0; i < 400; i++) {
       planetMesh.updateColors(light);
       sink += allocatingVariant();
-    }
-
-    function gcCyclesDuring(run: () => void): number {
-      const profiler = new GCProfiler();
-      profiler.start();
-      run();
-      return profiler.stop().statistics.length;
     }
 
     /**
@@ -246,33 +231,28 @@ describe('PlanetMesh.updateColors — cała ścieżka klatki, po dołożeniu kra
       return outlines.positions[0]; // ucieczka wyniku — inaczej V8 ma prawo usunąć alokację
     }
 
-    const emptyLoop = (): void => {
-      for (let i = 0; i < ITERATIONS; i++) sink += i;
-    };
-    const measuredLoop = (): void => {
-      for (let i = 0; i < ITERATIONS; i++) planetMesh.updateColors(light);
-    };
-    const controlLoop = (): void => {
-      for (let i = 0; i < ITERATIONS; i++) sink += allocatingVariant();
-    };
-
-    const emptyRuns = [gcCyclesDuring(emptyLoop), gcCyclesDuring(emptyLoop), gcCyclesDuring(emptyLoop)];
-    const measuredRuns = [gcCyclesDuring(measuredLoop), gcCyclesDuring(measuredLoop), gcCyclesDuring(measuredLoop)];
-    const controlRuns = [gcCyclesDuring(controlLoop), gcCyclesDuring(controlLoop), gcCyclesDuring(controlLoop)];
-    const measuredAfterControl = gcCyclesDuring(measuredLoop);
+    const windows = measureGcWindows({
+      empty: () => {
+        for (let i = 0; i < ITERATIONS; i++) sink += i;
+      },
+      measured: () => {
+        for (let i = 0; i < ITERATIONS; i++) planetMesh.updateColors(light);
+      },
+      control: () => {
+        for (let i = 0; i < ITERATIONS; i++) sink += allocatingVariant();
+      },
+    });
 
     console.log(
-      `[BUDGET] cykle GC na ${ITERATIONS} wywołań updateColors (3 okna) — pusta pętla: ${emptyRuns.join('/')}, updateColors: ${measuredRuns.join('/')} (po kontroli: ${measuredAfterControl}), kontrola +buildCellOutlines/wyw.: ${controlRuns.join('/')}`,
+      `[BUDGET] cykle GC na ${ITERATIONS} wywołań updateColors, kontrola +buildCellOutlines/wyw. — ${describeGcWindows(windows)}`,
     );
 
-    // KONTROLA POZYTYWNA przyrządu: przebudowa kraty na wywołanie MUSI dać niezerowy odczyt
-    // w KAŻDYM oknie — inaczej „0 cykli" znaczyłoby tyle, co wyłączony przyrząd.
-    expect(Math.min(...controlRuns)).toBeGreaterThanOrEqual(3);
-    // KONTROLA PODŁOGI: pętla, która na pewno nie alokuje, czyta się jako dokładnie 0.
-    expect(Math.min(...emptyRuns)).toBe(0);
-    // WŁASNOŚĆ.
-    expect(Math.min(...measuredRuns)).toBe(0);
-    expect(Math.min(...measuredRuns, measuredAfterControl)).toBe(0);
+    // Trzy asercje, ten sam kształt co wyżej — uzasadnienie w `support/gcWindows.ts`.
+    expect(Math.min(...windows.empty), 'przyrząd nie potrafi zwrócić zera').toBe(0);
+    expect(Math.min(...windows.control), 'kontrola alokująca nie odstaje od szumu tła').toBeGreaterThan(
+      Math.max(...windows.idle),
+    );
+    expect(Math.max(...windows.measured), 'updateColors alokuje').toBeLessThanOrEqual(gcNoiseLimit(windows));
     expect(sink).not.toBe(0);
 
     planetMesh.dispose();
