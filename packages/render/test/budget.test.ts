@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Matrix4 } from 'three';
-import { describeGcWindows, gcNoiseLimit, measureGcWindows } from './support/gcWindows.js';
+import { describeGcWindows, gcMedian, gcNoiseLimit, measureGcWindows } from './support/gcWindows.js';
 import {
   BUILDINGS,
   createPlanet,
@@ -197,15 +197,36 @@ describe('writeCellColors — budżet 1442 komórek / 1000 wywołań (Zadanie 5,
     // 2. CZUŁOŚĆ: ta sama praca z JEDNĄ dodatkową alokacją na wywołanie odstaje od szumu tła.
     //    Bez tego „mało cykli" znaczyłoby tyle, co wyłączony przyrząd — tryb awarii, który
     //    ta gałąź ma już na koncie siedmiokrotnie.
-    expect(Math.min(...windows.control), 'kontrola alokująca nie odstaje od szumu tła').toBeGreaterThan(
-      Math.max(...windows.idle),
+    //    Odniesieniem jest okno MIERZONE, nie bezczynne: kontrola to z definicji „mierzona
+    //    praca + jedna alokacja na element", więc oba okna robią to samo i różni je DOKŁADNIE
+    //    ta alokacja. Poprzednia wersja (`min(control) > max(idle)`) zestawiała podłogę
+    //    jednego szumu z sufitem drugiego i przewracała się pod obciążeniem bez żadnego
+    //    defektu — bo samo okno bezczynne alokuje. Pomiary: `support/gcWindows.ts`.
+    expect(gcMedian(windows.control), 'kontrola alokująca nie odstaje od mierzonej pętli').toBeGreaterThan(
+      gcMedian(windows.measured),
     );
     // 3. WŁASNOŚĆ: mierzona pętla nie wychodzi ponad sufit zmierzonego szumu tła (plus jeden
     //    cykl rozdzielczości przyrządu). Próg NIE zależy od badanego kodu — okno bezczynne go
     //    nie zawiera — więc defekt nie może go podnieść razem ze sobą.
     expect(Math.max(...windows.measured), 'writeCellColors alokuje').toBeLessThanOrEqual(gcNoiseLimit(windows));
     expect(sink).not.toBe(0); // kontrola: kontrola faktycznie się wykonała, nie została usunięta
-  });
+  // Limit czasu podniesiony z domyślnych 5 s. Ten test mierzy SZEŚĆ przeplatanych okien
+  // odśmiecania (`rounds = 3` × cztery rodzaje, plus rozgrzewka) na tysiącach iteracji, a
+  // Vitest uruchamia pliki RÓWNOLEGLE — więc jego czas zależy od tego, ile innych plików
+  // akurat liczy. Zmierzone na BEZCZYNNYM M5 przy `rounds = 2`: 3111 ms z 5000 ms, czyli
+  // 62 % domyślnego limitu na najszybszej maszynie, jaką ten projekt zobaczy; pod
+  // obciążeniem (5 alokujących procesów w tle) test wypadał na TIMEOUT, nie na asercji —
+  // czyli czerwień wyglądająca na regresję wydajności, którą nie jest. Podniesienie
+  // `rounds` do 3 (naprawa asercji czułości, patrz `support/gcWindows.ts`) dokłada do tego
+  // jeszcze połowę pracy.
+  //
+  // Zmieniony jest WYŁĄCZNIE limit — ani jedna asercja, ani liczba iteracji, ani kontrola
+  // pozytywna. To samo uzasadnienie i ta sama decyzja co w `packages/sim/test/light.test.ts`
+  // (5 s → 30 s, Zadanie 3); ledger zapisał wtedy „pakiet jest blisko progu, na którym
+  // dołożenie pliku testowego wywraca NIEZWIĄZANY test — wróci". Wrócił, wewnątrz tej samej
+  // gałęzi. Koszt, jeśli źle: prawdziwa regresja wydajności schowa się pod limitem 30 s —
+  // ale tego pilnuje pomiar MEDIANY czasu (osobny test), nie ten.
+  }, 30_000);
 });
 
 /**
@@ -261,14 +282,35 @@ describe('PlanetMesh.updateColors — cała ścieżka klatki, po dołożeniu kra
 
     // Trzy asercje, ten sam kształt co wyżej — uzasadnienie w `support/gcWindows.ts`.
     expect(Math.min(...windows.empty), 'przyrząd nie potrafi zwrócić zera').toBe(0);
-    expect(Math.min(...windows.control), 'kontrola alokująca nie odstaje od szumu tła').toBeGreaterThan(
-      Math.max(...windows.idle),
+    //    Odniesieniem jest okno MIERZONE, nie bezczynne: kontrola to z definicji „mierzona
+    //    praca + jedna alokacja na element", więc oba okna robią to samo i różni je DOKŁADNIE
+    //    ta alokacja. Poprzednia wersja (`min(control) > max(idle)`) zestawiała podłogę
+    //    jednego szumu z sufitem drugiego i przewracała się pod obciążeniem bez żadnego
+    //    defektu — bo samo okno bezczynne alokuje. Pomiary: `support/gcWindows.ts`.
+    expect(gcMedian(windows.control), 'kontrola alokująca nie odstaje od mierzonej pętli').toBeGreaterThan(
+      gcMedian(windows.measured),
     );
     expect(Math.max(...windows.measured), 'updateColors alokuje').toBeLessThanOrEqual(gcNoiseLimit(windows));
     expect(sink).not.toBe(0);
 
     planetMesh.dispose();
-  });
+  // Limit czasu podniesiony z domyślnych 5 s. Ten test mierzy SZEŚĆ przeplatanych okien
+  // odśmiecania (`rounds = 3` × cztery rodzaje, plus rozgrzewka) na tysiącach iteracji, a
+  // Vitest uruchamia pliki RÓWNOLEGLE — więc jego czas zależy od tego, ile innych plików
+  // akurat liczy. Zmierzone na BEZCZYNNYM M5 przy `rounds = 2`: 3111 ms z 5000 ms, czyli
+  // 62 % domyślnego limitu na najszybszej maszynie, jaką ten projekt zobaczy; pod
+  // obciążeniem (5 alokujących procesów w tle) test wypadał na TIMEOUT, nie na asercji —
+  // czyli czerwień wyglądająca na regresję wydajności, którą nie jest. Podniesienie
+  // `rounds` do 3 (naprawa asercji czułości, patrz `support/gcWindows.ts`) dokłada do tego
+  // jeszcze połowę pracy.
+  //
+  // Zmieniony jest WYŁĄCZNIE limit — ani jedna asercja, ani liczba iteracji, ani kontrola
+  // pozytywna. To samo uzasadnienie i ta sama decyzja co w `packages/sim/test/light.test.ts`
+  // (5 s → 30 s, Zadanie 3); ledger zapisał wtedy „pakiet jest blisko progu, na którym
+  // dołożenie pliku testowego wywraca NIEZWIĄZANY test — wróci". Wrócił, wewnątrz tej samej
+  // gałęzi. Koszt, jeśli źle: prawdziwa regresja wydajności schowa się pod limitem 30 s —
+  // ale tego pilnuje pomiar MEDIANY czasu (osobny test), nie ten.
+  }, 30_000);
 });
 
 /**
@@ -410,8 +452,13 @@ describe('pełna scena — praca per klatka przy 481 jednostkach (Faza 2B, Zadan
 
     // Ten sam kształt trzech asercji co wyżej — uzasadnienie w `support/gcWindows.ts`.
     expect(Math.min(...windows.empty), 'przyrząd nie potrafi zwrócić zera').toBe(0);
-    expect(Math.min(...windows.control), 'kontrola alokująca nie odstaje od szumu tła').toBeGreaterThan(
-      Math.max(...windows.idle),
+    //    Odniesieniem jest okno MIERZONE, nie bezczynne: kontrola to z definicji „mierzona
+    //    praca + jedna alokacja na element", więc oba okna robią to samo i różni je DOKŁADNIE
+    //    ta alokacja. Poprzednia wersja (`min(control) > max(idle)`) zestawiała podłogę
+    //    jednego szumu z sufitem drugiego i przewracała się pod obciążeniem bez żadnego
+    //    defektu — bo samo okno bezczynne alokuje. Pomiary: `support/gcWindows.ts`.
+    expect(gcMedian(windows.control), 'kontrola alokująca nie odstaje od mierzonej pętli').toBeGreaterThan(
+      gcMedian(windows.measured),
     );
     expect(Math.max(...windows.measured), 'pełna scena alokuje w pętli renderu').toBeLessThanOrEqual(
       gcNoiseLimit(windows),
@@ -427,5 +474,21 @@ describe('pełna scena — praca per klatka przy 481 jednostkach (Faza 2B, Zadan
     planetMesh.dispose();
     buildings.dispose();
     units.dispose();
-  });
+  // Limit czasu podniesiony z domyślnych 5 s. Ten test mierzy SZEŚĆ przeplatanych okien
+  // odśmiecania (`rounds = 3` × cztery rodzaje, plus rozgrzewka) na tysiącach iteracji, a
+  // Vitest uruchamia pliki RÓWNOLEGLE — więc jego czas zależy od tego, ile innych plików
+  // akurat liczy. Zmierzone na BEZCZYNNYM M5 przy `rounds = 2`: 3111 ms z 5000 ms, czyli
+  // 62 % domyślnego limitu na najszybszej maszynie, jaką ten projekt zobaczy; pod
+  // obciążeniem (5 alokujących procesów w tle) test wypadał na TIMEOUT, nie na asercji —
+  // czyli czerwień wyglądająca na regresję wydajności, którą nie jest. Podniesienie
+  // `rounds` do 3 (naprawa asercji czułości, patrz `support/gcWindows.ts`) dokłada do tego
+  // jeszcze połowę pracy.
+  //
+  // Zmieniony jest WYŁĄCZNIE limit — ani jedna asercja, ani liczba iteracji, ani kontrola
+  // pozytywna. To samo uzasadnienie i ta sama decyzja co w `packages/sim/test/light.test.ts`
+  // (5 s → 30 s, Zadanie 3); ledger zapisał wtedy „pakiet jest blisko progu, na którym
+  // dołożenie pliku testowego wywraca NIEZWIĄZANY test — wróci". Wrócił, wewnątrz tej samej
+  // gałęzi. Koszt, jeśli źle: prawdziwa regresja wydajności schowa się pod limitem 30 s —
+  // ale tego pilnuje pomiar MEDIANY czasu (osobny test), nie ten.
+  }, 30_000);
 });

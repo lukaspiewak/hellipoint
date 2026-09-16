@@ -59,6 +59,7 @@ export {
   SHELL_COLOR,
   SHELL_TAPER,
   SURFACE_LIFT_FACTOR,
+  type AlertPulseOffset,
   type BuildingLayer,
 } from './buildingMesh.js';
 export {

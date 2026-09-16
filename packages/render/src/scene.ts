@@ -31,11 +31,20 @@ export interface PlanetScene {
    * wołający, który jeszcze nie ma symulacji (Faza 2C wnosi `Sim`), po prostu tego nie woła
    * i widzi planetę bez budynków, zamiast musieć wymyślać pustą tablicę na każdą klatkę.
    *
-   * `alertPulseSeconds` — czas dla pulsu pierścienia alarmu (runda naprawcza 2 Zadania 5,
-   * puls jest domyślnym wyglądem gry). Pominięty ⇒ pierścień w spoczynku; to jest wyjście dla
-   * wywołującego, który zegara nie ma (np. test albo zrzut pojedynczej klatki), a nie
-   * deklaracja, że produkcja nie pulsuje. Fazę liczy `alertPulse` — funkcja czysta, żeby
+   * `alertPulseSeconds` — **CZAS W SEKUNDACH** dla pulsu pierścienia alarmu (runda naprawcza 2
+   * Zadania 5, puls jest domyślnym wyglądem gry). Pominięty ⇒ pierścień w spoczynku; to jest
+   * wyjście dla wywołującego, który zegara nie ma (np. test albo zrzut pojedynczej klatki), a
+   * nie deklaracja, że produkcja nie pulsuje. Fazę liczy `alertPulse` — funkcja czysta, żeby
    * warstwa pozostała funkcją swojego wejścia.
+   *
+   * **Uwaga na bliźniaka:** `GateWorld.updateBuildings` (`readabilityGate.ts`) ma ten sam
+   * kształt, ale bierze GOTOWE WYCHYLENIE (`AlertPulseOffset`), nie sekundy — bo bramka musi
+   * móc wymusić spoczynek niezależnie od zegara. Tamten podpis jest markowany typem właśnie po
+   * to, żeby pomylenie obu było błędem kompilacji; ta metoda bierze goły `number`, bo sekundy
+   * przychodzą tu wprost z zegara ściennego wywołującego.
+   *
+   * Że produkcja NAPRAWDĘ przekazuje warstwie niezerowe wychylenie, wiąże test w
+   * `scene.test.ts` — bez niego podmiana ciała na `buildings.update(list, 0)` była zielona.
    */
   updateBuildings(buildings: readonly (Building | null)[], alertPulseSeconds?: number): void;
   /**
@@ -188,7 +197,9 @@ export function createSceneWithRenderer(
       renderer.render(threeScene, camera.object);
     },
     updateBuildings(list: readonly (Building | null)[], alertPulseSeconds?: number): void {
-      buildings.update(list, alertPulseSeconds === undefined ? 0 : alertPulse(planet.radius, alertPulseSeconds));
+      // Brak zegara ⇒ chwila 0, a `alertPulse(r, 0)` to dokładne zero (`1 − cos 0`) — czyli
+      // spoczynek, wyprowadzony z tej samej funkcji czystej, nie wpisany osobną gałęzią.
+      buildings.update(list, alertPulse(planet.radius, alertPulseSeconds ?? 0));
     },
     updateUnits(list: readonly Unit[], light: Float32Array): void {
       units.update(list, light);

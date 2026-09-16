@@ -9,6 +9,7 @@ import {
   alertPulse,
   UNIT_BAND_SHADE,
   UNIT_BAND_SHADE_LEGAL,
+  type AlertPulseOffset,
   type GateMode,
   type GateTrial,
   type UnitShadingMode,
@@ -346,8 +347,11 @@ function applyShading(index: number): void {
 let pulseOn = true;
 const pulseBtn = requireElement<HTMLButtonElement>('#pulse-toggle');
 function refreshPulseButton(): void {
-  pulseBtn.classList.toggle('active', pulseOn);
-  pulseBtn.textContent = pulseOn ? 'Puls: WŁĄCZONY (produkcja)' : 'Puls: wyłączony (do porównania)';
+  // Przycisk pokazuje NASTAWĘ i — gdy nastawa nie dochodzi do renderu — mówi to wprost.
+  // Stan faktyczny bierze się z `pulseActuallyRunning`, nie z samego `pulseOn`.
+  pulseBtn.classList.toggle('active', pulseActuallyRunning());
+  const setting = pulseOn ? 'Puls: WŁĄCZONY (produkcja)' : 'Puls: wyłączony (do porównania)';
+  pulseBtn.textContent = pulseOn && !pulseActuallyRunning() ? `${setting} — nieaktywny w fazie prób` : setting;
 }
 pulseBtn.addEventListener('click', () => {
   pulseOn = !pulseOn;
@@ -396,15 +400,38 @@ sunSpeedBtn.addEventListener('click', () => {
 });
 
 /**
- * Wychylenie promienia pierścienia w tej klatce: 0 przy wyłączonym pulsie **oraz zawsze w
- * fazie PRÓB**. Faza prób ma być zamrożona — jedyną rzeczą różniącą ją od bramki terenowej
- * jest OBECNOŚĆ pełnej sceny, nie to, czy ktoś zostawił włączony przełącznik pytania 5.
+ * Wychylenie promienia pierścienia w tej klatce: spoczynek przy wyłączonym pulsie **oraz
+ * zawsze w fazie PRÓB**. Faza prób ma być zamrożona — jedyną rzeczą różniącą ją od bramki
+ * terenowej jest OBECNOŚĆ pełnej sceny, nie to, czy ktoś zostawił włączony przełącznik
+ * pytania 5.
  */
-function alertPulseAt(seconds: number): number {
-  if (!pulseOn || phase !== 'free') return 0;
+function alertPulseAt(seconds: number): AlertPulseOffset {
+  // Spoczynek = chwila 0 tej samej funkcji czystej (`alertPulse(r, 0)` to dokładne zero),
+  // a nie wpisane tu `0` — jedno źródło fazy dla obu gałęzi.
+  if (!pulseActuallyRunning()) return alertPulse(planet.radius, 0);
   // Ta sama funkcja czysta, co w głównej aplikacji — nie druga kopia wzoru, bo dwa wzory
   // rozjechałyby się przy pierwszym strojeniu okresu.
   return alertPulse(planet.radius, seconds);
+}
+
+/**
+ * Czy pierścień NAPRAWDĘ pulsuje w tej klatce — jedno źródło dla renderu i dla odczytów.
+ *
+ * Do rundy domykającej gałąź HUD i przycisk raportowały stan PRZEŁĄCZNIKA (`pulseOn`), a
+ * render brał wychylenie z `alertPulseAt`, które w fazie prób wymusza zero. Strona otwiera się
+ * w fazie prób z `pulseOn = true`, więc panel pisał „puls: legalny / WŁĄCZONY (produkcja)"
+ * nad sceną, w której wychylenie wynosi 0. To jest ta sama klasa defektu, co ten, który
+ * unieważnił cztery z pięciu pomiarów rundy naprawczej 1: **panel mówi co innego, niż rysuje,
+ * a człowiek nie ma jak tego sprawdzić.** Odczyt ma opisywać RENDER, nie przełącznik.
+ */
+function pulseActuallyRunning(): boolean {
+  return pulseOn && phase === 'free';
+}
+
+/** Odczyt pulsu do HUD-a: co RENDER robi, a gdy to nie jest to, co nastawiono — dlaczego. */
+function pulseReadout(): string {
+  if (pulseActuallyRunning()) return 'legalny (pulsuje)';
+  return pulseOn ? 'spoczynek — faza prób zamraża puls' : 'brak (przełącznik)';
 }
 
 // --- Pięć pytań --------------------------------------------------------------------------
@@ -456,7 +483,7 @@ const QUESTIONS: Question[] = [
     id: 5,
     title: 'Czy widać, że pierścień alarmu pulsuje?',
     body:
-      'Przełącznik „Puls: brak (produkcja)” wyżej — kliknij, żeby włączyć maksymalny LEGALNY puls. Amplituda to CAŁY zapas, jaki został między pierścieniem (3,0300) a krawędzią najmniejszej komórki (3,1720): 0,13 jednostki, czyli 0,44 piksela z widoku domyślnego, przy progu widoczności 1 px. Większej nie ma — sufitem jest rozmiar komórki, nie dobór wartości. JEŚLI PULSU NIE WIDAĆ, to jest wynik: pierścień zostaje bez pulsu. „Nie znalazłem przełącznika” to NIE jest odpowiedź na to pytanie.',
+      'ODPOWIEDZIANE (U2): puls WIDAĆ i jest domyślnym wyglądem gry — pytanie zostaje w panelu do powtórzenia cudzymi oczami, nie jako sprawa otwarta. Puls działa tylko w fazie SWOBODNEJ (faza prób jest zamrożona, a HUD pisze wtedy „spoczynek”); przełącznik „Puls: WŁĄCZONY (produkcja)” wyżej pozwala porównać „z pulsem ⇄ bez”. Amplituda to CAŁY zapas, jaki został między pierścieniem (3,0300) a krawędzią najmniejszej komórki (3,1720): 0,13 jednostki, czyli 0,44 piksela z widoku domyślnego. To jest MNIEJ niż próg 1 px — ale ten próg wiąże ROZMIARY, a ruch jest wykrywalny poniżej niego i to właśnie zmierzył ten pomiar. Większej amplitudy nie ma: sufitem jest rozmiar komórki, nie dobór wartości.',
     verdict: null,
     note: '',
   },
@@ -528,6 +555,9 @@ function setPhase(next: Phase): void {
     gate.setMode('threshold');
   }
   gate.setMarkerHidden(next === 'free');
+  // Puls jest zamrożony w fazie prób, więc odczyt przełącznika MUSI się przy tej zmianie
+  // odświeżyć — inaczej przycisk znów mówiłby o nastawie zamiast o renderze (F9).
+  refreshPulseButton();
   phaseTrialsBtn.classList.toggle('active', next === 'trials');
   phaseFreeBtn.classList.toggle('active', next === 'free');
   trialsPanel.hidden = next !== 'trials';
@@ -725,7 +755,7 @@ function tick(): void {
       `render: mediana ${med.toFixed(3)} ms · p95 ${p95.toFixed(3)} ms (n=${samples.length}) — budżet 8 ms\n` +
       `jednostek rysowanych: ${unitsToDraw.length} · budynków: ${buildingCount}\n` +
       `rusztowanie symulacji (poza budżetem): ${simLine}\n` +
-      `cieniowanie [1-4]: ${SHADING_PRESETS[shadingIndex].label} · puls: ${pulseOn ? 'legalny' : 'brak'}`;
+      `cieniowanie [1-4]: ${SHADING_PRESETS[shadingIndex].label} · puls: ${pulseReadout()}`;
 
     // Odczyty stanu — runda naprawcza 1: człowiek ma WIDZIEĆ, że słońce się rusza i że
     // jednostki giną, zamiast wnioskować to z braku zmian na ekranie.

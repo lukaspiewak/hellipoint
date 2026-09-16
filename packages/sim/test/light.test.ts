@@ -185,24 +185,81 @@ describe('lightFieldInto — wariant bez alokacji, do pętli renderu', () => {
       for (let i = 0; i < ITERATIONS; i++) sink[0] += lightField(planet, sunDir)[litIndex];
     };
 
-    // MINIMUM z trzech okien pomiarowych, nie pojedyncze okno. Zmierzone w tej sesji: poza
-    // Vitest ta pętla daje zero w KAŻDYM przebiegu, ale pod Vitest jedno okno na kilka
-    // pokazuje JEDEN cykl — V8 potrafi dokończyć rozpoczęte wcześniej znakowanie
-    // przyrostowe na przerwaniu kontroli stosu w środku długiej pętli, niezależnie od tego,
-    // czy ta pętla cokolwiek alokuje. Własność, którą naprawdę mierzymy, brzmi więc: ISTNIEJE
-    // okno 20 000 synchronicznych wywołań, w którym nie zdarzył się ani jeden cykl. Dla
-    // funkcji alokującej 5768 B na wywołanie TAKIE OKNO NIE ISTNIEJE — 115 MB śmieci musi
-    // wywołać odśmiecanie w każdym oknie z osobna, co pilnuje kontrola pozytywna niżej.
-    const reusedRuns = [cycles(reusedLoop), cycles(reusedLoop), cycles(reusedLoop)];
-    const allocatingRuns = [cycles(allocatingLoop), cycles(allocatingLoop), cycles(allocatingLoop)];
+    // Okno BEZCZYNNE: aktywne czekanie przez tyle, ile trwa jedno okno mierzone. NIE zawiera
+    // badanego kodu, więc mierzy WYŁĄCZNIE szum tła procesu — i skaluje się razem z
+    // obciążeniem maszyny, bo jego długość bierze się z faktycznego przebiegu pętli.
+    const startedAt = performance.now();
+    reusedLoop();
+    const windowMs = performance.now() - startedAt;
+    // Czekanie CAŁKOWITOLICZBOWE, zegar sprawdzany raz na 100 000 iteracji — **nie**
+    // `while (performance.now() < end)`, choć tak wygląda `busyWait` w `gcWindows.ts`.
+    //
+    // `performance.now()` zwraca liczbę ZMIENNOPRZECINKOWĄ, więc w najciaśniejszej pętli
+    // boksuje `HeapNumber` na każde wywołanie i **okno BEZCZYNNE alokuje SAMO** — zmierzone
+    // 12 cykli na oknie 640 ms, przy realnym szumie tła 0-2. Próg liczony z takiego okna jest
+    // luźniejszy, niż deklaruje, i tutaj byłby wprost ŚLEPY: sprawdzone, mutacja alokująca
+    // 5768 B na wywołanie (dokładnie tyle, ile `lightField`) mieściła się pod progiem 13.
+    // Z tą wersją okno bezczynne daje 0/0/0, próg 1, a ta sama mutacja oblewa.
+    //
+    // Dlaczego `gcWindows.ts` ma nadal tamtą wersję: tam uczciwe okno zmienia kalibrację
+    // progów CAŁEGO pakietu renderu i odsłania odczyt wymagający własnego pomiaru — opisane
+    // w tamtym module jako dług Fazy 2C. Suma przycięta do `int32`, żeby została w zakresie
+    // Smi (ten sam powód, dla którego wyniki idą do `Float64Array`, a nie do `let sink = 0`).
+    let spin = 0;
+    const idleLoop = (): void => {
+      const end = performance.now() + windowMs;
+      do {
+        for (let i = 0; i < 100_000; i++) spin = (spin + i) | 0;
+      } while (performance.now() < end);
+    };
+
+    // Trzy okna każdego rodzaju, PRZEPLATANE, żeby wszystkie próbkowały ten sam odcinek
+    // czasu i to samo obciążenie.
+    const reusedRuns: number[] = [];
+    const idleRuns: number[] = [];
+    const allocatingRuns: number[] = [];
+    for (let round = 0; round < 3; round++) {
+      idleRuns.push(cycles(idleLoop));
+      reusedRuns.push(cycles(reusedLoop));
+      allocatingRuns.push(cycles(allocatingLoop));
+    }
+    console.log(
+      `[GC] lightFieldInto × ${ITERATIONS} — okno ${windowMs.toFixed(0)} ms, BEZCZYNNE: ${idleRuns.join('/')}, ` +
+        `mierzone: ${reusedRuns.join('/')}, alokujące: ${allocatingRuns.join('/')} ` +
+        `[sufit szumu ${Math.max(...idleRuns)}, próg ${Math.max(...idleRuns) + 1}]`,
+    );
 
     // KONTROLA POZYTYWNA: wariant alokujący MUSI dać wyraźnie niezerowy odczyt w KAŻDYM
-    // oknie — inaczej „zero" poniżej znaczyłoby tyle samo, co wyłączony przyrząd.
+    // oknie — inaczej wynik poniżej znaczyłby tyle samo, co wyłączony przyrząd. 115 MB
+    // śmieci na okno musi wywołać odśmiecanie w każdym oknie z osobna.
     expect(Math.min(...allocatingRuns)).toBeGreaterThanOrEqual(3);
-    expect(Math.min(...reusedRuns)).toBe(0);
+
+    // WŁASNOŚĆ: **NIE** `Math.min(...reusedRuns) === 0`. Tamten kształt — „ISTNIEJE okno bez
+    // ani jednego cyklu" — jest tym samym wzorcem migającym, który runda naprawcza 2 Zadania
+    // 4 usunęła z trzech plików `packages/render/test/` i opisała w
+    // `packages/render/test/support/gcWindows.ts`: pyta o to, czy inne pliki testowe akurat
+    // nic nie alokowały, bo `GCProfiler` liczy cykle CAŁEGO procesu. To była czwarta, ostatnia
+    // kopia; przeżyła tamtą rundę, bo leży w innym pakiecie — akurat w tym pliku, który ta
+    // gałąź musiała ratować podniesieniem limitu czasu, czyli w tym, który jako pierwszy
+    // odczuwa dołożone obciążenie.
+    //
+    // Zamiast tego pytamy o to, o co naprawdę chodzi: **żadne okno mierzone nie wychodzi
+    // ponad sufit ZMIERZONEGO szumu tła**, plus jeden cykl rozdzielczości przyrządu
+    // (`GCProfiler` liczy całe cykle, więc żądanie „ani jednego ponad sufit" czyniłoby test
+    // czułym na kwant pomiaru). Asercja jest przy tym MOCNIEJSZA niż poprzednia: wiąże
+    // wszystkie okna, nie najlepsze z nich.
+    //
+    // Modułu `gcWindows.ts` nie da się tu zaimportować: `packages/sim` jest pakietem o ZERO
+    // zależnościach (D5) i jego `tsconfig.test.json` ma `rootDir` na katalogu pakietu, więc
+    // sięgnięcie do drzewa `packages/render` byłoby i błędem kompilacji, i regresją tej
+    // właśnie własności. Wspólny pakiet testowy to decyzja o strukturze, której nie podejmuję
+    // na końcu fazy — metoda jest tu odtworzona, źródło nazwane.
+    const noiseLimit = Math.max(...idleRuns) + 1;
+    expect(Math.max(...reusedRuns), 'lightFieldInto alokuje').toBeLessThanOrEqual(noiseLimit);
     expect(sink[0]).toBeGreaterThan(0); // kontrola: obie pętle faktycznie się wykonały
     // Limit czasu podniesiony z domyślnych 5 s (Faza 2B, Zadanie 3). Ten test wykonuje
-    // sześć okien po 20 000 wywołań plus rozgrzewkę — w izolacji ok. 2,5 s, czyli połowa
+    // dziewięć okien po 20 000 wywołań plus okna bezczynne i rozgrzewkę — w izolacji ok. 2,5 s
+    // przy sześciu oknach, czyli połowa
     // domyślnego limitu. Vitest uruchamia pliki RÓWNOLEGLE, więc ten zapas zjada każdy
     // nowy plik testowy, który liczy: dołożenie `buildingMesh.test.ts` (0,6 s pracy CPU)
     // wywracało ten test w KAŻDYM przebiegu całego pakietu, choć w izolacji przechodził.

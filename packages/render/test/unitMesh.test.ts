@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeGcWindows, gcNoiseLimit, measureGcWindows } from './support/gcWindows.js';
+import { describeGcWindows, gcMedian, gcNoiseLimit, measureGcWindows } from './support/gcWindows.js';
 import { readFileSync } from 'node:fs';
 import { Matrix4, Vector3, type BufferAttribute, type BufferGeometry, type Object3D, type Scene } from 'three';
 import { createPlanet, ENEMIES, type EnemyType, type Unit, type Vec3 } from '@heliopolis/sim';
@@ -31,6 +31,7 @@ import { buildPlanetGeometry } from '../src/geometry.js';
 import { MAX_DISTANCE_FACTOR } from '../src/camera.js';
 import { createSceneWithRenderer, type SceneRenderer } from '../src/scene.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
+import { MIN_VISIBLE_PX, pixelsPerUnit } from './support/pixelScale.js';
 
 const planet = createPlanet({ seed: 20260915 });
 const geo = buildPlanetGeometry(planet);
@@ -133,23 +134,18 @@ const WCAG_MIN = 3;
 
 // --- Progi CZYTELNOŚCI: minimum po populacji, w PIKSELACH ---------------------------------
 //
-// Przelicznik i jego wyprowadzenie: `buildingMesh.test.ts` (widok domyślny, sylwetka kuli
-// jako okrąg STYCZNOŚCI, dzielenie perspektywiczne po głębokości OSIOWEJ). Ta sama liczba,
-// nie druga, własna: dwa przeliczniki na dwie warstwy tej samej sceny rozjechałyby się przy
-// pierwszej zmianie kamery, a progi obu warstw opisują TEN SAM ekran.
+// Przelicznik jest WYPROWADZANY ze stałych `camera.ts` w jednym miejscu (`support/pixelScale.ts`)
+// i importowany tutaj — nie przepisywany. Do przeglądu gałęzi stał tu i w `buildingMesh.test.ts`
+// ręczny literał `3.41`, więc zestrojenie kadrowania w Fazie 4 (jedna liczba `[WYGLĄD]`)
+// unieważniało KAŻDY próg pikselowy obu warstw przy zielonym CI. Dwa przeliczniki na dwie
+// warstwy tej samej sceny rozjechałyby się przy pierwszej zmianie kamery, a progi obu warstw
+// opisują TEN SAM ekran.
 //
 // **Każdy próg poniżej wiąże MINIMUM po populacji, wyrażone w pikselach.** Nie maksimum, nie
 // iloraz, nie ułamek promienia — populacja jednostek ma trzech członków i najmniejszy z nich
 // jest tym, o który chodzi.
-const PIXELS_PER_UNIT = 3.41;
+const PIXELS_PER_UNIT = pixelsPerUnit(planet.radius);
 const px = (world: number): number => world * PIXELS_PER_UNIT;
-
-/**
- * Jeden próg na wszystko, co ma być WIDOCZNE — ten sam, co w `buildingMesh.test.ts`, i z tego
- * samego jedynego werdyktu wzrokowego, jaki ta faza ma na temat granicy widoczności: pas
- * cieńszy niż piksel jest niewidoczny (§5.3 raportu Zadania 3, pierwsza wersja obręczy alarmu).
- */
-const MIN_VISIBLE_PX = 1;
 
 /** Odległość barw (sRGB) gorącego końca rampy od SZAROŚCI o tej samej luminancji. */
 const MIN_HOT_CHROMA = 0.3;
@@ -398,7 +394,20 @@ describe('kodowanie spalania — minimum po populacji, w pikselach', () => {
     // GÓRNA granica: nawet największa jednostka jest mniejsza od promienia WPISANEGO
     // najmniejszej komórki, więc nie przykrywa całego pola terenu, na którym stoi.
     const inscribed = smallestInscribedRadius();
-    expect(inscribed).toBeCloseTo(3.172, 2); // kotwica na sam przyrząd (Zadanie 3)
+    // NIE `toBeCloseTo(3.172, 2)`. Ta liczba jest CZYSTĄ FUNKCJĄ `OUTLINE_INSET` z
+    // `planetMesh.ts` — stałej `[WYGLĄD]` CUDZEGO modułu — więc przypięta tutaj robiła z
+    // testu JEDNOSTEK strażnika kraty: zestrojenie `OUTLINE_INSET` 0,07 → 0,10 oblewało ten
+    // test komunikatem o jednostkach, choć własność linijkę niżej trzymała się z 45 %
+    // zapasu. Dokładnie ten wzorzec („kotwice na stałe CUDZYCH modułów przebrane za kotwice
+    // na przyrząd") kazał usunąć przegląd Zadania 3 z `buildingMesh.test.ts`; wrócił tu, bo
+    // Zadanie 4 pisało własny plik po zamknięciu tamtego przeglądu.
+    //
+    // Zostaje to, co ta linia naprawdę miała chronić: że przyrząd COŚ policzył, a nie zwrócił
+    // `Infinity` (pętla nigdy nie weszła) ani zera (obrysy puste) — w obu tych przypadkach
+    // asercja niżej byłaby albo zawsze prawdziwa, albo zawsze fałszywa, niezależnie od tarcz.
+    expect(Number.isFinite(inscribed), 'przyrząd nie policzył promienia wpisanego').toBe(true);
+    expect(inscribed).toBeGreaterThan(0);
+    expect(inscribed).toBeLessThan(planet.radius);
     expect(sorted[sorted.length - 1], 'największa tarcza przykrywa komórkę').toBeLessThan(inscribed);
     layer.dispose();
   });
@@ -701,14 +710,26 @@ describe('pojemność buforów i budżet klatki', () => {
     // 1. PODŁOGA: przyrząd potrafi zwrócić 0.
     expect(Math.min(...windows.empty), 'przyrząd nie potrafi zwrócić zera').toBe(0);
     // 2. CZUŁOŚĆ: wariant z JEDNĄ macierzą na jednostkę odstaje od szumu tła.
-    expect(Math.min(...windows.control), 'kontrola alokująca nie odstaje od szumu tła').toBeGreaterThan(
-      Math.max(...windows.idle),
+    //    Odniesieniem jest okno MIERZONE, nie bezczynne: kontrola to z definicji „mierzona
+    //    praca + jedna alokacja na element", więc oba okna robią to samo i różni je DOKŁADNIE
+    //    ta alokacja. Poprzednia wersja (`min(control) > max(idle)`) zestawiała podłogę
+    //    jednego szumu z sufitem drugiego i przewracała się pod obciążeniem bez żadnego
+    //    defektu — bo samo okno bezczynne alokuje. Pomiary: `support/gcWindows.ts`.
+    expect(gcMedian(windows.control), 'kontrola alokująca nie odstaje od mierzonej pętli').toBeGreaterThan(
+      gcMedian(windows.measured),
     );
     // 3. WŁASNOŚĆ: mierzona pętla nie wychodzi ponad sufit zmierzonego szumu tła.
     expect(Math.max(...windows.measured), 'UnitLayer.update alokuje').toBeLessThanOrEqual(gcNoiseLimit(windows));
     expect(sink).not.toBe(0);
     layer.dispose();
-  });
+    // Limit czasu podniesiony z domyślnych 5 s — to samo uzasadnienie i ta sama decyzja co
+    // w `budget.test.ts` i w `packages/sim/test/light.test.ts` (5 s → 30 s, Zadanie 3).
+    // W skrócie: test mierzy sześć przeplatanych okien odśmiecania (`rounds = 3`) na
+    // tysiącach iteracji, a Vitest uruchamia pliki RÓWNOLEGLE, więc jego czas zależy od
+    // tego, ile innych plików akurat liczy — pod obciążeniem wypadał na TIMEOUT, nie na
+    // asercji, czyli czerwienią wyglądającą na regresję wydajności, którą nie jest.
+    // Zmieniony jest WYŁĄCZNIE limit: ani asercje, ani liczba iteracji, ani kontrola.
+  }, 30_000);
 });
 
 describe('warstwa w scenie', () => {

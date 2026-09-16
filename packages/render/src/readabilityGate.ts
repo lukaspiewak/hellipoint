@@ -17,7 +17,7 @@ import { createCamera, type OrbitCamera } from './camera.js';
 import { buildPlanetGeometry, type PlanetGeometry } from './geometry.js';
 import { createPlanetMesh, type PlanetMesh } from './planetMesh.js';
 import { buildSmearedGeometry, writeSmearedColors, type SmearedGeometry } from './positiveControl.js';
-import { createBuildingLayer, type BuildingLayer } from './buildingMesh.js';
+import { createBuildingLayer, type AlertPulseOffset, type BuildingLayer } from './buildingMesh.js';
 import { createUnitLayer, type UnitLayer, type UnitShadingMode } from './unitMesh.js';
 import type { GateTrial } from './terminatorPairs.js';
 
@@ -388,7 +388,18 @@ export interface GateAnswerRecord {
  * kontrolny gasi je razem z planetą. Pilnuje tego test 33, sprawdzany w OBU konfiguracjach.
  */
 export interface GateWorld {
-  updateBuildings(buildings: readonly (Building | null)[], alertPulse?: number): void;
+  /**
+   * Przepisuje warstwę budynków. Drugi argument to GOTOWE WYCHYLENIE PROMIENIA w jednostkach
+   * świata (`AlertPulseOffset`), **nie sekundy** — inaczej niż w `PlanetScene.updateBuildings`,
+   * która bierze sekundy i przelicza je sama. Bramka musi móc wymusić spoczynek niezależnie
+   * od zegara (faza prób jest zamrożona), więc fazę liczy jej własny harness.
+   *
+   * Typ `AlertPulseOffset` jest tu po to, żeby te dwie drogi dało się rozróżnić KOMPILATOREM:
+   * przed tą marką oba podpisy brzmiały `number | undefined`, a podanie sekund w to miejsce
+   * rzucało `RangeError`-em dopiero po 0,13 s, na losowej klatce. Wartość bierze się z
+   * `alertPulse(radius, seconds)`; spoczynek to `alertPulse(radius, 0)`, czyli dokładne zero.
+   */
+  updateBuildings(buildings: readonly (Building | null)[], alertPulseOffset?: AlertPulseOffset): void;
   updateUnits(units: readonly Unit[], light: Float32Array): void;
   /**
    * Przemalowuje teren i kratę DOWOLNYM polem oświetlenia — dla fazy SWOBODNEJ bramki pełnego
@@ -516,7 +527,7 @@ export function createReadabilityGate(
     world = {
       buildings,
       units,
-      updateBuildings: (list, alertPulse) => buildings.update(list, alertPulse),
+      updateBuildings: (list, alertPulseOffset) => buildings.update(list, alertPulseOffset),
       updateUnits: (list, light) => units.update(list, light),
       setUnitShading: (next) => units.setShadingMode(next),
       setUnitShadingBands: (bands) => units.setShadingBands(bands),

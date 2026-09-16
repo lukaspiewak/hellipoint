@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { BufferGeometry, Material } from 'three';
-import { createPlanet, lightField, sunDirection, type Planet } from '@heliopolis/sim';
+import { BufferGeometry, Material, type Object3D, type Scene } from 'three';
+import { BUILDINGS, createPlanet, lightField, sunDirection, type Building, type Planet } from '@heliopolis/sim';
 import { cappedPixelRatio, createSceneWithRenderer, MAX_PIXEL_RATIO, type SceneRenderer } from '../src/scene.js';
+import { alertPulse, createBuildingLayer, ALERT_PULSE_PERIOD_SECONDS } from '../src/buildingMesh.js';
+import { buildPlanetGeometry } from '../src/geometry.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
 
 /**
@@ -253,5 +255,95 @@ describe('createSceneWithRenderer — dispose() zwalnia WSZYSTKO, co posiada', (
 
     geometryDisposeSpy.mockRestore();
     materialDisposeSpy.mockRestore();
+  });
+});
+
+/**
+ * Snapshot WSZYSTKICH buforów macierzy instancji w scenie, w kolejności obchodzenia drzewa.
+ * Bez wymieniania typów z nazwy — „warstwa instancjonowana" to tutaj „obiekt z
+ * `instanceMatrix`", tak samo jak „rysowalny" w teście 33 to „obiekt z geometrią". Dzięki temu
+ * test nie zaczyna nagle przepuszczać dołożonej warstwy tylko dlatego, że ma inną klasę.
+ */
+function instanceMatrixSnapshot(root: Scene | null): { object: Object3D; matrices: number[] }[] {
+  if (!root) throw new Error('test: renderer nie dostał sceny');
+  const out: { object: Object3D; matrices: number[] }[] = [];
+  root.traverse((object) => {
+    const attribute = (object as { instanceMatrix?: { array: ArrayLike<number> } }).instanceMatrix;
+    if (attribute) out.push({ object, matrices: Array.from(attribute.array) });
+  });
+  return out;
+}
+
+describe('createSceneWithRenderer — PULS pierścienia alarmu dochodzi z zegara do warstwy (ustalenie U2)', () => {
+  it('scena gry przekazuje warstwie budynków NIEZEROWE wychylenie, równe DOKŁADNIE alertPulse(radius, t)', () => {
+    // Jedyna zmiana kodu, którą wyprodukował werdykt człowieka U2 („puls WŁĄCZONY domyślnie,
+    // TAKŻE w grze"), nie miała ŻADNEGO testu: podmiana ciała `updateBuildings` na
+    // `buildings.update(list, 0)` dawała 588/588 zielonych, a `× 0,05` (puls dwudziestokrotnie
+    // cichszy) tak samo. Gorzej: test 24 w `buildingMesh.test.ts` pilnuje własności
+    // PRZECIWNEJ („bez wychylenia macierze identyczne co do bitu"), więc pakiet czytał się
+    // tak, jakby chroniony był wariant WYŁĄCZONY. Ten test jest drugą stroną tamtej pary.
+    //
+    // Wiązane są tu trzy rzeczy naraz, i dopiero razem wykluczają obie mutacje:
+    //   (1) wychylenie JEST niezerowe,
+    //   (2) jest DOKŁADNIE tym, co daje `alertPulse` — czyli scena przelicza SEKUNDY, a nie
+    //       przekazuje ich dalej surowych ani nie tłumi amplitudy,
+    //   (3) rusza się DOKŁADNIE jedna warstwa sceny (puls nie przecieka na teren/jednostki).
+    const planet = createPlanet({ seed: 20260915 });
+    let lastScene: Scene | null = null;
+    const renderer: SceneRenderer = {
+      render: (scene: Scene): void => {
+        lastScene = scene;
+      },
+      setSize: (): void => {},
+      setPixelRatio: (): void => {},
+      setClearColor: (): void => {},
+      dispose: (): void => {},
+    };
+    const scene = createSceneWithRenderer(planet, createFakeCanvas(), () => renderer);
+
+    // Pierścień alarmu istnieje WYŁĄCZNIE dla `powered === false`, więc bez niezasilonych
+    // budynków ten test mierzyłby pustą warstwę i przechodził dla każdej implementacji.
+    const list: (Building | null)[] = new Array<Building | null>(planet.cells.length).fill(null);
+    for (let i = 0; i < 40; i++) {
+      const cellId = i * 7;
+      list[cellId] = { cellId, type: 'KINETIC_TURRET', hp: BUILDINGS.KINETIC_TURRET.hp, powered: false };
+    }
+
+    scene.updateBuildings(list);
+    scene.render(new Float32Array(planet.cells.length), { x: 1, y: 0, z: 0 });
+    const resting = instanceMatrixSnapshot(lastScene);
+    expect(resting.length).toBeGreaterThan(0); // kontrola na sam przyrząd: jest co porównywać
+
+    // SZCZYT pulsu — pół okresu od zera, czyli miejsce, w którym `alertPulse` sięga
+    // maksymalnej legalnej amplitudy. Kontrola pozytywna na sam pomiar: to NIE jest zero.
+    const peakSeconds = ALERT_PULSE_PERIOD_SECONDS / 2;
+    const offset = alertPulse(planet.radius, peakSeconds);
+    expect(offset).toBeGreaterThan(0);
+
+    scene.updateBuildings(list, peakSeconds);
+    const pulsed = instanceMatrixSnapshot(lastScene);
+    expect(pulsed.length).toBe(resting.length);
+
+    const changed = pulsed.filter((entry, i) => JSON.stringify(entry.matrices) !== JSON.stringify(resting[i].matrices));
+    expect(changed.length, 'puls ma ruszyć DOKŁADNIE jedną warstwę sceny').toBe(1);
+
+    // Warstwa odniesienia: ta sama konstrukcja i ten sam CIĄG wywołań, ale z wychyleniem
+    // podanym wprost. Gdyby scena podała inne wychylenie (zero, stłumione, albo surowe
+    // sekundy), macierze by się rozeszły — a przy sekundach `update` rzuciłby RangeError-em,
+    // bo 0,8 leży daleko ponad sufitem 0,13.
+    const reference = createBuildingLayer(planet, buildPlanetGeometry(planet));
+    reference.update(list);
+    reference.update(list, offset);
+    expect(changed[0].matrices).toEqual(Array.from(reference.alert.instanceMatrix.array));
+    reference.dispose();
+
+    // PARA, połówka „ma PRZEJŚĆ": jawne zero jest tym samym, co brak zegara — co do bitu.
+    // Bez tej połówki test przechodziłby także dla sceny, która ignoruje argument i pulsuje
+    // ZAWSZE, czyli dla wywołującego bez zegara (zrzut klatki) nie byłaby deterministyczna.
+    scene.updateBuildings(list, 0);
+    const explicitZero = instanceMatrixSnapshot(lastScene);
+    expect(explicitZero.map((e) => e.matrices)).toEqual(resting.map((e) => e.matrices));
+
+    scene.dispose();
   });
 });

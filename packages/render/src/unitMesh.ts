@@ -67,8 +67,9 @@ import { lightBand, LIGHT_BANDS, type Rgb } from './shading.js';
  * ## Czego tu NIE MA: cieniowania jednostki światłem (Krok 3 briefu, rozstrzygnięty pomiarem)
  *
  * Oba warianty — progowy jak teren i gładki — są zaimplementowane (`UnitShadingMode`,
- * `unitShade`) i obejrzane w ruchu, na obu skalach. Wynik jest w raporcie zadania; sam
- * mechanizm zostaje, bo bramka Zadania 5 może chcieć obejrzeć go jeszcze raz cudzymi oczami.
+ * `unitShade`) i obejrzane w ruchu, na obu skalach. Wynik jest w raporcie zadania; mechanizm
+ * zostaje, bo bramka Zadania 5 obejrzała go cudzymi oczami i **potwierdziła, że gładkie
+ * cieniowanie w granicach legalnych WIDAĆ** (§13.6, pytanie 4) — patrz niżej.
  *
  * Domyślny tryb to `'flat'` — jednostka NIE jest cieniowana światłem. Decyzja stoi na
  * STROBOSKOPOWANIU trybu progowego, zmierzonym dwukrotnie i niezależnie (raz przeze mnie,
@@ -84,19 +85,20 @@ import { lightBand, LIGHT_BANDS, type Rgb } from './shading.js';
  * rdzenia daje IDENTYCZNĄ granicę, więc obwódka nigdy nie wiąże). Pilnuje tego test 17, który
  * liczy tę granicę bisekcją, zamiast ją przepisywać.
  *
- * ## Czego NIE wiem: jak wygląda łagodne cieniowanie GŁADKIE w granicach legalnych
+ * ## Co o cieniowaniu GŁADKIM w granicach legalnych wiadomo — OBEJRZANE, nie założone
  *
  * Obserwacja wzrokowa („cały wiersz SWARM-a gaśnie w tło na nocnej półkuli") została zrobiona
  * przy czynniku **0,55**, czyli przy zmianie rdzenia o **59/255** w sRGB. Maksymalne LEGALNE
- * przyciemnienie (0,846334) zmienia rdzeń o **18/255**, a obwódkę o 5/255 — i tego **nikt nie
- * obejrzał**, ani ja, ani przegląd. Zdanie „powyżej tej granicy cieniowania nie widać" stało
- * tu do rundy naprawczej 1 jako twierdzenie i było nieuprawnione: 18/255 to nie jest zero.
+ * przyciemnienie (0,846334) zmienia rdzeń o **18/255**, a obwódkę o 5/255, i do bramki
+ * Zadania 5 nie obejrzał tego nikt. Zdanie „powyżej tej granicy cieniowania nie widać" stało
+ * tu jako twierdzenie i było nieuprawnione: 18/255 to nie jest zero.
  *
- * Nie zmienia to werdyktu, bo werdykt niesie stroboskopowanie, a ono dotyczy WYŁĄCZNIE trybu
- * progowego i jest potwierdzone dwoma niezależnymi pomiarami. Ale zostawia otwarte pytanie
- * **czy łagodne cieniowanie GŁADKIE w granicach legalnych coś dowozi** — rozstrzyga to
- * człowiek przy bramce Zadania 5, dlatego oba tryby zostają w kodzie (klawisze 1/2/3 w
- * podglądzie), a nie zostały usunięte.
+ * **Człowiek to obejrzał (§13.6, pytanie 4): TAK, widać — „delikatną zmianę jasności, nic
+ * poza tym".** Czyli cieniowanie gładkie w granicach legalnych **NIE jest wykluczone przez
+ * niewidoczność, tylko NIEWYBRANE**. Tryb `flat` broni się dziś WYŁĄCZNIE stroboskopowaniem
+ * (20 zmian pasma na sekundę w trybie progowym, potwierdzone dwoma niezależnymi pomiarami) —
+ * i to jest cały jego argument, więc kto go kiedyś podważy, niech podważa tamten pomiar, a
+ * nie „i tak tego nie widać". Oba tryby zostają w kodzie (klawisze 1/2/3 w podglądzie).
  */
 
 // --- Stałe wizualne — [WYGLĄD] ---------------------------------------------------------
@@ -107,9 +109,10 @@ import { lightBand, LIGHT_BANDS, type Rgb } from './shading.js';
  *
  * ## Ta liczba jest DOLNĄ granicą, a nie wyborem estetycznym
  *
- * Przy `PIXELS_PER_UNIT = 3,41` (widok domyślny — wyprowadzenie w `buildingMesh.test.ts`)
- * najmniejszy typ musi zmieścić w swoim promieniu TRZY wielkości, każdą ponad progiem
- * widoczności jednego piksela:
+ * Przy skali widoku domyślnego **3,4119 px/j** — WYPROWADZANEJ ze stałych `camera.ts`
+ * (`test/support/pixelScale.ts`, kotwica w `camera.test.ts`), a nie przepisywanej — najmniejszy
+ * typ musi zmieścić w swoim promieniu TRZY wielkości, każdą ponad progiem widoczności jednego
+ * piksela:
  *
  *   obwódka (stała szerokość)                         ≥ 1 px
  *   rdzeń przy PEŁNEJ ekspozycji (tuż przed śmiercią) ≥ 1 px
@@ -285,10 +288,14 @@ export const UNIT_BAND_SHADE: readonly number[] = [0.55, 0.78, 1.0]; // [WYGLĄD
  * Zadania 5, NIEUŻYWANY w trybie domyślnym (`'flat'`).
  *
  * Powód istnienia: drugie ogniwo argumentu Zadania 4 — „łagodnego cieniowania gładkiego i
- * tak nie widać" — **nie zostało obejrzane w granicach legalnych**. Obserwacja wzrokowa, na
+ * tak nie widać" — nie zostało obejrzane w granicach legalnych. Obserwacja wzrokowa, na
  * której je oparto, była przy czynniku 0,55, czyli przy zmianie rdzenia o **59/255** w sRGB;
- * maksymalne legalne przyciemnienie zmienia rdzeń o **18/255**, a tego nie widział nikt.
- * Bramka Zadania 5 pokazuje człowiekowi DOKŁADNIE ten wariant.
+ * maksymalne legalne przyciemnienie zmienia rdzeń o **18/255**. Bramka Zadania 5 pokazała
+ * człowiekowi DOKŁADNIE ten wariant i **odpowiedź brzmi TAK — widać delikatną zmianę
+ * jasności**. Drugie ogniwo tamtego argumentu jest więc OBALONE: `flat` zostaje trybem
+ * domyślnym na podstawie stroboskopowania, a nie niewidoczności. Ta stała nie jest już
+ * materiałem do pytania, tylko zapisem TEGO, co pokazano, i punktem wyjścia, gdyby Faza 4
+ * chciała cieniowanie gładkie włączyć (wolno jej — w tych granicach).
  *
  * **0,8464, nie 0,8463 ani 0,846334.** Granica wyliczona bisekcją (test 17) to kres DOLNY,
  * nie osiągalne minimum: `passesAt` zwraca `false` dla samej liczby 0,846334 i `true` dopiero

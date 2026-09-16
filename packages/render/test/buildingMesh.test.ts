@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeGcWindows, gcNoiseLimit, measureGcWindows } from './support/gcWindows.js';
+import { describeGcWindows, gcMedian, gcNoiseLimit, measureGcWindows } from './support/gcWindows.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Matrix4, Vector3, type BufferAttribute, type BufferGeometry, type Object3D, type Scene } from 'three';
@@ -34,6 +34,7 @@ import { buildCellOutlines } from '../src/planetMesh.js';
 import { MAX_DISTANCE_FACTOR } from '../src/camera.js';
 import { createSceneWithRenderer, type SceneRenderer } from '../src/scene.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
+import { MIN_VISIBLE_PX, pixelsPerUnit } from './support/pixelScale.js';
 
 const planet = createPlanet({ seed: 20260915 });
 const geo = buildPlanetGeometry(planet);
@@ -298,47 +299,16 @@ const WCAG_MIN = 3;
 //
 // **Każdy próg poniżej wiąże MINIMUM po populacji, wyrażone w pikselach.**
 //
-// ## Przelicznik jednostek świata na piksele — i pomyłka, którą runda 2 tu miała
+// ## Przelicznik jednostek świata na piksele — WYPROWADZANY, nie przepisywany
 //
-// Z widoku DOMYŚLNEGO (`INITIAL_DISTANCE_FACTOR = 3`, czyli kamera 300 jednostek od środka
-// planety, pole widzenia 50°):
-//
-//   sylwetka kuli to OKRĄG STYCZNOŚCI, nie równik — jej promień kątowy widziany z kamery
-//   wynosi `asin(R/d) = asin(1/3) = 19,4712°`, a kamera perspektywiczna odwzorowuje promień
-//   pod kątem α na promień obrazu proporcjonalny do `tan α`. Stąd
-//
-//       udział wysokości kadru = tan(asin(1/3)) / tan(25°) = 0,353553 / 0,466308 = **0,758198**
-//
-//   czyli przy płótnie 900 px sylwetka ma **682,4 px** średnicy na 200 jednostek świata —
-//   **3,4119 px na jednostkę**.
-//
-// Runda naprawcza 2 miała tu **0,7148 i 3,22**, i to była POMYŁKA, nie zaokrąglenie.
-// Odtworzona: policzyłem odsunięcie punktu styczności od osi (94,281) i podzieliłem przez
-// połowę wysokości kadru wziętą na odległości **SKOŚNEJ** od kamery (282,843) zamiast na
-// **OSIOWEJ** (266,667). Dzielenie perspektywiczne używa głębokości wzdłuż osi, nie
-// odległości od kamery; ten sam rachunek z odległością osiową daje 0,758198 co do szóstej
-// cyfry. (Naiwne `R/d = 0,3333` zamiast `tan(asin(R/d)) = 0,353553` daje dokładnie tę samą
-// błędną liczbę — obie drogi mylą to samo.)
-//
-// Kierunek błędu był ZACHOWAWCZY: prawdziwa skala jest WIĘKSZA, więc progi wyrażone w
-// jednostkach świata były o 6% surowsze, niż wymaga próg pikselowy. Żadna liczba z tabeli
-// „najgorszy członek populacji" nie stała się przez to nieprawdziwa — wszystkie rosną.
-// Po poprawieniu skali sprawdziłem parami, że każdy próg NADAL wiąże, w tym dwa leżące
-// najbliżej granicy (obwódka rdzenia i rdzeń przy `hp = 0`).
-//
-// To jest miara UŚREDNIONA po tarczy. W jej środku, gdzie powierzchnia jest zwrócona wprost
-// do kamery, skala wynosi `900 / (2 · (300 − 100) · tan 25°) = ` **4,825 px/j** — i ta liczba
-// była poprawna od początku. Biorę uśrednioną, bo jest zachowawcza.
-const PIXELS_PER_UNIT = 3.41;
+// Skala bierze się ze stałych `camera.ts` (`INITIAL_DISTANCE_FACTOR`, `FIELD_OF_VIEW_DEGREES`
+// — obie `[WYGLĄD]`, obie strojalne w Fazie 4) plus jawnego założenia o wysokości płótna.
+// Wyprowadzenie, jego kontrola negatywna (naiwne `R/d` daje obalone 3,22) i powód, dla
+// którego ta liczba NIE jest już literałem w dwóch plikach: `support/pixelScale.ts`.
+// Kotwica na sam przyrząd stoi w `camera.test.ts`, czyli tam, gdzie mieszkają stałe — więc
+// zmiana kadrowania oblewa Z NAZWY, a nie dopiero przez próg pikselowy pięć plików dalej.
+const PIXELS_PER_UNIT = pixelsPerUnit(planet.radius);
 const px = (world: number): number => world * PIXELS_PER_UNIT;
-
-/**
- * Jeden próg na wszystko, co ma być WIDOCZNE. Liczba pochodzi z §5.3 raportu tego zadania:
- * pierwsza wersja obręczy alarmu miała pasy poniżej piksela i została odrzucona OBEJRZENIEM
- * — „alarmu nie było widać w ogóle". To jest jedyny werdykt wzrokowy, jaki to zadanie ma na
- * temat granicy widoczności, więc on jest progiem.
- */
-const MIN_VISIBLE_PX = 1;
 
 /** Pole rdzenia przy `hp === 0` jako ułamek pola przy pełnym — kanał geometryczny uszkodzenia. */
 const MAX_CORE_AREA_AT_ZERO_HP = 0.36;
@@ -660,10 +630,12 @@ describe('[MUTACJA] stan NIEZASILONY jest widoczny w wyjściu', () => {
     }
     expect(widestRing, `pierścień (${widestRing.toFixed(4)}) wychodzi poza krawędź obrysu`).toBeLessThan(maxRingRadius);
 
-    // ...I TO SAMO NA SZCZYCIE PULSU (Zadanie 5, pytanie 5 bramki). Puls jest domyślnie
-    // wyłączony, ale `update` przyjmuje wychylenie do `ALERT_PULSE_AMPLITUDE_FACTOR` — więc
-    // niezmiennik „pierścień nie wychodzi z komórki" musi obowiązywać przy MAKSYMALNYM
-    // wychyleniu, nie tylko w spoczynku. Para mutacji na samej stałej jest w teście 23.
+    // ...I TO SAMO NA SZCZYCIE PULSU. Puls jest DOMYŚLNYM wyglądem gry (ustalenie U2 bramki
+    // Zadania 5); sama WARSTWA nie zna zegara, więc bez argumentu rysuje spoczynek, a
+    // wychylenie do `ALERT_PULSE_AMPLITUDE_FACTOR` wnosi wywołujący. Niezmiennik „pierścień
+    // nie wychodzi z komórki" musi więc obowiązywać przy MAKSYMALNYM wychyleniu, nie tylko w
+    // spoczynku — bo to wychylenie maksymalne jest tym, co widzi gracz. Para mutacji na samej
+    // stałej jest w teście 23.
     const maxPulse = planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR;
     layer.update(list, maxPulse);
     let widestPulsedRing = 0;
@@ -1017,13 +989,25 @@ describe('budżet klatki', () => {
     // `min(okna) === 0` i migała pod obciążeniem równoległym, bo szum tła bywa większy od
     // mierzonego sygnału.
     expect(Math.min(...windows.empty), 'przyrząd nie potrafi zwrócić zera').toBe(0);
-    expect(Math.min(...windows.control), 'kontrola alokująca nie odstaje od szumu tła').toBeGreaterThan(
-      Math.max(...windows.idle),
+    //    Odniesieniem jest okno MIERZONE, nie bezczynne: kontrola to z definicji „mierzona
+    //    praca + jedna alokacja na element", więc oba okna robią to samo i różni je DOKŁADNIE
+    //    ta alokacja. Poprzednia wersja (`min(control) > max(idle)`) zestawiała podłogę
+    //    jednego szumu z sufitem drugiego i przewracała się pod obciążeniem bez żadnego
+    //    defektu — bo samo okno bezczynne alokuje. Pomiary: `support/gcWindows.ts`.
+    expect(gcMedian(windows.control), 'kontrola alokująca nie odstaje od mierzonej pętli').toBeGreaterThan(
+      gcMedian(windows.measured),
     );
     expect(Math.max(...windows.measured), 'BuildingLayer.update alokuje').toBeLessThanOrEqual(gcNoiseLimit(windows));
     expect(sink).not.toBe(0);
     layer.dispose();
-  });
+    // Limit czasu podniesiony z domyślnych 5 s — to samo uzasadnienie i ta sama decyzja co
+    // w `budget.test.ts` i w `packages/sim/test/light.test.ts` (5 s → 30 s, Zadanie 3).
+    // W skrócie: test mierzy sześć przeplatanych okien odśmiecania (`rounds = 3`) na
+    // tysiącach iteracji, a Vitest uruchamia pliki RÓWNOLEGLE, więc jego czas zależy od
+    // tego, ile innych plików akurat liczy — pod obciążeniem wypadał na TIMEOUT, nie na
+    // asercji, czyli czerwienią wyglądającą na regresję wydajności, którą nie jest.
+    // Zmieniony jest WYŁĄCZNIE limit: ani asercje, ani liczba iteracji, ani kontrola.
+  }, 30_000);
 });
 
 describe('buildCellBases — funkcja czysta', () => {
@@ -1120,13 +1104,16 @@ describe('nawinięcie trójkątów — nawrót defektu, który w tym zadaniu wys
 });
 
 describe('puls pierścienia alarmu — materiał do pytania 5 bramki (Zadanie 5)', () => {
-  it('23. [PARA MUTACJI] maksymalne LEGALNE wychylenie mieści się w komórce, o 0,0002 większe JUŻ NIE — i jest poniżej progu widoczności', () => {
-    // Pytanie 5 bramki brzmi „czy widać, że pierścień alarmu pulsuje". Zadanie 3 puls
-    // usunęło POMIAREM; brief Zadania 5 mówi wprost, że rozstrzyga to człowiek. Żeby mógł,
-    // musi zobaczyć puls — ale wyłącznie taki, który dałoby się wysłać na ekran.
+  it('23. [PARA MUTACJI] maksymalne LEGALNE wychylenie mieści się w komórce, o 0,0002 większe JUŻ NIE — i jest PONIŻEJ progu, który wiąże ROZMIARY', () => {
+    // Pytanie 5 bramki brzmiało „czy widać, że pierścień alarmu pulsuje". Zadanie 3 puls
+    // wyłączyło POMIAREM; rozstrzygnął człowiek — **puls widać, i jest domyślnym wyglądem
+    // gry** (ustalenie U2). Ten test nie jest już materiałem do pytania, tylko strażnikiem
+    // sufitu, który to pytanie zostawiło.
     //
-    // Ten test ustala dwie rzeczy naraz i obie są treścią odpowiedzi, którą człowiek zapisze:
-    // (1) ile wychylenia w ogóle zostało, (2) że to mniej niż piksel.
+    // Ten test ustala dwie rzeczy naraz: (1) ile wychylenia w ogóle zostało, (2) że to mniej
+    // niż `MIN_VISIBLE_PX` — i to drugie NIE znaczy „niewidoczne". Próg 1 px pochodzi z
+    // obejrzenia cechy NIERUCHOMEJ (pas obręczy cieńszy niż piksel znikał), więc wiąże
+    // ROZMIARY; ruch jest wykrywalny poniżej niego i właśnie to zmierzył człowiek.
     const { angle: edgeAngle } = minOutlineEdgeAngle();
     const maxRingRadius = Math.tan(edgeAngle) * (planet.radius + planet.radius * SURFACE_LIFT_FACTOR);
     const restingRadius = planet.radius * ALERT_RADIUS_FACTOR;
@@ -1139,21 +1126,29 @@ describe('puls pierścienia alarmu — materiał do pytania 5 bramki (Zadanie 5)
     expect(restingRadius + amplitude + 0.02).toBeGreaterThan(maxRingRadius);
 
     // WYNIK, nie próg: całe wychylenie to 0,44 piksela z widoku domyślnego, przy progu
-    // widoczności 1 px. Sufitem jest ROZMIAR KOMÓRKI, nie dobór wartości — i dlatego
-    // odpowiedź na pytanie 5 zapada wzrokiem, a nie przez podniesienie tej liczby.
+    // ROZMIARU 1 px. Sufitem jest ROZMIAR KOMÓRKI, nie dobór wartości — i dlatego odpowiedź
+    // na pytanie 5 zapadła wzrokiem, a nie przez podniesienie tej liczby. Zapadła na TAK:
+    // ta amplituda jest widoczna, mimo że leży pod progiem rozmiaru.
     expect(px(amplitude)).toBeLessThan(MIN_VISIBLE_PX);
     console.log(
       `[BRAMKA/P5] maksymalne legalne wychylenie pulsu: ${amplitude.toFixed(4)} j. = ${px(amplitude).toFixed(3)} px` +
-        ` (spoczynek ${restingRadius.toFixed(4)}, sufit komórki ${maxRingRadius.toFixed(4)}, próg widoczności ${MIN_VISIBLE_PX} px)`,
+        ` (spoczynek ${restingRadius.toFixed(4)}, sufit komórki ${maxRingRadius.toFixed(4)}, próg ROZMIARU ${MIN_VISIBLE_PX} px —` +
+        ` widziane przez człowieka MIMO to, bo ruch jest wykrywalny poniżej niego)`,
     );
   });
 
-  it('24. [NIEZMIENNIK] `update` bez wychylenia daje macierze IDENTYCZNE co do bitu jak w spoczynku', () => {
+  it('24. [NIEZMIENNIK] wywołanie WARSTWY bez zegara jest deterministyczne — a produkcja i tak pulsuje (pilnuje tego scene.test.ts)', () => {
     // Warstwa nie zna zegara i to jest własność z Zadania 3, nie niedopatrzenie: bez
     // argumentu nie ma wychylenia, bo nie ma skąd go wziąć. **To NIE znaczy „produkcja nie
     // pulsuje"** — od rundy naprawczej 2 Zadania 5 pulsuje, a wnosi to wywołujący
     // (`scene.ts` → `apps/client`), funkcją czystą `alertPulse`. Strażnik jest tu po to, żeby
     // wywołanie bez zegara (test, zrzut pojedynczej klatki) było DETERMINISTYCZNE.
+    //
+    // Tytuł tego testu brzmiał wcześniej „`update` bez wychylenia daje macierze IDENTYCZNE
+    // co do bitu jak w spoczynku" i czytało się to jak zapadka chroniąca wariant BEZ pulsu —
+    // czyli dokładnie odwrotność ustalenia U2, przy braku (do tej rundy) jakiegokolwiek testu
+    // po drugiej stronie. Test jest ten sam; drugą stronę wiąże teraz `scene.test.ts`
+    // („scena gry przekazuje warstwie budynków NIEZEROWE wychylenie pulsu").
     const layer = createBuildingLayer(planet, geo);
     const list = emptyBuildings();
     ALL_TYPES.forEach((type, k) => place(list, 100 + k * 7, type, { powered: false }));

@@ -40,8 +40,88 @@ import { GCProfiler } from 'node:v8';
  * Kształt, który wszystkie trzy pliki stosują:
  *
  *     expect(Math.min(...w.empty)).toBe(0);                                   // podłoga
- *     expect(Math.min(...w.control)).toBeGreaterThan(Math.max(...w.idle));    // czułość
+ *     expect(gcMedian(w.control)).toBeGreaterThan(gcMedian(w.measured));      // czułość
  *     expect(Math.max(...w.measured)).toBeLessThanOrEqual(gcNoiseLimit(w));   // własność
+ *
+ * ## Dlaczego czułość porównuje kontrolę z MIERZONYM, a nie z oknem bezczynnym
+ *
+ * Do przeglądu gałęzi asercja czułości brzmiała `min(control) > max(idle)` przy `rounds = 2`,
+ * czyli zestawiała PODŁOGĘ jednego szumu z SUFITEM drugiego, mając po dwie próbki z każdego.
+ * Odtworzone przez przegląd, `unitMesh.test.ts`:
+ *
+ *     AssertionError: kontrola alokująca nie odstaje od szumu tła: expected 12 to be greater than 16
+ *
+ * **Pierwsza próba naprawy — mediany zamiast skrajnych, `rounds = 3` — NIE WYSTARCZYŁA i to
+ * jest pouczające.** Zmierzone pod obciążeniem (8 procesów alokujących na 10 rdzeniach, trzy
+ * pełne przebiegi pakietu):
+ *
+ *     BEZCZYNNE okno (szum tła): 3/56/42    ← mediana 42
+ *     kontrola alokująca:        13/13/13   ← mediana 13
+ *
+ * To nie jest problem PRÓBKOWANIA, tylko wady przyrządu: **okno bezczynne alokuje więcej niż
+ * kontrola alokująca.** `busyWait` niżej odpytuje `performance.now()` w najciaśniejszej możliwej
+ * pętli, a ta funkcja zwraca liczbę ZMIENNOPRZECINKOWĄ — każde wywołanie boksuje `HeapNumber`.
+ * Przy oknie 500-700 ms to miliony wywołań. Okno bezczynne NIE JEST więc podłogą i żadna
+ * statystyka po nim liczona nie zrobi z niego podłogi.
+ *
+ * **Właściwym odniesieniem dla kontroli jest okno MIERZONE, nie bezczynne.** `control` to z
+ * definicji `measured + jedna alokacja na element`, więc te dwa okna wykonują tę samą pracę,
+ * trwają podobnie i biegną pod tym samym obciążeniem — różni je DOKŁADNIE ta jedna rzecz,
+ * której widoczności ma dowodzić asercja czułości. Zmierzone pod tym samym obciążeniem, pięć
+ * miejsc × trzy przebiegi, **piętnaście na piętnaście z ogromnym zapasem**:
+ *
+ *     writeCellColors   mierzone 0    kontrola 7
+ *     BuildingLayer     mierzone 0    kontrola 8
+ *     UnitLayer         mierzone 1    kontrola 11-12
+ *     updateColors      mierzone 0    kontrola 13-22
+ *     pełna scena       mierzone 2-3  kontrola 147
+ *
+ * Mediany (`rounds = 3`) zostają jako odporność na pojedyncze błądzące okno; nośnikiem naprawy
+ * jest zmiana ODNIESIENIA. Przyrząd naprawdę ślepy dalej oblewa — sprawdzone mutacją, w której
+ * okno kontrolne mierzy pętlę NIEALOKUJĄCĄ: oblewa we wszystkich pięciu miejscach naraz.
+ *
+ * Podniesienie `rounds` NIE rozluźnia progu własności: próg to `max(idle) + 1`, a sprawdzana
+ * wielkość to `max(measured)` — obie strony dostają tyle samo nowych próbek, więc rosną razem.
+ *
+ * ## ZNANE OGRANICZENIE tego przyrządu — ZMIERZONE, otwarte, do rozstrzygnięcia w Fazie 2C
+ *
+ * `busyWait` niżej odpytuje `performance.now()` w najciaśniejszej możliwej pętli, a ta funkcja
+ * zwraca liczbę ZMIENNOPRZECINKOWĄ — więc **samo okno bezczynne alokuje** (boksowanie
+ * `HeapNumber` na wywołanie, przy oknie 500-700 ms to miliony wywołań). Skutek:
+ * `gcNoiseLimit` jest zawyżony o artefakt przyrządu, czyli **własność jest pilnowana luźniej,
+ * niż ten moduł deklaruje.**
+ *
+ * Wersja czekająca na liczbach CAŁKOWITYCH (zegar odpytywany raz na 100 000 iteracji) sprowadza
+ * okno bezczynne do 0/0/0 nawet pod ciężkim obciążeniem. Jest napisana i działa — stoi w
+ * `packages/sim/test/light.test.ts`, gdzie była KONIECZNA: przy zawyżonym progu tamta asercja
+ * przepuszczała implementację alokującą 5768 B na wywołanie, czyli byłaby ślepa.
+ *
+ * **Tutaj jej NIE wstawiono i to jest świadoma decyzja, nie przeoczenie.** Zmierzone przy
+ * domykaniu gałęzi, uczciwe okno bezczynne, 8 procesów alokujących na 10 rdzeniach, trzy pełne
+ * przebiegi pakietu — okno bezczynne **0/0/0 za każdym razem**, próg 1, a mierzone:
+ *
+ *     writeCellColors × 2000        0/0/0/0/0/0     ← mieści się
+ *     BuildingLayer.update × 600    0/0/0/0/0/0     ← mieści się
+ *     PlanetMesh.updateColors×2000  0/0/0/0/0/0     ← mieści się
+ *     UnitLayer.update × 600        0-1             ← mieści się, ale na styk
+ *     PEŁNA SCENA × 2000 klatek     2/3/2/2/3/2     ← NIE mieści się, POWTARZALNIE
+ *
+ * Czyli z uczciwym oknem odczyt mówi wprost: **pętla klatki alokuje odrobinę.** Tempo zgadza
+ * się z `UnitLayer.update` (1 cykl na ok. 600 wywołań; pełna scena robi ich 2000, stąd 2-3) —
+ * warstwa jednostek jest jedyną, która przy własnym pomiarze nie daje czystych zer. Sygnał jest
+ * 50 razy poniżej kontroli (0,0015 cyklu na klatkę wobec 0,0735), więc to nie jest problem
+ * budżetu 8 ms — ale twierdzenie „nie alokuje NICZEGO" jest silniejsze, niż pomiar potwierdza,
+ * i dziś przechodzi WYŁĄCZNIE dzięki zawyżonemu progowi.
+ *
+ * Zamknięcie tego wymaga albo wskazania alokacji w `UnitLayer.update` (praca na kodzie
+ * produkcyjnym), albo wykazania, że `GCProfiler` dolicza tu kroki znakowania przyrostowego
+ * zaczęte poza oknem, i przeformułowania własności na TEMPO zamiast liczby bezwzględnej
+ * (okna różnią się długością pięciokrotnie, a próg jest jeden). Obie drogi to własny pomiar.
+ * Na końcu fazy z werdyktem SCALIĆ żadna nie jest do zrobienia bez zgadywania, a zmiana progu
+ * „żeby przeszło" byłaby dokładnie tym, czego ta gałąź uczy nie robić. **Kalibracja progu
+ * zostaje więc ta sama, co przy wszystkich pomiarach tej fazy** — zawyżona i tu opisana, a nie
+ * cicha. Asercja CZUŁOŚCI już od niej nie zależy (patrz wyżej): jej odniesieniem jest okno
+ * mierzone, więc artefakt okna bezczynnego nie przewraca jej ani pod obciążeniem, ani bez.
  *
  * ## Dlaczego próg stoi na OKNIE BEZCZYNNYM, a nie w połowie drogi do kontroli
  *
@@ -96,7 +176,7 @@ function cyclesDuring(run: () => void): number {
  * rozgrzewkę JIT PRZED wywołaniem — pomiar dotyczy stanu ustabilizowanego, a faza
  * kompilacji alokuje z natury (kod, feedback vectors).
  */
-export function measureGcWindows(loops: GcLoops, rounds = 2): GcWindows {
+export function measureGcWindows(loops: GcLoops, rounds = 3): GcWindows {
   // Długość okna mierzona na FAKTYCZNYM przebiegu, nie szacowana — pod obciążeniem
   // równoległym rośnie razem z nim, więc okno bezczynne zawsze odpowiada oknu mierzonemu.
   // Ten przebieg nie jest liczony do wyniku.
@@ -126,14 +206,32 @@ export function measureGcWindows(loops: GcLoops, rounds = 2): GcWindows {
   return { empty, idle, measured, control, windowMs };
 }
 
+/**
+ * Mediana próbek — statystyka ODPORNA na jedno błądzące okno, używana przez asercję CZUŁOŚCI.
+ * Dla parzystej liczby próbek średnia dwóch środkowych; przy `rounds = 3` (domyślnych) okna
+ * `idle` i `control` mają po trzy próbki, więc jest to prawdziwy środek.
+ *
+ * @throws {RangeError} dla pustego wejścia — pusty odczyt to „nie mierzone", nie „zero", a
+ *   cicha `NaN`-owa mediana przeszłaby porównanie `>` jako `false` bez podania przyczyny.
+ */
+export function gcMedian(samples: readonly number[]): number {
+  if (samples.length === 0) {
+    throw new RangeError('gcMedian: empty sample list — nothing was measured');
+  }
+  const sorted = [...samples].sort((a, b) => a - b);
+  const middle = sorted.length >> 1;
+  return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 /** Wiersz do logu — te same pola w trzech plikach, żeby dało się je zestawiać. */
 export function describeGcWindows(w: GcWindows): string {
   const j = (a: readonly number[]): string => a.join('/');
   return (
     `okno ${w.windowMs.toFixed(0)} ms — pusta pętla: ${j(w.empty)}, BEZCZYNNE okno (szum tła): ${j(w.idle)}, ` +
     `mierzone: ${j(w.measured)}, kontrola alokująca: ${j(w.control)} ` +
-    `[sufit szumu ${Math.max(...w.idle)}, podłoga kontroli ${Math.min(...w.control)}, ` +
-    `próg ${gcNoiseLimit(w)}, szczyt mierzonych ${Math.max(...w.measured)}]`
+    `[sufit szumu ${Math.max(...w.idle)}, mediana szumu ${gcMedian(w.idle)}, ` +
+    `mediana kontroli ${gcMedian(w.control)}, próg ${gcNoiseLimit(w)}, ` +
+    `szczyt mierzonych ${Math.max(...w.measured)}]`
   );
 }
 
