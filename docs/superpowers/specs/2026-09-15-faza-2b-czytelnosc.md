@@ -652,7 +652,14 @@ nie powinien z tego wyciągać wniosku o wydajności.
 Sąsiednie komórki dzielą krawędź. Obrys rysowany dokładnie po krawędziach dałby na niej
 **dwie pokrywające się linie, a na granicy pasm — w dwóch różnych kolorach**. Piksele
 terminatora przestałyby wtedy pokazywać skok wypełnień (0,9005), a pokazywałyby skok
-obrysów: zmierzone **0,5546**, czyli 62% dzisiejszego kontrastu.
+obrysów: zmierzone **0,5918**, czyli 65,7% dzisiejszego kontrastu (w sRGB 0,5632 = 65,5%).
+
+> **Korekta, i to mojego błędu, nie wykonawcy.** Pierwsza wersja tego akapitu podawała 0,5546
+> i 62%. Miałem prawidłową liczbę **we własnym wyniku sondy** — wypisała `krok obrys-obrys
+> przez te sama granice: 0.5918` — i mimo to przepisałem liczbę z raportu wykonawcy. To nie
+> jest błąd pomiaru, tylko przepisania: zweryfikowałem i zignorowałem własny wynik. Wykrył to
+> dopiero przegląd zadaniowy. Wniosek na przyszłość jest węższy niż „sprawdzaj cudze liczby",
+> bo to akurat zrobiłem: **sprawdziwszy, użyj swojego wyniku, nie cudzego.**
 
 Bramka z Zadania 1 mierzy wypełnienia. **Przeszłaby na pomiarze, a oko dostałoby wersję
 gorszą o ponad jedną trzecią.** Stąd `OUTLINE_INSET` i asercja na szczelinę w jednostkach
