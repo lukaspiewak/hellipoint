@@ -77,13 +77,25 @@
         color: #ff9a76;
         font-weight: 700;
       }
+      /*
+        TRAFIALNOŚĆ WSKAŹNIKIEM NIE MIESZKA W TYM ARKUSZU.
+
+        `pointer-events` ustawia `hud.ts` przy budowie panelu (korzeń `none`, wąska „łapka"
+        wiersza `auto`) i to jest celowe: to kontrakt ZACHOWANIA, nie wygląd, a arkusza
+        Vitest nie czyta — naprawa zapisana tutaj nie miałaby strażnika. Uzasadnienie
+        i zmierzone liczby: doc-comment `createHudView`.
+      */
       #hud .hud-row {
         padding: 0 4px;
-        cursor: pointer;
         border-left: 2px solid transparent;
       }
-      #hud .hud-row:hover {
-        background: rgba(255, 255, 255, 0.08);
+      /* Klikalna jest WYŁĄCZNIE „łapka" (numer, nazwa, koszt) — i tylko ona pokazuje, że
+         jest klikalna. Zdanie z powodem odmowy leży na planecie i przepuszcza wskaźnik. */
+      #hud .hud-pick {
+        cursor: pointer;
+      }
+      #hud .hud-pick:hover {
+        background: rgba(255, 255, 255, 0.12);
       }
       #hud .hud-row--refused {
         color: #8b97ab;

@@ -202,6 +202,14 @@ export function resourceLine(s: SimState): string {
 export interface ElementLike {
   textContent: string | null;
   className: string;
+  /**
+   * Tyle z `CSSStyleDeclaration`, ile HUD ustawia — i jest to CELOWO jedyna własność
+   * wyglądu, jaką ten moduł dotyka. Reszta (układ, kolory, wyrównanie) mieszka w arkuszu
+   * `index.html`; `pointerEvents` nie jest wyglądem, tylko **kontraktem zachowania**:
+   * mówi, co w panelu da się kliknąć, a przez co kliknięcie przechodzi na planetę.
+   * Dlatego jest w kodzie, gdzie widzi go test, a nie w arkuszu, którego Vitest nie czyta.
+   */
+  readonly style: { pointerEvents: string };
   readonly ownerDocument: DocumentLike;
   appendChild(child: ElementLike): void;
   addEventListener(type: string, listener: (event: never) => void): void;
@@ -228,8 +236,28 @@ export interface HudView {
 }
 
 /** Szerokości kolumn monospace w menu. [WYGLĄD] */
-const NAME_WIDTH = 19; // [WYGLĄD] najdłuższy typ to EVACUATION_MODULE (18 znaków) + spacja
+const NAME_WIDTH = 18; // [WYGLĄD] najdłuższy typ to EVACUATION_MODULE (17 znaków) + spacja
 const COST_WIDTH = 4; // [WYGLĄD] najdroższy budynek kosztuje 300
+
+/**
+ * Maksymalna liczba pozycji, jaką unosi maska dostępności w bramce świeżości.
+ *
+ * `1 << i` w JavaScripcie liczy się na 32-bitowej liczbie ZE ZNAKIEM, więc `1 << 31` jest
+ * ujemne, a `1 << 32` zawija do 1 — czyli maska zaczęłaby cicho mylić pozycję 32 z pozycją 0
+ * i panel przestałby się przemalowywać, gdy jedna z nich staje się osiągalna. Dziś pozycji
+ * jest dziewięć, więc to jest zapas ponad trzykrotny; straż stoi tu, żeby dwudziesty trzeci
+ * budynek dodany w Fazie 3 wywalił się GŁOŚNO przy rozruchu, a nie objawił się panelem,
+ * który czasem nie nadąża.
+ */
+const MAX_MENU_TYPES = 31;
+if (MENU_TYPES.length > MAX_MENU_TYPES) {
+  throw new RangeError(
+    `hud.ts: menu ma ${MENU_TYPES.length} pozycji, a maska dostępności w bramce świeżości ` +
+      `unosi najwyżej ${MAX_MENU_TYPES} (1 << i na 32-bitowej liczbie ze znakiem). Powyżej ` +
+      'tej granicy bit zawija i panel przestaje się przemalowywać przy zmianie dostępności ' +
+      'zawiniętej pozycji. Zamień maskę na tablicę bitów albo na porównanie po elementach.',
+  );
+}
 
 /**
  * Buduje panel i zwraca uchwyt do odświeżania.
@@ -237,12 +265,38 @@ const COST_WIDTH = 4; // [WYGLĄD] najdroższy budynek kosztuje 300
  * `onChoose` dostaje typ z klikniętej pozycji i nic więcej — HUD **nie wysyła komend**
  * i nie zna `Sim`. Wybór trafia do `Selection` (właściciela stanu wyboru), dokładnie tą samą
  * drogą, co skróty 1-9; kliknięcie w planetę zostaje jedyną drogą do kolejki komend.
+ *
+ * ## Kontrakt trafialności wskaźnikiem — po co `pointerEvents` jest w KODZIE
+ *
+ * Panel jest RODZEŃSTWEM płótna, a całe wejście (wskazanie, budowa, rozbiórka,
+ * `OrbitControls`) wisi na płótnie. Element panelu, który przyjmuje zdarzenia wskaźnika,
+ * jest więc dziurą w sterowaniu: w jego prostokącie nie da się ani wskazać, ani obrócić,
+ * ani przybliżyć, a prawy przycisk otwiera menu przeglądarki. **Zmierzone na żywej stronie
+ * przed naprawą: 38,8 % wskazywalnej tarczy planety przy 800×482.**
+ *
+ * Stąd podział, który robi ta funkcja:
+ *
+ * - **korzeń i wszystko w nim** — `pointer-events: none`, czyli przezroczyste dla wskaźnika;
+ *   panel rysuje, ale nie łapie;
+ * - **jedna wąska „łapka" na wiersz** (numer, nazwa, koszt — `NAME_WIDTH + COST_WIDTH`
+ *   znaków) — `auto`. To jest JEDYNA rzecz w panelu, w którą da się kliknąć, i mieści się
+ *   w lewym marginesie kadru, poza sylwetką planety;
+ * - **zdanie z powodem odmowy** — `none`, bo jest szerokie i leżałoby na planecie.
+ *
+ * Kontrakt siedzi w kodzie, a nie w arkuszu `index.html`, bo arkusza Vitest nie czyta —
+ * a to jest zachowanie, nie wygląd. Wersja czysto arkuszowa byłaby naprawą, której żaden
+ * test nie pilnuje.
+ *
+ * `contextmenu` jest łapane na korzeniu: zdarzenie z „łapki" i tak przez niego przechodzi
+ * bąbelkiem (`pointer-events` rozstrzyga trafianie, nie propagację), a bez tego prawy
+ * przycisk nad wierszem menu otwierałby menu przeglądarki zamiast rozbierać.
  */
 export function createHudView(
   root: ElementLike,
   onChoose: (type: BuildingType) => void,
 ): HudView {
   const doc = root.ownerDocument;
+  root.style.pointerEvents = 'none';
 
   const resources = doc.createElement('div');
   resources.className = 'hud-resources';
@@ -256,17 +310,37 @@ export function createHudView(
   // istniejących — inaczej każda zmiana rudy kasowałaby i odtwarzała dziewięć elementów
   // DOM-u w pętli renderu, razem z ich nasłuchami.
   const rowElements: ElementLike[] = [];
-  const listeners: [ElementLike, (event: never) => void][] = [];
+  const pickElements: ElementLike[] = [];
+  const whyElements: ElementLike[] = [];
+  const listeners: [ElementLike, string, (event: never) => void][] = [];
   for (let i = 0; i < MENU_TYPES.length; i++) {
     const type = MENU_TYPES[i];
     const row = doc.createElement('div');
     row.className = 'hud-row';
+
+    const pick = doc.createElement('span');
+    pick.className = 'hud-pick';
+    pick.style.pointerEvents = 'auto';
     const listener = ((): void => onChoose(type)) as (event: never) => void;
-    row.addEventListener('click', listener);
-    listeners.push([row, listener]);
+    pick.addEventListener('click', listener);
+    listeners.push([pick, 'click', listener]);
+    row.appendChild(pick);
+
+    const why = doc.createElement('span');
+    why.className = 'hud-why';
+    row.appendChild(why);
+
     root.appendChild(row);
     rowElements.push(row);
+    pickElements.push(pick);
+    whyElements.push(why);
   }
+
+  const onContextMenu = ((event: { preventDefault(): void }): void => {
+    event.preventDefault();
+  }) as (event: never) => void;
+  root.addEventListener('contextmenu', onContextMenu);
+  listeners.push([root, 'contextmenu', onContextMenu]);
 
   // Migawka tego, co panel POKAZUJE — osobne skalary, nie sklejony napis: napis byłby
   // alokacją w pętli renderu, czyli dokładnie tym, czego ta bramka ma unikać.
@@ -327,13 +401,16 @@ export function createHudView(
       const rows = buildMenuRows(s, cellId);
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
-        const element = rowElements[i];
-        element.textContent =
-          `${i + 1} ${row.type.padEnd(NAME_WIDTH)}${String(row.costOre).padStart(COST_WIDTH)}  ` +
-          (row.check.ok ? '' : refusalMessage(row.check.reason));
+        // `i + 1`, nie `i`: to jest NUMER KLAWISZA, którym `input.ts` wybiera tę pozycję
+        // (`/^Digit([1-9])$/` → `types[n - 1]`). Panel obiecujący zły klawisz jest gorszy
+        // od panelu bez numerów, bo gracz wciska to, co przeczytał.
+        pickElements[i].textContent =
+          `${i + 1} ${row.type.padEnd(NAME_WIDTH)}${String(row.costOre).padStart(COST_WIDTH)}`;
+        whyElements[i].textContent = row.check.ok ? '' : `  ${refusalMessage(row.check.reason)}`;
         // Klasy, nie style w linii: liczby wyglądu mieszkają w `index.html`, gdzie da się
-        // je oglądać razem z resztą układu panelu.
-        element.className =
+        // je oglądać razem z resztą układu panelu. Wyjątkiem jest `pointerEvents`, ustawiany
+        // przy budowie — patrz doc-comment `createHudView`.
+        rowElements[i].className =
           `hud-row${row.check.ok ? '' : ' hud-row--refused'}` +
           `${row.affordable ? '' : ' hud-row--poor'}` +
           `${row.type === selectedType ? ' hud-row--selected' : ''}`;
@@ -341,7 +418,9 @@ export function createHudView(
       return true;
     },
     detach(): void {
-      for (const [element, listener] of listeners) element.removeEventListener('click', listener);
+      for (const [element, type, listener] of listeners) {
+        element.removeEventListener(type, listener);
+      }
     },
   };
 }

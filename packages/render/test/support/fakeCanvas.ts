@@ -124,6 +124,8 @@ export function createFakeEventTarget(): FakeListenerTarget {
 export interface FakeElement {
   textContent: string | null;
   className: string;
+  /** Tyle z `CSSStyleDeclaration`, ile HUD ustawia: kontrakt trafialności wskaźnikiem. */
+  readonly style: { pointerEvents: string };
   readonly ownerDocument: FakeDocument;
   appendChild(child: FakeElement): void;
   addEventListener(type: string, listener: (event: never) => void): void;
@@ -156,6 +158,7 @@ export function createFakeDocument(): FakeDocument {
         tagName: tag.toUpperCase(),
         textContent: null as string | null,
         className: '',
+        style: { pointerEvents: '' },
         ownerDocument: doc,
         children,
         [LISTENERS]: events[LISTENERS],
@@ -174,6 +177,42 @@ export function createFakeDocument(): FakeDocument {
 /** Skrót: świeży dokument i jego korzeń, czyli dokładnie to, co dostaje `createHudView`. */
 export function createFakeElement(tag = 'div'): FakeElement {
   return createFakeDocument().createElement(tag);
+}
+
+/**
+ * CAŁE wyjście widoku jako jeden napis — REKURENCYJNIE, z klasą, kontraktem wskaźnika
+ * i treścią na każdym poziomie zagnieżdżenia.
+ *
+ * ## Dlaczego to istnieje: „tekst panelu" był strażnikiem tylko jednego poziomu
+ *
+ * Przegląd rundy 1 zmierzył, gdzie dokładnie przebiegała linia. Test granicy zakresu
+ * Zadania 3 składał `textContent` BEZPOŚREDNICH dzieci korzenia, a atrapa trzyma
+ * `textContent` jako zwykłe pole (prawdziwy DOM składa potomków — atrapa nie). Skutek:
+ * duplikat `powered` przemycony w `className` **przechodził**, żywy odczyt
+ * `hp 333 · BEZ PRĄDU` w elemencie **zagnieżdżonym** **przechodził**, a ten sam dopisek
+ * w bezpośrednim dziecku oblewał. Osiem z dwudziestu mutacji przeglądu leżało po tej
+ * stronie granicy i wszystkie były zielone.
+ *
+ * Naprawa u ŹRÓDŁA, a nie pięcioma łatkami: wyjście widoku daje się obejrzeć jako
+ * STRUKTURA. Wtedy jeden strażnik obejmuje treść, klasę i kontrakt trafialności na
+ * każdej głębokości — zamiast osobnej asercji na każdy kanał, którą trzeba pamiętać
+ * dopisać przy każdym nowym elemencie.
+ *
+ * `pointerEvents` jest w zrzucie celowo: po naprawie „panel zjada 38,8 % tarczy" to jest
+ * kontrakt ZACHOWANIA (co da się kliknąć), a nie wygląd — a przyrząd, który go nie widzi,
+ * nie zobaczy też regresji tamtej naprawy.
+ *
+ * Czego ten zrzut NIE widzi, zapisane, żeby nikt nie wziął go za więcej, niż jest:
+ * **układu i kaskady CSS**. Arkusz z `index.html` do Vitest nie dociera; to, czy panel
+ * mieści się w oknie i gdzie leży, dalej sprawdza się okiem.
+ */
+export function describeElement(element: FakeElement, indent = ''): string {
+  const pointer = element.style.pointerEvents === '' ? '' : ` pe=${element.style.pointerEvents}`;
+  const klasa = element.className === '' ? '' : `.${element.className.split(' ').join('.')}`;
+  const own = element.textContent === null ? '' : ` ${JSON.stringify(element.textContent)}`;
+  const head = `${indent}<${element.tagName.toLowerCase()}>${klasa}${pointer}${own}`;
+  const kids = element.children.map((child) => describeElement(child, `${indent}  `));
+  return [head, ...kids].join('\n');
 }
 
 export function createFakeCanvas(

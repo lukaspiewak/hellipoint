@@ -16,6 +16,7 @@ import {
   createFakeCanvas,
   createFakeDocument,
   createFakeEventTarget,
+  describeElement,
   fireOn,
   type FakeElement,
 } from '../../../packages/render/test/support/fakeCanvas.js';
@@ -200,9 +201,14 @@ describe('buildMenuRows — skład, kolejność i źródło liczb', () => {
     // Kontrola na pętlę: naprawdę się wykonała i naprawdę objęła oba przypadki (ułamek pod
     // kosztem i koszt dokładny). Bez niej „nic nie oblało" mogłoby znaczyć „nic nie badano".
     expect(tested).toBe(buildMenuRows(s, cell).length * 4);
-    s.ore = 12.9;
-    expect(shownAmount(s.ore)).toBe(12);
-    expect(resourceLine(s)).toContain('ruda 12');
+    // Wiersz zasobów podaje CAŁKOWITE. `toContain('ruda 12')` tego NIE wiązało i jest to
+    // zmierzone: napis „ruda 12.9" zawiera „ruda 12", więc pominięcie `shownAmount`
+    // w `resourceLine` przechodziło 53/53, a na ekranie robiło z tego
+    // `ruda 141.66666666666666`. Wiązany jest cały napis plus zakaz ułamka.
+    s.ore = 141.66666666666666;
+    s.storedEnergy = 12.9;
+    expect(resourceLine(s)).toBe('ruda 141 · energia 12');
+    expect(resourceLine(s)).not.toMatch(/\d[.,]\d/);
   });
 });
 
@@ -217,15 +223,44 @@ function typeWithCost(s: SimState, cell: number, cost: number): BuildingType {
 // Siedem powodów — siedem komunikatów. WŁASNOŚĆ, nie siedem przypadków.
 // =========================================================================================
 
-/** Źródło `canBuild` — jedyne miejsce, w którym powody odmowy w ogóle powstają. */
+/**
+ * Źródło `canBuild` — miejsce, w którym powstaje SIEDEM powodów odmowy budowy, czyli
+ * dokładnie te, które opisuje słownik tego zadania.
+ *
+ * Nie jest to jedyne miejsce w repozytorium, gdzie powstaje jakikolwiek powód: `input.ts`
+ * (`refusalReason`, gałąź `DEMOLISH`) ma własne `NOTHING_TO_DEMOLISH` i `CORE_INDESTRUCTIBLE`,
+ * których `canBuild` nie zna, bo rozbiórki nie dotyczy. Rozszerzenie słownika o te dwa
+ * należy do zmiany kształtu meldunków (Zadanie 4) i tutaj świadomie go NIE ma — patrz
+ * `task-3-report.md`, §7.1.
+ */
 const COMMANDS_SOURCE = readFileSync(
   new URL('../../../packages/sim/src/sim/commands.ts', import.meta.url),
   'utf8',
 );
 
-/** Powody ZADEKLAROWANE w `commands.ts`, wyjęte z literałów `reason: '…'`. */
+/**
+ * Powody ZADEKLAROWANE w `commands.ts`, wyjęte z literałów `reason: '…'`.
+ *
+ * **Granica skanu, domknięta GŁOŚNO, a nie po cichu:** rozpoznaje wyłącznie literał. Powód
+ * podany stałą (`reason: EIGHTH`) byłby dla niego niewidzialny i test przeszedłby mimo
+ * braku komunikatu — zmierzone w przeglądzie rundy 1 jako 53/53 zielone. Zamiast udawać,
+ * że skan to rozumie, rzuca: odejście od stylu domowego `commands.ts` ma zatrzymać test
+ * z komunikatem, co poszerzyć, a nie przepuścić powód bez opisu.
+ */
 function declaredReasons(): Set<string> {
-  return new Set([...COMMANDS_SOURCE.matchAll(/reason:\s*'([A-Z_]+)'/g)].map((m) => m[1]));
+  // Zakotwiczone w `ok: false,` — czyli w WARTOŚCI odmowy, a nie w deklaracji typu
+  // (`{ ok: false; reason: string }` ma średnik, więc tu nie wpada).
+  const wartosci = [...COMMANDS_SOURCE.matchAll(/ok:\s*false,\s*reason:\s*([^,}\n]+)/g)]
+    .map((m) => m[1].trim());
+  const nieliteraly = wartosci.filter((v) => !/^'[A-Z_]+'$/.test(v));
+  if (nieliteraly.length > 0) {
+    throw new Error(
+      `declaredReasons: w commands.ts jest powód podany INACZEJ niż literałem — ` +
+        `${JSON.stringify(nieliteraly)}. Ten skan rozumie wyłącznie literały, więc taki ` +
+        'powód przeszedłby bez komunikatu. Poszerz skan albo wróć do literału.',
+    );
+  }
+  return new Set(wartosci.map((v) => v.slice(1, -1)));
 }
 
 /**
@@ -357,31 +392,57 @@ describe('fazy runu — czego canBuild nie widzi', () => {
 // Panel na ekranie — co pokazuje, czego NIE pokazuje i kiedy się przemalowuje
 // =========================================================================================
 
+/**
+ * Cała treść poddrzewa, REKURENCYJNIE — tak, jak `textContent` składa ją w prawdziwym DOM-ie,
+ * a atrapa (zwykłe pole) nie.
+ *
+ * Runda naprawcza 1: poprzednia wersja sklejała `textContent` BEZPOŚREDNICH dzieci korzenia,
+ * więc każda asercja o treści panelu była strażnikiem **jednego poziomu zagnieżdżenia**.
+ * Zmierzone w przeglądzie: żywy odczyt `hp 333 · BEZ PRĄDU` w elemencie zagnieżdżonym
+ * przechodził, a ten sam dopisek w bezpośrednim dziecku oblewał. Po podziale wiersza na
+ * „łapkę" i „powód" (naprawa trafialności wskaźnikiem) CAŁA treść menu leży o poziom głębiej,
+ * więc płaski odczyt nie widziałby już nic.
+ */
+function allText(element: FakeElement): string {
+  return (element.textContent ?? '') + element.children.map(allText).join('');
+}
+
 interface Panel {
   root: FakeElement;
   view: ReturnType<typeof createHudView>;
   chosen: BuildingType[];
+  /** Wiersze menu (pojemniki). */
   rows(): FakeElement[];
+  /** „Łapki" — JEDYNE elementy panelu, które łapią wskaźnik. */
+  picks(): FakeElement[];
   text(): string;
+  /** Zrzut STRUKTURY: tag, klasa, kontrakt wskaźnika i treść na każdej głębokości. */
+  dump(): string;
 }
 
-function makePanel(): Panel {
-  const root = createFakeDocument().createElement('div');
-  const chosen: BuildingType[] = [];
-  const view = createHudView(root as unknown as ElementLike, (type) => chosen.push(type));
+function panelOf(root: FakeElement, view: ReturnType<typeof createHudView>, chosen: BuildingType[]): Panel {
   const rows = (): FakeElement[] => root.children.filter((c) => c.className.startsWith('hud-row'));
   return {
     root,
     view,
     chosen,
     rows,
-    text: () => root.children.map((c) => c.textContent ?? '').join('\n'),
+    picks: () => rows().map((r) => r.children[0]),
+    text: () => allText(root),
+    dump: () => describeElement(root),
   };
+}
+
+function makePanel(): Panel {
+  const root = createFakeDocument().createElement('div');
+  const chosen: BuildingType[] = [];
+  const view = createHudView(root as unknown as ElementLike, (type) => chosen.push(type));
+  return panelOf(root, view, chosen);
 }
 
 function rowText(panel: Panel, type: BuildingType): string {
   const index = playerBuildableTypes().indexOf(type);
-  return panel.rows()[index].textContent ?? '';
+  return allText(panel.rows()[index]);
 }
 
 describe('HudView — panel zasobów i budowy', () => {
@@ -416,7 +477,7 @@ describe('HudView — panel zasobów i budowy', () => {
 
     const panel = makePanel();
     expect(panel.view.update(s, cell, 'BARRICADE')).toBe(true);
-    const before = panel.text();
+    const before = panel.dump();
 
     building.hp = Math.floor(building.hp / 3);
     building.powered = !building.powered;
@@ -424,20 +485,99 @@ describe('HudView — panel zasobów i budowy', () => {
     expect(panel.view.update(s, cell, 'BARRICADE')).toBe(false);
 
     // POŁOWA DRUGA, i to ona niesie tu ciężar: ŚWIEŻY panel, malowany od zera na stanie
-    // z innym `hp` i innym `powered`, ma dać treść identyczną CO DO ZNAKU. Porównanie tylko
-    // wierszy (albo tylko bramki) nie wystarczało i jest to zmierzone: dopisanie
-    // `· hp 333 · BEZ PRĄDU` do wiersza zasobów przechodziło 23/23, bo wiersze menu
-    // faktycznie zostawały te same.
+    // z innym `hp` i innym `powered`, ma dać wyjście identyczne CO DO ZNAKU.
+    //
+    // Porównywany jest ZRZUT STRUKTURY (`describeElement`), nie sklejony tekst jednego
+    // poziomu — i to jest naprawa rundy 1. Poprzednia wersja porównywała `textContent`
+    // bezpośrednich dzieci korzenia, więc granica zakresu była pilnowana na jednym poziomie
+    // zagnieżdżenia: zmierzone w przeglądzie, że duplikat przemycony w `className`
+    // przechodził, a ten sam odczyt `hp` w elemencie zagnieżdżonym przechodził również.
+    // Zrzut obejmuje klasę, treść i kontrakt wskaźnika na KAŻDEJ głębokości, więc obie
+    // drogi przemytu wpadają pod jednego strażnika zamiast pod dwie łatki.
     const fresh = makePanel();
     expect(fresh.view.update(s, cell, 'BARRICADE')).toBe(true);
-    expect(fresh.text()).toBe(before);
+    expect(fresh.dump()).toBe(before);
 
     // Kontrola pozytywna na przyrząd: panel NAPRAWDĘ reaguje na to, co MA nieść — bez niej
-    // „dwie treści są równe" mogłoby znaczyć „treść jest stała", a nie „hp nie przecieka".
+    // „dwa zrzuty są równe" mogłoby znaczyć „zrzut jest stały", a nie „hp nie przecieka".
     s.ore -= 1;
     const moved = makePanel();
     expect(moved.view.update(s, cell, 'BARRICADE')).toBe(true);
-    expect(moved.text()).not.toBe(before);
+    expect(moved.dump()).not.toBe(before);
+  });
+
+  it('13b. [KANAŁ] „nie stać mnie" jest widoczne NA PANELU także wtedy, gdy powód odmowy jest inny', () => {
+    // Na komórce zajętej wszystkie dziewięć pozycji mówi to samo zdanie, więc różnicę między
+    // „kupię po rozbiórce" a „i tak mnie nie stać" niesie WYŁĄCZNIE klasa wiersza. Zmierzone
+    // w przeglądzie rundy 1: zredukowanie `className` wierszy do stałej `'hud-row'` zostawiało
+    // 53/53 zielone — znikał jedyny kanał tej informacji i nie widział tego żaden test.
+    const { s } = richRun();
+    const occupied = builtCell(s);
+
+    s.ore = 1000;
+    const bogaty = makePanel();
+    bogaty.view.update(s, occupied, 'BARRICADE');
+    s.ore = 0;
+    const biedny = makePanel();
+    biedny.view.update(s, occupied, 'BARRICADE');
+
+    // TREŚĆ wierszy menu jest identyczna — i to jest cała trudność tego przypadku. (Wiersz
+    // zasobów oczywiście się różni; on nie mówi, KTÓREJ pozycji brakuje na koncie.)
+    expect(biedny.rows().map(allText)).toEqual(bogaty.rows().map(allText));
+    // …więc wiersze MUSZĄ się różnić strukturalnie, inaczej ta informacja nie dociera nigdzie.
+    expect(biedny.rows().map((r) => describeElement(r))).not.toEqual(
+      bogaty.rows().map((r) => describeElement(r)),
+    );
+  });
+
+  it('13c. [TRAFIALNOŚĆ] panel przepuszcza wskaźnik wszędzie poza wąskimi „łapkami" pozycji', () => {
+    // Panel jest RODZEŃSTWEM płótna, a całe wejście wisi na płótnie — więc każdy element
+    // panelu, który łapie wskaźnik, jest dziurą w sterowaniu. Zmierzone na żywej stronie
+    // przed naprawą: **38,8 % wskazywalnej tarczy planety przy 800×482** (i 0,8 % przy
+    // 1600×900) nie przyjmowało ani wskazania, ani budowy, ani obrotu kamery.
+    //
+    // Pikseli ten test nie widzi (jsdom nie liczy układu) — wiąże KONTRAKT: co w panelu
+    // deklaruje się jako łapiące wskaźnik. Bez tego naprawa nie miałaby strażnika w ogóle.
+    const { s } = richRun();
+    const panel = makePanel();
+    panel.view.update(s, freeHexagonNear(s), 'BARRICADE');
+
+    const wszystkie: FakeElement[] = [];
+    const zbierz = (e: FakeElement): void => {
+      wszystkie.push(e);
+      e.children.forEach(zbierz);
+    };
+    zbierz(panel.root);
+
+    expect(panel.root.style.pointerEvents).toBe('none');
+    const lapiace = wszystkie.filter((e) => e.style.pointerEvents === 'auto');
+    // Dokładnie jedna łapka na pozycję menu — ani jednej więcej.
+    expect(lapiace).toEqual(panel.picks());
+    expect(lapiace.length).toBe(playerBuildableTypes().length);
+    // Zdanie z powodem odmowy jest SZEROKIE i leży na planecie — nie wolno mu łapać.
+    for (const wiersz of panel.rows()) {
+      expect({ klasa: wiersz.className, pe: wiersz.children[1].style.pointerEvents }).toEqual({
+        klasa: wiersz.className,
+        pe: '',
+      });
+    }
+    // Łapka niesie numer, nazwę i koszt; powód odmowy leży POZA nią, bo jest szeroki.
+    expect(allText(panel.picks()[0])).toContain('BARRICADE');
+    expect(allText(panel.picks()[0])).not.toContain(refusalMessage('WRONG_CELL_TYPE'));
+  });
+
+  it('13d. prawy przycisk nad panelem nie otwiera menu przeglądarki', () => {
+    // Prawy przycisk rozbiera (`input.ts`), a `preventDefault` na `contextmenu` jest
+    // zarejestrowany NA PŁÓTNIE — nad panelem by go nie było. Nad „łapką" (jedynym
+    // elementem, który łapie wskaźnik) gracz dostałby natywne menu przeglądarki.
+    const { s } = richRun();
+    const panel = makePanel();
+    panel.view.update(s, freeHexagonNear(s), 'BARRICADE');
+    let prevented = 0;
+    // Zdarzenie z „łapki" bąbelkuje do korzenia — `pointer-events` rozstrzyga TRAFIANIE,
+    // nie propagację — więc nasłuch na korzeniu je łapie.
+    expect(fireOn(panel.root, 'contextmenu', { preventDefault: () => prevented++ })).toBe(1);
+    expect(prevented).toBe(1);
   });
 
   it('14. [BRAMKA] panel przemalowuje się, gdy zmienia się to, co pokazuje — i tylko wtedy', () => {
@@ -547,15 +687,54 @@ describe('HudView — panel zasobów i budowy', () => {
     const panel = makePanel();
     panel.view.update(s, freeHexagonNear(s), 'BARRICADE');
     const types = playerBuildableTypes();
-    const rows = panel.rows();
-    expect(rows.length).toBe(types.length);
-    for (let i = 0; i < rows.length; i++) {
-      expect(fireOn(rows[i], 'click', {})).toBeGreaterThan(0);
+    const picks = panel.picks();
+    expect(picks.length).toBe(types.length);
+    for (let i = 0; i < picks.length; i++) {
+      expect(fireOn(picks[i], 'click', {})).toBeGreaterThan(0);
     }
     // Każdy wiersz musi oddać SWÓJ typ. Nasłuch domykający jedną, wspólną zmienną pętli
     // oddałby dziewięć razy ten sam (klasyczna wada `var`/współdzielonego domknięcia),
     // a test sprawdzający jedno kliknięcie by tego nie zobaczył.
     expect(panel.chosen).toEqual(types);
+  });
+
+  it('16b. [KONTRAKT KLAWISZY] numer przy pozycji to klawisz, który JĄ wybiera', () => {
+    // Panel obiecujący zły klawisz jest gorszy od panelu bez numerów, bo gracz wciska to,
+    // co przeczytał. Zmierzone w przeglądzie rundy 1: `${i + 1}` → `${i}` zostawiało 53/53
+    // zielone. Wiązane jest ZACHOWANIE klawiatury (`attachInput`), nie druga kopia wzoru.
+    const { s } = richRun();
+    const panel = makePanel();
+    const cell = freeHexagonNear(s);
+    const selection = createSelection();
+    const keys = createFakeEventTarget();
+    const canvas = createFakeCanvas(CANVAS_RECT.width, CANVAS_RECT.height, CANVAS_RECT);
+    const handle = attachInput({
+      planet,
+      camera: createCamera(canvas, planet.radius).object,
+      canvas,
+      keys,
+      sim: new Sim(planet, DEFAULT_RUN),
+      selection,
+      focusOn: () => {},
+      report: () => {},
+      setUnitShading: () => {},
+    });
+
+    for (let n = 1; n <= playerBuildableTypes().length; n++) {
+      fireOn(keys, 'keydown', {
+        code: `Digit${n}`, key: '', shiftKey: false, preventDefault: () => {},
+      });
+      panel.view.update(s, cell, selection.selectedType);
+      // Pozycja, którą panel oznaczył jako wybraną, ma być tą, której napis zaczyna się od
+      // wciśniętej cyfry.
+      const wybrany = panel.rows().filter((r) => r.className.includes('hud-row--selected'));
+      expect({ n, ile: wybrany.length }).toEqual({ n, ile: 1 });
+      expect({ n, napis: allText(wybrany[0]).startsWith(`${n} `) }).toEqual({ n, napis: true });
+      expect({ n, typ: allText(wybrany[0]).includes(selection.selectedType) }).toEqual({
+        n, typ: true,
+      });
+    }
+    handle.detach();
   });
 });
 
@@ -575,7 +754,9 @@ interface Rig {
   sim: Sim;
   root: FakeElement;
   rows(): FakeElement[];
+  picks(): FakeElement[];
   text(): string;
+  dump(): string;
   advance(ms: number): void;
 }
 
@@ -611,6 +792,7 @@ function makeRig(): Rig {
     now: () => clock,
     log: () => {},
   });
+  const rows = (): FakeElement[] => root.children.filter((c) => c.className.startsWith('hud-row'));
   return {
     client,
     camera,
@@ -618,8 +800,10 @@ function makeRig(): Rig {
     keys,
     sim,
     root,
-    rows: () => root.children.filter((c) => c.className.startsWith('hud-row')),
-    text: () => root.children.map((c) => c.textContent ?? '').join('\n'),
+    rows,
+    picks: () => rows().map((r) => r.children[0]),
+    text: () => allText(root),
+    dump: () => describeElement(root),
     advance: (ms: number) => {
       clock += ms;
     },
@@ -687,8 +871,8 @@ describe('wireClient — panel na ekranie gracza', () => {
     const buildingsBefore = rig.sim.state.buildings.map((b) => b?.type ?? null).join(',');
     const paths: [string, () => void][] = [
       ['hud.update', () => void rig.client.hud.update(rig.sim.state, cell, 'PYLON')],
-      ['klik w pozycję menu', () => void fireOn(rig.rows()[3], 'click', {})],
-      ['klik w pozycję już wybraną', () => void fireOn(rig.rows()[3], 'click', {})],
+      ['klik w pozycję menu', () => void fireOn(rig.picks()[3], 'click', {})],
+      ['klik w pozycję już wybraną', () => void fireOn(rig.picks()[3], 'click', {})],
     ];
     for (const [name, fire] of paths) {
       fire();
@@ -710,7 +894,7 @@ describe('wireClient — panel na ekranie gracza', () => {
     rig.client.frame();
 
     const types = playerBuildableTypes();
-    fireOn(rig.rows()[5], 'click', {});
+    fireOn(rig.picks()[5], 'click', {});
     expect(rig.client.selection.selectedType).toBe(types[5]);
     expect(framesUntilOverlay(rig)).toContain(`wybrany typ: ${types[5]}`);
 
@@ -719,9 +903,52 @@ describe('wireClient — panel na ekranie gracza', () => {
     // powtarzałaby to, co i tak widzi podświetlone.
     fireOn(rig.keys, 'keydown', { code: 'Space', key: '', shiftKey: false, preventDefault: () => {} });
     expect(framesUntilOverlay(rig)).toContain('powrót do Core');
-    fireOn(rig.rows()[5], 'click', {});
+    fireOn(rig.picks()[5], 'click', {});
     expect(framesUntilOverlay(rig)).toContain('powrót do Core');
     expect(rig.client.selection.selectedType).toBe(types[5]);
+  });
+
+  it('19b. [POZYTYWNA] wybrany typ dociera ze spięcia NA PANEL, a nie tylko do `Selection`', () => {
+    // Zmierzone w przeglądzie rundy 1: podstawienie w `client.ts` stałej zamiast
+    // `selection.selectedType` zostawiało 53/53 zielone — testy pytały `Selection`, a nie
+    // panel, więc spięcie mogło podawać panelowi cokolwiek.
+    const rig = makeRig();
+    aimAt(rig.camera, freeHexagonNear(rig.sim.state));
+    rig.advance(16);
+    rig.client.frame();
+    const types = playerBuildableTypes();
+
+    // Dwa RÓŻNE typy, bo stała trafiłaby w jeden z nich przypadkiem.
+    for (const index of [2, 7]) {
+      fireOn(rig.picks()[index], 'click', {});
+      rig.advance(16);
+      rig.client.frame();
+      const wybrane = rig.rows().filter((r) => r.className.includes('hud-row--selected'));
+      expect({ index, ile: wybrane.length }).toEqual({ index, ile: 1 });
+      expect({ index, typ: allText(wybrane[0]).includes(types[index]) }).toEqual({
+        index, typ: true,
+      });
+    }
+  });
+
+  it('20b. detach() odpina TAKŻE panel — po nim kliknięcie w pozycję menu nic nie wybiera', () => {
+    // Zmierzone w przeglądzie rundy 1: usunięcie `hud.detach()` ze spięcia zostawiało 53/53
+    // zielone. `detach` istnieje po to, żeby po odpięciu klienta nic nie zostało przy życiu —
+    // w Fazie 5 (przełączanie meczów) martwy nasłuch trzymałby stary `Selection`.
+    const rig = makeRig();
+    aimAt(rig.camera, freeHexagonNear(rig.sim.state));
+    rig.advance(16);
+    rig.client.frame();
+    const types = playerBuildableTypes();
+
+    // Kontrola: PRZED odpięciem kliknięcie działa — inaczej „po odpięciu nic się nie dzieje"
+    // znaczyłoby tyle, co „nigdy się nic nie działo".
+    expect(fireOn(rig.picks()[4], 'click', {})).toBe(1);
+    expect(rig.client.selection.selectedType).toBe(types[4]);
+
+    rig.client.detach();
+    expect(fireOn(rig.picks()[6], 'click', {})).toBe(0);
+    expect(rig.client.selection.selectedType).toBe(types[4]);
   });
 
   it('20. [ŚWIEŻOŚĆ] każda zmiana wskazania dociera na panel — 300 ustawień kamery', () => {
