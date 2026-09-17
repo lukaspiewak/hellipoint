@@ -107,6 +107,75 @@ export function createFakeEventTarget(): FakeListenerTarget {
   return fake as unknown as FakeListenerTarget;
 }
 
+/**
+ * Tyle z `HTMLElement`, ile odczytuje i zapisuje HUD (`apps/client/src/hud.ts`,
+ * `ElementLike`) — plus `children` do wglądu testu.
+ *
+ * Dołożone w Fazie 2C, Zadanie 3: panel zasobów i budowy jest PIERWSZYM UI w projekcie,
+ * a `vitest.config.ts` nie ustawia `environment: 'jsdom'` (i nie powinien — patrz
+ * `camera.test.ts`). Tu, a nie w drugim module atrap: rejestr nasłuchów jest ten sam, co
+ * płótna i `createFakeEventTarget`, więc `fireOn` działa na pozycji menu dokładnie tak samo
+ * jak na płótnie — a nie każdy rodzaj atrapy ma własne, rozjeżdżające się `fireOn`.
+ *
+ * `children` NIE jest DOM-owym `HTMLCollection` i nie ma nim być: to zwykła tablica
+ * w kolejności `appendChild`, po to, żeby test mógł zapytać „co panel faktycznie zbudował"
+ * bez przeglądarki. Kod produkcyjny tego pola nie widzi — `ElementLike` go nie deklaruje.
+ */
+export interface FakeElement {
+  textContent: string | null;
+  className: string;
+  readonly ownerDocument: FakeDocument;
+  appendChild(child: FakeElement): void;
+  addEventListener(type: string, listener: (event: never) => void): void;
+  removeEventListener(type: string, listener: (event: never) => void): void;
+  readonly children: FakeElement[];
+  readonly tagName: string;
+}
+
+/** Tyle z `Document`, ile potrzebuje HUD: fabryka elementów. */
+export interface FakeDocument {
+  createElement(tag: string): FakeElement;
+}
+
+/**
+ * Atrapa dokumentu — każda `createElement` daje element wskazujący z powrotem NA TEN
+ * dokument. Tożsamość jest tu istotna: `createHudView` bierze fabrykę z `root.ownerDocument`,
+ * więc test, w którym element i dokument nie są spokrewnione, mierzyłby inny szew niż
+ * przeglądarka.
+ */
+export function createFakeDocument(): FakeDocument {
+  const doc: FakeDocument = {
+    createElement(tag: string): FakeElement {
+      const events = createFakeEventTarget() as unknown as {
+        [LISTENERS]: Map<string, Listener[]>;
+        addEventListener: (type: string, listener: Listener) => void;
+        removeEventListener: (type: string, listener: Listener) => void;
+      };
+      const children: FakeElement[] = [];
+      const element = {
+        tagName: tag.toUpperCase(),
+        textContent: null as string | null,
+        className: '',
+        ownerDocument: doc,
+        children,
+        [LISTENERS]: events[LISTENERS],
+        addEventListener: events.addEventListener,
+        removeEventListener: events.removeEventListener,
+        appendChild(child: FakeElement): void {
+          children.push(child);
+        },
+      };
+      return element as unknown as FakeElement;
+    },
+  };
+  return doc;
+}
+
+/** Skrót: świeży dokument i jego korzeń, czyli dokładnie to, co dostaje `createHudView`. */
+export function createFakeElement(tag = 'div'): FakeElement {
+  return createFakeDocument().createElement(tag);
+}
+
 export function createFakeCanvas(
   width = 800,
   height = 600,

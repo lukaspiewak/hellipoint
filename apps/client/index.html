@@ -16,10 +16,93 @@
         width: 100vw;
         height: 100vh;
       }
+
+      /*
+        PANEL ZASOBÓW I BUDOWY (Faza 2C, Zadanie 3).
+
+        Wygląd mieszka TUTAJ, a nie w `hud.ts`: tam wylądowałby jako kilkanaście liczb
+        `[WYGLĄD]` w napisach ze stylem, których nie da się obejrzeć razem. `hud.ts` ustawia
+        wyłącznie klasy i treść.
+
+        Wysokość odniesienia to okno ~480 px — tak samo jak w `scene-gate.html`, i z tego
+        samego powodu: przy 1080 px wada układu jest niewidoczna, a w Fazie 2B kontrolki
+        schowane pod krawędzią przewijania unieważniły cztery z pięciu pomiarów bramki.
+        Panel ma dziewięć pozycji i dwie linie nagłówka, czyli ~190 px — mieści się bez
+        przewijania; `max-height`/`overflow` są tu wyłącznie jako zderzak.
+
+        Lewy DÓŁ, a nie góra: górny lewy róg zajmuje nakładka diagnostyczna (liczniki
+        budżetu), a panel gracza nie ma z nią konkurować o to samo miejsce.
+      */
+      #hud {
+        position: fixed;
+        left: 8px;
+        bottom: 8px;
+        z-index: 10;
+        max-width: calc(100vw - 16px);
+        max-height: calc(100vh - 16px);
+        overflow: auto;
+        padding: 6px 8px;
+        border-radius: 4px;
+        background: rgba(8, 12, 18, 0.82);
+        color: #e8f0ff;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        /*
+          Kolumny menu są wyrównane spacjami (`padEnd`/`padStart` w `hud.ts`), więc krój MUSI
+          być o stałej szerokości znaku, a spacje nie mogą być zwijane.
+
+          `pre-wrap`, nie `pre`, i to jest naprawa ZMIERZONA NA EKRANIE przy oknie 380 px:
+          pod `pre` wiersz „9 EVACUATION_MODULE 300 jeszcze zamknięty…" ma ~84 znaki (~605 px)
+          i wychodził poza `max-width`, więc powód odmowy chował się za poziomym paskiem
+          przewijania. To jest DOKŁADNIE wada Fazy 2B, przez którą kontrolki pod krawędzią
+          przewijania unieważniły cztery z pięciu pomiarów bramki czytelności — tyle że tym
+          razem chowała się przyczyna, po którą całe to zadanie istnieje.
+
+          `pre-wrap` zachowuje spacje (więc kolumny dalej się zgadzają), a przy wąskim oknie
+          zawija zdanie odmowy do następnej linii zamiast je ucinać. Przy szerokości, na której
+          wiersz się mieści, nic się nie zmienia.
+        */
+        white-space: pre-wrap;
+        user-select: none;
+      }
+      #hud .hud-resources {
+        font-weight: 700;
+      }
+      #hud .hud-headline {
+        color: #9fb2cc;
+        margin-bottom: 4px;
+      }
+      /* Faza inna niż RUNNING: symulacja kasuje kolejkę komend, więc sterowanie NAPRAWDĘ
+         przestaje działać. Ostrzegawczy kolor, żeby nikt nie szukał usterki w myszy. */
+      #hud .hud-headline--over {
+        color: #ff9a76;
+        font-weight: 700;
+      }
+      #hud .hud-row {
+        padding: 0 4px;
+        cursor: pointer;
+        border-left: 2px solid transparent;
+      }
+      #hud .hud-row:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+      #hud .hud-row--refused {
+        color: #8b97ab;
+      }
+      /* Nie stać gracza — kanał NIEZALEŻNY od powodu odmowy, bo `canBuild` zwraca powód
+         PIERWSZY: na komórce zajętej pozycja za 300 wygląda inaczej niż ta za 8, choć obie
+         mówią „zajęte". */
+      #hud .hud-row--poor {
+        border-left-color: #d08a3c;
+      }
+      #hud .hud-row--selected {
+        background: rgba(120, 180, 255, 0.18);
+        color: #ffffff;
+      }
     </style>
   </head>
   <body>
     <canvas id="app"></canvas>
+    <div id="hud"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

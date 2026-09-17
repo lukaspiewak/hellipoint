@@ -20,6 +20,7 @@ import {
 } from '@heliopolis/render';
 import {
   createFakeCanvas,
+  createFakeElement,
   createFakeEventTarget,
   fireOn,
 } from '../../../packages/render/test/support/fakeCanvas.js';
@@ -1046,6 +1047,10 @@ function makeClientRig(): {
     },
     canvas,
     keys,
+    // Panel zasobów i budowy (Zadanie 3) — atrapa elementu z `fakeCanvas.ts`. Rig tego pliku
+    // go nie bada (ma własny plik, `hud.test.ts`), ale `wireClient` bez niego się nie spina,
+    // i tak ma być: HUD opcjonalny znaczyłby, że usunięcie go z rozruchu jest niewidoczne.
+    hudRoot: createFakeElement(),
     run: DEFAULT_RUN,
     now: () => clock,
     log: () => {},
@@ -1169,6 +1174,7 @@ describe('wireClient — spięcie aplikacji, bez rozruchu DOM', () => {
       makeScene: () => scene,
       makeSim: () => sim,
       canvas,
+      hudRoot: createFakeElement(),
       run: DEFAULT_RUN, now: () => 0, log: () => {},
     };
     expect(() => wireClient({ ...deps, keys: canvas as unknown as ListenerTarget })).toThrow(RangeError);

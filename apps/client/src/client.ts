@@ -6,6 +6,7 @@ import {
   type UnitShadingMode,
 } from '@heliopolis/render';
 import {
+  BUILDINGS,
   createPlanet,
   lightFieldInto,
   sunDirection,
@@ -17,6 +18,7 @@ import {
   type Unit,
   type Vec3,
 } from '@heliopolis/sim';
+import { createHudView, type ElementLike, type HudView } from './hud.js';
 import {
   attachInput,
   createSelection,
@@ -95,6 +97,15 @@ export interface ClientDeps {
   readonly canvas: HTMLCanvasElement;
   /** Źródło zdarzeń klawiatury — w przeglądarce `window`. NIE płótno, patrz straż niżej. */
   readonly keys: ListenerTarget;
+  /**
+   * Pojemnik, w którym HUD buduje panel — w przeglądarce `<div id="hud">` z `index.html`.
+   *
+   * WYMAGANY, nie opcjonalny, i to jest ta sama lekcja, co `focusOn`/`setUnitShading`
+   * o piętro wyżej: pole opcjonalne znaczy, że USUNIĘCIE HUD z rozruchu zostawia cały pakiet
+   * zielony, bo test po prostu go nie podaje. Skoro panel ma być, to jego brak ma być
+   * błędem typu, a nie cichą utratą całego UI.
+   */
+  readonly hudRoot: ElementLike;
   readonly run: RunConfig;
   /** Zegar ścienny; wstrzykiwany, żeby test nie zależał od `performance` ani od upływu czasu. */
   now(): number;
@@ -103,12 +114,14 @@ export interface ClientDeps {
 }
 
 export interface Client {
-  /** Jedna klatka: symulacja, oświetlenie, wskazanie, render. Zwraca tekst nakładki. */
+  /** Jedna klatka: symulacja, oświetlenie, wskazanie, HUD, render. Zwraca tekst nakładki. */
   frame(): string;
   /** Prostokąt płótna zmienił się (zdarzenie `resize`) — patrz `attachInput`. */
   invalidateCanvasRect(): void;
   detach(): void;
   readonly selection: Selection;
+  /** Panel zasobów i budowy — wystawiony, żeby test mierzył ten sam, który widzi gracz. */
+  readonly hud: HudView;
 }
 
 /** Ile klatek trzyma okno kroczące licznika. */
@@ -156,6 +169,20 @@ export function wireClient(deps: ClientDeps): Client {
   let lastMessage = 'lewy: buduj · prawy: rozbierz · 1-9: typ · spacja: wróć do Core';
   let shadingMode: UnitShadingMode = 'flat';
 
+  /**
+   * Panel budowy. Kliknięcie w pozycję menu **wybiera typ i nic więcej** — do kolejki komend
+   * prowadzi dalej wyłącznie kliknięcie w planetę (`attachInput`), więc HUD nie staje się
+   * drugą, krótszą drogą do świata.
+   *
+   * PIERWSZY konsument odpowiedzi `chooseType`: meldunek leci wtedy, gdy typ faktycznie się
+   * zmienił. Bez tego kliknięcie w już wybraną pozycję zasypywałoby linijkę gracza
+   * powtórzeniem tego, co i tak widzi podświetlone.
+   */
+  const hud = createHudView(deps.hudRoot, (type) => {
+    if (!selection.chooseType(type)) return;
+    lastMessage = `wybrany typ: ${type} (${BUILDINGS[type].costOre} rudy)`;
+  });
+
   const input = attachInput({
     planet,
     camera: scene.camera.object,
@@ -194,16 +221,22 @@ export function wireClient(deps: ClientDeps): Client {
   let lastFrameAt = deps.now();
   let simAccumulator = 0;
 
+  /**
+   * Nakładka DIAGNOSTYCZNA — liczniki budżetu i ostatni meldunek. To nie jest HUD gracza.
+   *
+   * Ruda, wybrany typ i wskazana komórka **wyprowadziły się stąd do panelu** (`hud.ts`)
+   * w Zadaniu 3. Zostawienie ich w obu miejscach dałoby dwa napisy na jeden fakt, w dwóch
+   * różnych zaokrągleniach (`toFixed(0)` zaokrągla, panel podaje podłogę — patrz
+   * `shownAmount`), czyli grę pokazującą „8 rudy" obok pozycji za 8, której nie da się
+   * kupić. Jedna liczba ma jedno miejsce.
+   */
   function hudText(state: SimState): string {
     const samples = frameTimes.snapshot();
-    const cell = selection.selectedCell;
     return (
       `render: mediana ${median(samples).toFixed(3)} ms · p95 ${percentile(samples, 95).toFixed(3)} ms ` +
       `(n=${samples.length}) — budżet 8 ms\n` +
       `symulacja (osobny budżet): mediana ${median(simTimes.snapshot()).toFixed(3)} ms · ` +
-      `tick ${state.tick} · cykl ${sim.cycle} · ${state.phase}\n` +
-      `ruda ${state.ore.toFixed(0)} · jednostek ${state.units.length} · ` +
-      `typ [1-9]: ${selection.selectedType} · wskazana komórka: ${cell === null ? '—' : cell}\n` +
+      `tick ${state.tick} · cykl ${sim.cycle} · ${state.phase} · jednostek ${state.units.length}\n` +
       `${lastMessage}   (cieniowanie Shift+1/2/3: ${shadingMode})`
     );
   }
@@ -212,11 +245,13 @@ export function wireClient(deps: ClientDeps): Client {
 
   return {
     selection,
+    hud,
     invalidateCanvasRect(): void {
       input.invalidateCanvasRect();
     },
     detach(): void {
       input.detach();
+      hud.detach();
     },
     frame(): string {
       const frameStart = deps.now();
@@ -249,6 +284,13 @@ export function wireClient(deps: ClientDeps): Client {
       // sekundy po zatrzymaniu myszy i przez cały ten czas ten sam piksel wskazuje kolejne
       // komórki. Wychodzi bez pracy, gdy ani kursor, ani kamera nie drgnęły.
       input.refreshPointedCell();
+
+      // Panel odświeżany CO KLATKĘ, ale przemalowujący się wyłącznie wtedy, gdy zmienił się
+      // choć jeden znak z tego, co pokazuje — inaczej `buildMenuRows` alokowałoby dziewięć
+      // obiektów i tablicę sześćdziesiąt razy na sekundę. Bramka i jej uzasadnienie:
+      // `HudView.update` w `hud.ts`. Wskazanie i typ wchodzą tu WARTOŚCIĄ, prosto z
+      // `Selection` — HUD nie pamięta ani jednego, ani drugiego.
+      hud.update(sim.state, selection.selectedCell, selection.selectedType);
 
       // Render CZYTA stan symulacji i nigdy go nie zapisuje (`global-constraints.md`).
       scene.updateBuildings(sim.state.buildings, renderSeconds);

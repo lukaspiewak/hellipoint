@@ -1,4 +1,10 @@
-import { canBuild, stateHash, type Planet, type SimState } from '@heliopolis/sim';
+import {
+  canBuild,
+  stateHash,
+  type BuildingType,
+  type Planet,
+  type SimState,
+} from '@heliopolis/sim';
 
 /**
  * Wspólni pomocnicy testowi `apps/client` — pisani przy PIERWSZYM użyciu, ale od razu tutaj,
@@ -24,12 +30,29 @@ import { canBuild, stateHash, type Planet, type SimState } from '@heliopolis/sim
  *   bo test oparty na `-1` szukałby potem defektu tam, gdzie go nie ma.
  */
 export function freeHexagonNear(s: SimState): number {
+  return buildableNear(s, 'BARRICADE');
+}
+
+/**
+ * Uogólnienie `freeHexagonNear` na dowolny typ — pentagon dla `GEOTHERMAL_CAP`, złoże dla
+ * `EXTRACTOR`. Dopisane w Zadaniu 3 (menu budowy musi zobaczyć KAŻDY rodzaj komórki,
+ * nie tylko pusty heksagon).
+ *
+ * Kontrakt niesie `canBuild`, nie własne sprawdzenie „czy to pentagon i czy pusty" —
+ * z tego samego powodu, co wyżej: test, który sam decyduje, co jest budowalne, przestaje
+ * mierzyć symulację w chwili, gdy dojdzie ósmy powód odmowy.
+ *
+ * **Uwaga wołającego:** wynik zależy od RUDY w stanie, bo `canBuild` sprawdza ją na końcu.
+ * Wołaj po ustawieniu `s.ore`, inaczej dla droższych typów dostaniesz `RangeError` zamiast
+ * komórki. Błąd niesie tę liczbę, żeby nikt nie szukał wady w planecie.
+ */
+export function buildableNear(s: SimState, type: BuildingType): number {
   const visited = new Uint8Array(s.planet.cells.length);
   const queue: number[] = [s.planet.startCell];
   visited[s.planet.startCell] = 1;
   for (let head = 0; head < queue.length; head++) {
     const id = queue[head];
-    if (canBuild(s, id, 'BARRICADE').ok) return id;
+    if (canBuild(s, id, type).ok) return id;
     for (const neighbor of s.planet.cells[id].neighbors) {
       if (visited[neighbor] === 0) {
         visited[neighbor] = 1;
@@ -38,9 +61,25 @@ export function freeHexagonNear(s: SimState): number {
     }
   }
   throw new RangeError(
-    `freeHexagonNear: brak komórki, na której canBuild(s, id, 'BARRICADE') zwraca ok — ` +
+    `buildableNear: brak komórki, na której canBuild(s, id, '${type}') zwraca ok — ` +
       `przeszukano wszystkie ${s.planet.cells.length} komórek (ruda: ${s.ore}).`,
   );
+}
+
+/**
+ * Pierwsza komórka, na której COŚ stoi — w świeżym runie jest to CORE na `startCell`
+ * (`Sim` zasiewa go bezpośrednim zapisem, `loop.ts`).
+ *
+ * Szukane po stanie, nie przez `planet.startCell`: menu ma pokazywać `CELL_OCCUPIED` dla
+ * KAŻDEJ zabudowanej komórki, a nie dla jednej wyróżnionej, i test, który celuje wprost
+ * w komórkę startową, nie odróżniłby tych dwóch reguł.
+ */
+export function builtCell(s: SimState): number {
+  const id = s.buildings.findIndex((b) => b !== null);
+  if (id < 0) {
+    throw new RangeError('builtCell: w stanie nie ma ANI JEDNEGO budynku — nawet CORE.');
+  }
+  return id;
 }
 
 /**

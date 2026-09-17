@@ -1,6 +1,7 @@
 import { createScene, RENDER_VERSION } from '@heliopolis/render';
 import { DEFAULT_RUN, Sim } from '@heliopolis/sim';
 import { wireClient, type ListenerTargetLike } from './client.js';
+import type { ElementLike } from './hud.js';
 
 /**
  * ROZRUCH — i nic więcej.
@@ -29,11 +30,18 @@ if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('apps/client: brak <canvas id="app"> w index.html');
 }
 
-const hud = document.createElement('div');
-hud.style.cssText =
+// Pojemnik panelu — z `index.html`, tym samym idiomem co płótno. Nie tworzony tutaj, bo
+// cały jego wygląd (układ, kolory, wyrównanie kolumn) mieszka w arkuszu obok znacznika.
+const hudRoot = document.querySelector('#hud');
+if (!(hudRoot instanceof HTMLElement)) {
+  throw new Error('apps/client: brak <div id="hud"> w index.html');
+}
+
+const diagnostics = document.createElement('div');
+diagnostics.style.cssText =
   'position:fixed;top:8px;left:8px;padding:4px 8px;background:rgba(0,0,0,0.55);' +
   'color:#e8f0ff;font:12px/1.4 monospace;white-space:pre;pointer-events:none;z-index:10;';
-document.body.appendChild(hud);
+document.body.appendChild(diagnostics);
 
 const client = wireClient({
   // Seed na sztywno, ten sam co we wszystkich testach i pomiarach gałęzi — to, co widać
@@ -45,6 +53,10 @@ const client = wireClient({
   // `window`, nie płótno: `<canvas>` bez `tabindex` nigdy nie dostaje ogniskowej.
   // `wireClient` odrzuca tu płótno głośnym błędem — patrz straż w `client.ts`.
   keys: window as unknown as ListenerTargetLike,
+  // Rzutowanie w JEDNYM miejscu, tym samym idiomem co `keys` wyżej: `HudView` czyta
+  // z elementu dokładnie tyle, ile obiecuje `ElementLike`, i to jest cały powód, dla którego
+  // panel daje się wykonać na atrapie bez przeglądarki.
+  hudRoot: hudRoot as unknown as ElementLike,
   run: DEFAULT_RUN,
   now: () => performance.now(),
   log: (message) => console.log(message),
@@ -56,7 +68,7 @@ const client = wireClient({
 window.addEventListener('resize', () => client.invalidateCanvasRect());
 
 function tick(): void {
-  hud.textContent = client.frame();
+  diagnostics.textContent = client.frame();
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
