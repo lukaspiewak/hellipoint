@@ -1113,16 +1113,24 @@ describe('bramka a krata komórek (Faza 2B, Zadanie 2 — runda naprawcza 1)', (
     // do kontroli ANI JEDNEGO widocznego obiektu.
     expect(inControl.size).toBe(2);
 
-    // WŁASNOŚĆ 3: w trybie ocenianym widać osiem — teren, krata, trzy warstwy budynku
-    // (bryła, rdzeń, pierścień alarmu), dwie warstwy jednostki (tarcza, rdzeń) i znacznik.
-    // Liczba WPISANA WPROST, nie „co najmniej": dołożenie czegokolwiek do pełnej sceny ma
-    // przejść przez ten test, bo dokładnie tego dotyczy własność 1.
-    expect(inThreshold.size).toBe(8);
+    // WŁASNOŚĆ 3: w trybie ocenianym widać dziewięć — teren, krata, CZTERY warstwy budynku
+    // (bryła, rdzeń, przerywana obręcz alarmu, wycinki ją domykające), dwie warstwy jednostki
+    // (tarcza, rdzeń) i znacznik. Liczba WPISANA WPROST, nie „co najmniej": dołożenie
+    // czegokolwiek do pełnej sceny ma przejść przez ten test, bo dokładnie tego dotyczy
+    // własność 1. (Ósma warstwa doszła w Zadaniu 4 Fazy 2C — patrz `buildingMesh.ts`.)
+    expect(inThreshold.size).toBe(9);
 
     // KONTROLA POZYTYWNA NA SAM POMIAR: te same warstwy, które gasną, muszą być tymi, które
-    // bramka faktycznie wystawia — inaczej „8" mogłoby pochodzić z ośmiu innych obiektów.
+    // bramka faktycznie wystawia — inaczej „9" mogłoby pochodzić z dziewięciu innych obiektów.
     const world = gate.world!;
-    for (const object of [world.buildings.shell, world.buildings.core, world.buildings.alert, world.units.body, world.units.core]) {
+    for (const object of [
+      world.buildings.shell,
+      world.buildings.core,
+      world.buildings.alert,
+      world.buildings.link,
+      world.units.body,
+      world.units.core,
+    ]) {
       expect(inThreshold.has(object), 'warstwa pełnej sceny nie jest widoczna w trybie ocenianym').toBe(true);
       expect(inControl.has(object), 'warstwa pełnej sceny PRZETRWAŁA przełączenie na kontrolę').toBe(false);
     }

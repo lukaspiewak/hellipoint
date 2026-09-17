@@ -242,14 +242,19 @@ describe('createSceneWithRenderer — dispose() zwalnia WSZYSTKO, co posiada', (
     scene.dispose();
 
     expect(cameraDisposeSpy).toHaveBeenCalledTimes(1);
-    // SIEDEM geometrii i SIEDEM materiałów od Fazy 2B, Zadanie 4: teren
-    // (`MeshBasicMaterial`), obrysy komórek (`LineBasicMaterial`, dziecko siatki terenu),
-    // trzy warstwy budynków — bryła, rdzeń i pierścień alarmu (`buildingMesh.ts`) — oraz
-    // dwie warstwy jednostek: tarcza i rdzeń (`unitMesh.ts`). Liczba jest tu wpisana wprost,
+    // OSIEM geometrii i SIEDEM materiałów: teren (`MeshBasicMaterial`), obrysy komórek
+    // (`LineBasicMaterial`, dziecko siatki terenu), CZTERY warstwy budynków — bryła, rdzeń,
+    // przerywana obręcz alarmu i wycinki ją domykające (`buildingMesh.ts`) — oraz dwie
+    // warstwy jednostek: tarcza i rdzeń (`unitMesh.ts`). Liczba jest tu wpisana wprost,
     // a nie wyprowadzona z czegokolwiek w kodzie produkcyjnym — dołożenie kolejnego zasobu
     // bez dołożenia mu `dispose()` ma ten test OBLAĆ, a nie przesunąć wraz z nim. (Do
-    // Zadania 3 stały tu dwójki, do Zadania 4 piątki.)
-    expect(geometryDisposeSpy).toHaveBeenCalledTimes(7);
+    // Zadania 3 Fazy 2B stały tu dwójki, do jej Zadania 4 piątki, do Zadania 4 Fazy 2C
+    // siódemki.)
+    //
+    // Geometrii jest o JEDNĄ WIĘCEJ niż materiałów i to jest celowe: obie połowy obręczy
+    // dzielą jeden `alertMaterial`, bo ich barwy siedzą w atrybucie `color` geometrii —
+    // drugi materiał byłby drugim miejscem, w którym dałoby się je po cichu rozjechać.
+    expect(geometryDisposeSpy).toHaveBeenCalledTimes(8);
     expect(materialDisposeSpy).toHaveBeenCalledTimes(7);
     expect(fakeRenderer.disposeCalls).toBe(1);
 
@@ -320,12 +325,18 @@ describe('createSceneWithRenderer — PULS pierścienia alarmu dochodzi z zegara
     const offset = alertPulse(planet.radius, peakSeconds);
     expect(offset).toBeGreaterThan(0);
 
-    scene.updateBuildings(list, peakSeconds);
+    scene.updateBuildings(list, undefined, peakSeconds);
     const pulsed = instanceMatrixSnapshot(lastScene);
     expect(pulsed.length).toBe(resting.length);
 
     const changed = pulsed.filter((entry, i) => JSON.stringify(entry.matrices) !== JSON.stringify(resting[i].matrices));
-    expect(changed.length, 'puls ma ruszyć DOKŁADNIE jedną warstwę sceny').toBe(1);
+    // DWIE warstwy, nie jedna — od Zadania 4 Fazy 2C obręcz alarmu jest złożona z dwóch:
+    // przerywanej (`alert`, pod każdym budynkiem bez prądu) i domykającej ją (`link`, tylko
+    // tam, gdzie budynek został w sieci). Obie są TĄ SAMĄ obręczą, więc obie muszą pulsować
+    // razem; gdyby pulsowała jedna, przerwy oddychałyby szerokością i kanał przyczyny
+    // migotałby razem z alarmem. Liczba jest nadal PRZYPIĘTA: puls nie ma prawa ruszyć
+    // terenu ani jednostek.
+    expect(changed.length, 'puls ma ruszyć DOKŁADNIE obie połowy obręczy alarmu').toBe(2);
 
     // Warstwa odniesienia: ta sama konstrukcja i ten sam CIĄG wywołań, ale z wychyleniem
     // podanym wprost. Gdyby scena podała inne wychylenie (zero, stłumione, albo surowe
@@ -333,14 +344,17 @@ describe('createSceneWithRenderer — PULS pierścienia alarmu dochodzi z zegara
     // bo 0,8 leży daleko ponad sufitem 0,13.
     const reference = createBuildingLayer(planet, buildPlanetGeometry(planet));
     reference.update(list);
-    reference.update(list, offset);
-    expect(changed[0].matrices).toEqual(Array.from(reference.alert.instanceMatrix.array));
+    reference.update(list, undefined, offset);
+    expect(changed.map((e) => e.matrices)).toEqual([
+      Array.from(reference.alert.instanceMatrix.array),
+      Array.from(reference.link.instanceMatrix.array),
+    ]);
     reference.dispose();
 
     // PARA, połówka „ma PRZEJŚĆ": jawne zero jest tym samym, co brak zegara — co do bitu.
     // Bez tej połówki test przechodziłby także dla sceny, która ignoruje argument i pulsuje
     // ZAWSZE, czyli dla wywołującego bez zegara (zrzut klatki) nie byłaby deterministyczna.
-    scene.updateBuildings(list, 0);
+    scene.updateBuildings(list, undefined, 0);
     const explicitZero = instanceMatrixSnapshot(lastScene);
     expect(explicitZero.map((e) => e.matrices)).toEqual(resting.map((e) => e.matrices));
 

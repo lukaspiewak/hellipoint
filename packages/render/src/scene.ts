@@ -46,7 +46,11 @@ export interface PlanetScene {
    * Że produkcja NAPRAWDĘ przekazuje warstwie niezerowe wychylenie, wiąże test w
    * `scene.test.ts` — bez niego podmiana ciała na `buildings.update(list, 0)` była zielona.
    */
-  updateBuildings(buildings: readonly (Building | null)[], alertPulseSeconds?: number): void;
+  updateBuildings(
+    buildings: readonly (Building | null)[],
+    outage?: Uint8Array,
+    alertPulseSeconds?: number,
+  ): void;
   /**
    * Przepisuje warstwę jednostek (Faza 2B, Zadanie 4) z bieżącego `SimState.units`.
    * OSOBNO od `render` z tego samego powodu formalnego co `updateBuildings` — podpis
@@ -196,10 +200,14 @@ export function createSceneWithRenderer(
       planetMesh.updateColors(light);
       renderer.render(threeScene, camera.object);
     },
-    updateBuildings(list: readonly (Building | null)[], alertPulseSeconds?: number): void {
+    updateBuildings(
+      list: readonly (Building | null)[],
+      outage?: Uint8Array,
+      alertPulseSeconds?: number,
+    ): void {
       // Brak zegara ⇒ chwila 0, a `alertPulse(r, 0)` to dokładne zero (`1 − cos 0`) — czyli
       // spoczynek, wyprowadzony z tej samej funkcji czystej, nie wpisany osobną gałęzią.
-      buildings.update(list, alertPulse(planet.radius, alertPulseSeconds ?? 0));
+      buildings.update(list, outage, alertPulse(planet.radius, alertPulseSeconds ?? 0));
     },
     updateUnits(list: readonly Unit[], light: Float32Array): void {
       units.update(list, light);

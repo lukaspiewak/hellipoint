@@ -39,6 +39,7 @@ import {
   screenToRay,
   type ListenerTarget,
   type RayCamera,
+  type Report,
 } from '../src/input.js';
 import { freeHexagonNear, worldFingerprint } from './support/fixtures.js';
 
@@ -736,7 +737,7 @@ interface Wiring {
   keys: ReturnType<typeof createFakeEventTarget>;
   sim: Sim;
   selection: ReturnType<typeof createSelection>;
-  messages: string[];
+  messages: Report[];
   focused: Vec3[];
   shading: string[];
   handle: ReturnType<typeof attachInput>;
@@ -759,7 +760,7 @@ function makeWiring(): Wiring {
   const keys = createFakeEventTarget();
   const sim = new Sim(planet, DEFAULT_RUN);
   const selection = createSelection();
-  const messages: string[] = [];
+  const messages: Report[] = [];
   const focused: Vec3[] = [];
   const shading: string[] = [];
   const handle = attachInput({
@@ -770,7 +771,7 @@ function makeWiring(): Wiring {
     sim,
     selection,
     focusOn: (target) => focused.push(target),
-    report: (message) => messages.push(message),
+    report: (report) => messages.push(report),
     setUnitShading: (mode) => shading.push(mode),
   });
   return { camera, canvas, keys, sim, selection, messages, focused, shading, handle, rect: CANVAS_RECT };
@@ -830,7 +831,13 @@ describe('attachInput — cała droga od zdarzenia do kolejki', () => {
     // czy mutację obiektu wyjętego ze stanu.
     expect(stateHash(w.sim.state)).toBe(before);
     expect(w.sim.state.buildings[target]).toBeNull(); // komenda leży w KOLEJCE, nie w świecie
-    expect(w.messages.at(-1)).toBe(`buduję BARRICADE na komórce ${target}`);
+    // Meldunek STRUKTURALNY, nie napis (Krok 0 Zadania 4): wiązany jest fakt, nie
+    // interpunkcja. Zdanie dla gracza składa jedno miejsce — `reportMessage` w `hud.ts` —
+    // i to samo, z którego bierze zdania panel; pilnuje tego test 22 w `hud.test.ts`.
+    expect(w.messages.at(-1)).toEqual({
+      kind: 'QUEUED',
+      intent: { kind: 'BUILD', cellId: target, type: 'BARRICADE' },
+    });
 
     // POŁOWA POZYTYWNA: komenda naprawdę dotarła. Bez `enqueue` stan po `step()` byłby
     // taki, jakby gracz nie kliknął — a żadna asercja o niemutowaniu tego nie widzi.
@@ -876,14 +883,14 @@ describe('attachInput — cała droga od zdarzenia do kolejki', () => {
     expect(stateHash(w.sim.state)).toBe(hashBeforeDemolish); // dalej: kolejka, nie stan
     w.sim.step();
     expect(w.sim.state.buildings[target]).toBeNull();
-    expect(w.messages.at(-1)).toBe(`rozbieram na komórce ${target}`);
+    expect(w.messages.at(-1)).toEqual({ kind: 'QUEUED', intent: { kind: 'DEMOLISH', cellId: target } });
 
     // Kliknięcie POZA sylwetką planety: żadnej komendy, ale komunikat jest — inaczej
     // gracz nie odróżnia „chybiłem" od „sterowanie nie działa". Gałąź nie była dotąd
     // wykonywana przez żaden test.
     const worldBefore = worldFingerprint(w.sim.state);
     gesture(w, [CANVAS_RECT.left + 3, CANVAS_RECT.top + 3], [CANVAS_RECT.left + 3, CANVAS_RECT.top + 3], 0);
-    expect(w.messages.at(-1)).toBe('kliknięcie w tło — poza planetą');
+    expect(w.messages.at(-1)).toEqual({ kind: 'MISSED' });
     w.sim.step();
     expect(worldFingerprint(w.sim.state)).not.toBe(worldBefore); // tick sam z siebie tyka
     expect(w.sim.state.buildings.filter((b) => b !== null).length).toBe(1); // …ale nic nie przybyło
@@ -893,7 +900,11 @@ describe('attachInput — cała droga od zdarzenia do kolejki', () => {
     gesture(w, [CENTER_X, CENTER_Y], [CENTER_X, CENTER_Y], 2);
     w.sim.step();
     expect(w.sim.state.buildings[planet.startCell]?.type).toBe('CORE');
-    expect(w.messages.some((m) => m.includes('CORE_INDESTRUCTIBLE'))).toBe(true);
+    expect(w.messages.at(-1)).toEqual({
+      kind: 'REFUSED',
+      intent: { kind: 'DEMOLISH', cellId: planet.startCell },
+      reason: 'CORE_INDESTRUCTIBLE',
+    });
   });
 
   it('22. klawiatura: spacja woła powrót do Core, cyfry wybierają typ, Shift+cyfra przełącza cieniowanie', () => {
@@ -901,7 +912,7 @@ describe('attachInput — cała droga od zdarzenia do kolejki', () => {
 
     expect(pressKey(w, 'Space')).toBe(1); // `preventDefault` — spacja nie przewija strony
     expect(w.focused).toEqual([planet.cells[planet.startCell].center]);
-    expect(w.messages.at(-1)).toBe(`powrót do Core (komórka ${planet.startCell})`);
+    expect(w.messages.at(-1)).toEqual({ kind: 'FOCUS_CORE', cellId: planet.startCell });
 
     expect(pressKey(w, 'Digit6')).toBe(1);
     expect(w.selection.selectedType).toBe('KINETIC_TURRET');

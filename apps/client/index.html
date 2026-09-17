@@ -67,6 +67,27 @@
       #hud .hud-resources {
         font-weight: 700;
       }
+      /*
+        BILANS ENERGII (Faza 2C, Zadanie 4). Produkcja i pobór to wielkości NA SEKUNDĘ, więc
+        stoją w osobnym wierszu niż zapasy — czytane razem z „rudą" wyglądałyby jak zapas.
+      */
+      #hud .hud-power {
+        color: #cbd7e8;
+      }
+      /*
+        SKUTEK niedoboru. Bursztyn jest TEN SAM, co jasny pas pierścienia alarmu w świecie
+        (`ALERT_COLOR_LIGHT` = liniowe [1; 0,72; 0,12], po zakodowaniu do sRGB #ffdd5c) — i to
+        nie jest zbieg okoliczności: gracz ma połączyć zdanie w panelu z obręczami, które
+        właśnie zapaliły się na kuli. Wiersz zgaszenia jest MOCNIEJSZY niż wiersz drenażu
+        magazynu, bo to dwie różne pilności: pierwsze już się stało, drugie dopiero grozi.
+      */
+      #hud .hud-shortfall--drain {
+        color: #ffdd5c;
+      }
+      #hud .hud-shortfall--shed {
+        color: #ffdd5c;
+        font-weight: 700;
+      }
       #hud .hud-headline {
         color: #9fb2cc;
         margin-bottom: 4px;

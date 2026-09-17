@@ -14,7 +14,7 @@ import {
   motionIsSimulable,
   updateMovement,
 } from './movement.js';
-import { updatePower } from './power.js';
+import { OUTAGE_NONE, updatePower, type PowerReport } from './power.js';
 import { currentCycle, updateRules, type RunConfig } from './rules.js';
 import { updateSpawning } from './spawning.js';
 import { createState, TICK_SECONDS, waveRngStateFor, type SimState } from './state.js';
@@ -128,6 +128,21 @@ export class Sim {
   private readonly motion: MotionContext;
   private readonly waveRng: Rng;
   private fields: ReturnType<typeof buildAllFlowFields>;
+  /**
+   * Raport energetyczny OSTATNIEGO ticku — patrz `lastPower`.
+   *
+   * Pole `Sim`, nie pole `SimState`, i to jest rozstrzygnięcie, nie wygoda: `PowerReport`
+   * jest CZYSTĄ FUNKCJĄ ticku (stan zabudowy + oświetlenie), więc w stanie byłby wielkością
+   * wyprowadzalną, którą migawka Fazy 5 musiałaby serializować, a `stateHash` — pilnować.
+   * Ten sam precedens co `Sim.lastCoreDamager` w Zadaniu 5.
+   */
+  private power: PowerReport;
+  /**
+   * Bufor przyczyn braku prądu, zaalokowany RAZ. Bez niego każdy tick alokowałby 1442 bajty
+   * — niewiele, ale w pętli, która ma ich 20 na sekundę i której budżet Faza 3 będzie
+   * mierzyć osobno.
+   */
+  private readonly outage: Uint8Array;
 
   /**
    * `snapshot` — wznowienie z zapisanego `SimState` (Faza 5: wczytanie gry,
@@ -346,9 +361,28 @@ export class Sim {
     // pierwszy `step()` i tak przelicza je ponownie — ta wartość jest kosztem jednej
     // Dijkstry na konstrukcję i ceną za usunięcie gałęzi, która psuła wznawialność.
     this.fields = buildAllFlowFields(this.s);
+
+    // Raport PUSTY, nie `null`: pętla renderu czyta `lastPower` na każdej klatce, także
+    // pierwszej — przed pierwszym `step()`. `null` byłby tam gałęzią w kodzie rysującym,
+    // czyli miejscem, w którym rozruch wygląda inaczej niż gra.
+    this.outage = new Uint8Array(planet.cells.length).fill(OUTAGE_NONE);
+    this.power = { supply: 0, demand: 0, rawDemand: 0, shedTypes: [], outage: this.outage };
   }
 
   get state(): SimState { return this.s; }
+  /**
+   * Bilans energii z OSTATNIEGO wykonanego ticku: ile sieć wyprodukowała, ile była winna
+   * PRZED gaszeniem (`rawDemand`), ile pobrała po nim, co zgaszono i DLACZEGO każdy
+   * pociemniały budynek pociemniał.
+   *
+   * **Ważny do następnego `step()`** — `outage` to bufor współdzielony między tickami,
+   * przepisywany w miejscu. Wołający, który potrzebuje go dłużej, kopiuje.
+   *
+   * Po `VICTORY`/`DEFEAT` `step()` wychodzi przed systemem energii, więc raport zostaje
+   * z ostatniego ticku, w którym run jeszcze biegł. To jest właściwe zachowanie dla ekranu
+   * końca: pokazuje stan sieci w chwili przegranej, a nie wyzerowany.
+   */
+  get lastPower(): Readonly<PowerReport> { return this.power; }
   get elapsedSeconds(): number { return this.s.tick * TICK_SECONDS; }
   get cycle(): number { return currentCycle(this.elapsedSeconds, this.config.rotationPeriod); }
 
@@ -404,7 +438,9 @@ export class Sim {
     const light = lightField(this.s.planet, sun);
 
     // 3. Energia — musi być przed ekonomią i walką, bo ustawia flagi `powered`.
-    updatePower(this.s, light);
+    // Wynik był tu do Zadania 4 Fazy 2C ODRZUCANY, więc bilans, który symulacja liczyła
+    // w każdym ticku od Fazy 1B, nie docierał do gracza w ogóle.
+    this.power = updatePower(this.s, light, this.outage);
 
     // 4. Ekonomia — po energii, bo wydobycie zależy od flagi `powered`.
     updateEconomy(this.s);

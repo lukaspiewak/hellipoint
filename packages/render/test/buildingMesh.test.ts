@@ -3,14 +3,25 @@ import { describeGcWindows, gcMedian, gcNoiseLimit, measureGcWindows } from './s
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Matrix4, Vector3, type BufferAttribute, type BufferGeometry, type Object3D, type Scene } from 'three';
-import { BUILDINGS, createPlanet, type Building, type BuildingType } from '@heliopolis/sim';
+import {
+  BUILDINGS,
+  createPlanet,
+  OUTAGE_SHED,
+  OUTAGE_UNLINKED,
+  type Building,
+  type BuildingType,
+} from '@heliopolis/sim';
 import { buildPlanetGeometry } from '../src/geometry.js';
 import {
+  alertSpans,
+  buildAlertGeometry,
   buildCellBases,
   coreScale,
   createBuildingLayer,
   healthFraction,
   writeCoreColor,
+  ALERT_BREAK_COUNT,
+  ALERT_BREAK_FRACTION,
   ALERT_COLOR_DARK,
   ALERT_COLOR_LIGHT,
   ALERT_INNER_FACTOR,
@@ -637,7 +648,7 @@ describe('[MUTACJA] stan NIEZASILONY jest widoczny w wyjściu', () => {
     // spoczynku — bo to wychylenie maksymalne jest tym, co widzi gracz. Para mutacji na samej
     // stałej jest w teście 23.
     const maxPulse = planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR;
-    layer.update(list, maxPulse);
+    layer.update(list, undefined, maxPulse);
     let widestPulsedRing = 0;
     for (let slot = 0; slot < ALL_TYPES.length; slot++) {
       widestPulsedRing = Math.max(widestPulsedRing, basisColumn(matrixAt(layer.alert, slot), 0).length());
@@ -648,8 +659,8 @@ describe('[MUTACJA] stan NIEZASILONY jest widoczny w wyjściu', () => {
       `pierścień na szczycie pulsu (${widestPulsedRing.toFixed(4)}) wychodzi poza krawędź obrysu (${maxRingRadius.toFixed(4)})`,
     ).toBeLessThan(maxRingRadius);
     // Amplituda ponad sufit musi RZUCAĆ, a nie po cichu wyprowadzić pierścień z komórki.
-    expect(() => layer.update(list, maxPulse * 1.0001)).toThrow(RangeError);
-    expect(() => layer.update(list, -1e-9)).toThrow(RangeError);
+    expect(() => layer.update(list, undefined, maxPulse * 1.0001)).toThrow(RangeError);
+    expect(() => layer.update(list, undefined, -1e-9)).toThrow(RangeError);
     layer.update(list); // powrót do spoczynku — reszta testu mierzy konfigurację produkcyjną
     // Ta sama granica dotyczy BRYŁY: budynek też jest okrągły i też nie może wyjść z komórki.
     expect(widestShell).toBeLessThan(Math.tan(edgeAngle) * planet.radius);
@@ -908,13 +919,14 @@ describe('warstwa jako całość', () => {
       return out;
     };
 
-    // Teren + krata + trzy warstwy budynków + dwie warstwy jednostek (Zadanie 4) = siedem
-    // rysowalnych, wszystkie widoczne. Liczba jest PRZYPIĘTA, nie „co najmniej": dołożenie
-    // czegokolwiek do sceny ma przejść przez ten test, bo dokładnie tego dotyczy jego
-    // druga połowa (schowanie planety gasi WSZYSTKO). Podniesiona z 5 na 7 w Zadaniu 4 —
-    // asercja na zbiorach i sam mechanizm zostały nietknięte.
+    // Teren + krata + CZTERY warstwy budynków + dwie warstwy jednostek = osiem rysowalnych,
+    // wszystkie widoczne. Liczba jest PRZYPIĘTA, nie „co najmniej": dołożenie czegokolwiek
+    // do sceny ma przejść przez ten test, bo dokładnie tego dotyczy jego druga połowa
+    // (schowanie planety gasi WSZYSTKO). Podniesiona z 5 na 7 w Zadaniu 4 Fazy 2B, a z 7 na 8
+    // w Zadaniu 4 Fazy 2C (wycinki domykające obręcz alarmu) — asercja na zbiorach i sam
+    // mechanizm zostały nietknięte.
     const before = drawables();
-    expect(before.length).toBe(7);
+    expect(before.length).toBe(8);
     expect(before.every((d) => d.visible)).toBe(true);
     const terrain = before.find((d) => d.object.parent === lastScene);
     expect(terrain, 'siatka terenu jest jedynym rysowalnym dzieckiem sceny').toBeDefined();
@@ -922,7 +934,7 @@ describe('warstwa jako całość', () => {
     // Schowanie SAMEJ planety — nic nie wie o budynkach — musi wygasić wszystko.
     terrain!.object.visible = false;
     const after = drawables();
-    expect(after.length).toBe(7);
+    expect(after.length).toBe(8);
     expect(after.filter((d) => d.visible)).toEqual([]);
 
     scene.dispose();
@@ -1094,10 +1106,29 @@ describe('nawinięcie trójkątów — nawrót defektu, który w tym zadaniu wys
     expect(core.wrong, 'rdzeń: trójkąty zwrócone w dół').toBe(0);
     expect(core.worstDot).toBeCloseTo(1, 9);
 
+    // Liczba trójkątów obręczy NIE jest tu przypięta, w odróżnieniu od bryły i rdzenia:
+    // zależy od `ALERT_BREAK_FRACTION` (kąt przerwy dzieli łuki inaczej), a to jest stała
+    // `[WYGLĄD]`. Przypięta byłaby kotwicą na dzisiejszą wartość przebraną za kontrolę —
+    // i oblewałaby przy KAŻDEJ zmianie szerokości przerwy, także takiej, która niczego nie
+    // psuje. Kontrolą na przyrząd jest to, że trójkąty W OGÓLE są (po co najmniej jednym
+    // czworokącie na łuk i pas), bo raport nawinięcia po pustej geometrii jest zielony.
     const alert = windingReport(layer.alert.geometry, () => up);
-    expect(alert.triangles, 'dwa pasy × 24 boki × 2 trójkąty').toBe(96);
+    expect(alert.triangles, 'obręcz przerywana nie ma ANI JEDNEGO trójkąta').toBeGreaterThanOrEqual(
+      ALERT_BREAK_COUNT * 2 * 2,
+    );
     expect(alert.wrong, 'pierścień: trójkąty zwrócone w dół — DOKŁADNIE defekt z Zadania 3').toBe(0);
     expect(alert.worstDot).toBeCloseTo(1, 9);
+
+    // Wycinki DOMYKAJĄCE obręcz (Zadanie 4) — ta sama geometria, ta sama klasa defektu.
+    // Warstwa dołożona bez tej asercji byłaby warstwą, którą odcinanie tylnych ścian mogłoby
+    // zjeść w całości, a na ekranie wyglądałoby to jak „wszystkie budynki są odcięte od
+    // sieci" — czyli jak POPRAWNY, ale fałszywy odczyt.
+    const link = windingReport(layer.link.geometry, () => up);
+    expect(link.triangles, 'wycinki domykające nie mają ANI JEDNEGO trójkąta').toBeGreaterThanOrEqual(
+      ALERT_BREAK_COUNT * 2 * 2,
+    );
+    expect(link.wrong, 'wycinki domykające: trójkąty zwrócone w dół').toBe(0);
+    expect(link.worstDot).toBeCloseTo(1, 9);
 
     layer.dispose();
   });
@@ -1155,13 +1186,13 @@ describe('puls pierścienia alarmu — materiał do pytania 5 bramki (Zadanie 5)
 
     layer.update(list);
     const implicit = Array.from(layer.alert.instanceMatrix.array);
-    layer.update(list, 0);
+    layer.update(list, undefined, 0);
     const explicitZero = Array.from(layer.alert.instanceMatrix.array);
     expect(explicitZero).toEqual(implicit);
 
     // Kontrola pozytywna na sam pomiar: niezerowe wychylenie te macierze ZMIENIA — inaczej
     // „identyczne" byłoby prawdą dla implementacji, która ignoruje argument w ogóle.
-    layer.update(list, planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR);
+    layer.update(list, undefined, planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR);
     expect(Array.from(layer.alert.instanceMatrix.array)).not.toEqual(implicit);
     layer.dispose();
   });
@@ -1204,8 +1235,294 @@ describe('puls pierścienia alarmu — materiał do pytania 5 bramki (Zadanie 5)
     place(list, 300, 'CORE', { powered: false });
     for (let i = 0; i <= 200; i++) {
       const seconds = (i / 200) * ALERT_PULSE_PERIOD_SECONDS;
-      expect(() => layer.update(list, alertPulse(planet.radius, seconds))).not.toThrow();
+      expect(() => layer.update(list, undefined, alertPulse(planet.radius, seconds))).not.toThrow();
     }
+    layer.dispose();
+  });
+});
+
+// =========================================================================================
+// PRZERWANA OBRĘCZ — DLACZEGO budynek nie ma prądu (Faza 2C, Zadanie 4, Krok 6)
+//
+// `powered === false` zlewało dwie przyczyny wymagające dwóch RÓŻNYCH reakcji gracza:
+// brownout („dobuduj produkcję") i odcięcie od sieci („napraw pylon"). Kodowanie: obręcz
+// PRZERWANA znaczy „poza siecią", ZAMKNIĘTA — „w sieci, ale bez mocy".
+// =========================================================================================
+
+/**
+ * Kąty, pod którymi obręcz NAPRAWDĘ coś rysuje — odczytane z FAKTYCZNEGO bufora pozycji
+ * i indeksów, nie ze stałych modułu i nie z `alertSpans`.
+ *
+ * Bez próbkowania i bez punktu-w-trójkącie: każdy czworokąt obręczy jest trapezem
+ * promieniowym, więc PARA jego trójkątów pokrywa dokładnie przedział `[kąt_i, kąt_j]` na
+ * każdym promieniu swojego pasa. Przedział pojedynczego trójkąta zawiera się w przedziale
+ * jego czworokąta, więc suma po wszystkich trójkątach jest DOKŁADNIE pokryciem kątowym —
+ * bez błędu próbkowania, który przy różnicy 1 % (para mutacji niżej) trzeba by dopiero
+ * uzasadniać.
+ *
+ * Pokrycie jest tu jedno dla całej obręczy, a nie osobne dla każdego promienia, i to jest
+ * własność KONSTRUKCJI, nie założenie: oba pasy mają te same łuki (patrz `buildAlertGeometry`),
+ * więc zbiór kątów nie zależy od promienia. Sprawdza to test 28 drugą drogą.
+ */
+function coveredAngles(geometry: BufferGeometry): { from: number; to: number }[] {
+  const position = geometry.getAttribute('position') as BufferAttribute;
+  const index = geometry.getIndex();
+  if (!index) throw new Error('test: geometria bez bufora indeksów');
+  const TWO_PI = Math.PI * 2;
+  const raw: { from: number; to: number }[] = [];
+  for (let t = 0; t < index.count / 3; t++) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let k = 0; k < 3; k++) {
+      const v = index.getX(t * 3 + k);
+      let a = Math.atan2(position.getY(v), position.getX(v));
+      if (a < 0) a += TWO_PI;
+      lo = Math.min(lo, a);
+      hi = Math.max(hi, a);
+    }
+    // Żaden czworokąt obręczy nie rozpina więcej niż ~15°, więc przedział szerszy niż π
+    // może znaczyć wyłącznie przejście przez 0 — rozcinany na dwa, zamiast zostać zapisany
+    // jako „prawie cały okrąg" (co zamaskowałoby KAŻDĄ przerwę).
+    if (hi - lo > Math.PI) {
+      raw.push({ from: 0, to: lo });
+      raw.push({ from: hi, to: TWO_PI });
+    } else {
+      raw.push({ from: lo, to: hi });
+    }
+  }
+  raw.sort((a, b) => a.from - b.from);
+  const merged: { from: number; to: number }[] = [];
+  for (const span of raw) {
+    const last = merged.at(-1);
+    // Tolerancja szwu: sąsiednie czworokąty dzielą kąt co do ostatniego bitu, ale liczony
+    // jest on przez `atan2` dwóch różnych par współrzędnych, więc równość bywa o 1 ULP obok.
+    if (last !== undefined && span.from <= last.to + 1e-9) last.to = Math.max(last.to, span.to);
+    else merged.push({ ...span });
+  }
+  return merged;
+}
+
+/** Przerwy w obręczy: dopełnienie pokrycia kątowego, w radianach. */
+function ringGaps(geometry: BufferGeometry): number[] {
+  const TWO_PI = Math.PI * 2;
+  const covered = coveredAngles(geometry);
+  const gaps: number[] = [];
+  for (let i = 0; i < covered.length; i++) {
+    const to = covered[i].to;
+    const nextFrom = i + 1 < covered.length ? covered[i + 1].from : covered[0].from + TWO_PI;
+    const gap = nextFrom - to;
+    if (gap > 1e-9) gaps.push(gap);
+  }
+  return gaps;
+}
+
+describe('[MUTACJA] przyczyna braku prądu jest widoczna W ŚWIECIE', () => {
+  it('26. [PARA MUTACJI, PRÓG] przerwa obręczy ma ≥ 1,00 px na NAJGORSZYM członku populacji — kąt dający 0,99 px oblewa, 1,01 px przechodzi', () => {
+    // ## Co tu jest wielkością wiążącą
+    //
+    // Przerwa jest oknem na teren, więc jej widoczność mierzy jej NAJWĘŻSZY wymiar: łuk na
+    // wewnętrznej krawędzi tej części obręczy, która NIE JEST zasłonięta bryłą. Im mniejsza
+    // bryła, tym bliżej środka zaczyna się widoczna obręcz i tym KRÓTSZY jest łuk o tym
+    // samym kącie — więc najgorszym członkiem populacji jest tu najmniejszy typ (`PYLON`),
+    // a nie największy, jak przy szerokości pasów (test 7).
+    //
+    // Mierzone na obręczy Z WARSTWY W SCENIE i na jej faktycznej macierzy instancji, nie na
+    // stałych modułu.
+    const layer = createBuildingLayer(planet, geo);
+    const list = emptyBuildings();
+    const outage = new Uint8Array(CELL_COUNT);
+    ALL_TYPES.forEach((type, k) => {
+      const cellId = 100 + k * 7;
+      place(list, cellId, type, { powered: false });
+      outage[cellId] = OUTAGE_UNLINKED; // przerwana obręcz: to ją mierzymy
+    });
+    layer.update(list, outage);
+    expect(layer.alert.count, 'obręcz pod każdym budynkiem bez prądu').toBe(ALL_TYPES.length);
+    expect(layer.link.count, 'nic nie domyka obręczy odciętych od sieci').toBe(0);
+
+    const gaps = ringGaps(layer.alert.geometry);
+    expect(gaps.length, 'liczba przerw').toBe(ALERT_BREAK_COUNT);
+    // KOTWICA NA PRZYRZĄD, nie próg: zmierzony kąt przerwy zgadza się z zadeklarowanym.
+    // Gdyby budowniczy gubił albo dokładał segmenty, wszystkie liczby niżej byłyby liczone
+    // z geometrii innej niż ta, którą opisuje stała — i nikt by tego nie zauważył.
+    for (const gap of gaps) expect(gap / (Math.PI * 2)).toBeCloseTo(ALERT_BREAK_FRACTION, 6);
+    const { inner, split } = alertBandRadii(layer);
+
+    // MINIMUM PO POPULACJI: dla każdego typu — najwęższa przerwa na wewnętrznej krawędzi
+    // WIDOCZNEJ części pasa jasnego (nośnika alarmu na paśmie nocy).
+    const widthByType = new Map<BuildingType, number>();
+    ALL_TYPES.forEach((type, slot) => {
+      const scale = basisColumn(matrixAt(layer.alert, slot), 0).length();
+      const shellRadius = basisColumn(matrixAt(layer.shell, slot), 0).length();
+      const visibleFrom = Math.max(inner * scale, shellRadius);
+      // Kontrola na fikstrę: jasny pas musi w ogóle być widoczny, inaczej mierzylibyśmy
+      // przerwę w czymś, czego nie widać (to pilnuje test 7, tu jest tylko straż).
+      expect(split * scale).toBeGreaterThan(visibleFrom);
+      widthByType.set(type, px(Math.min(...gaps) * visibleFrom));
+    });
+    const worstPx = Math.min(...widthByType.values());
+    expect(worstPx, 'najwęższa przerwa po całej populacji — kanał „poza siecią"').toBeGreaterThanOrEqual(
+      MIN_VISIBLE_PX,
+    );
+
+    // `PYLON` JEST najgorszym członkiem populacji — nie „jednym z", tylko osiąga minimum.
+    // Minimum dzieli z nim każdy typ, którego bryła chowa się pod wewnętrzną krawędzią
+    // obręczy (osiem z dziesięciu), więc asercja „najgorszy nazywa się PYLON" byłaby
+    // rozstrzyganiem remisu przez kolejność pętli — a ta zależy od ostatnich bitów skali
+    // instancji. Wiązane jest więc to, co jest treścią: najmniejszy typ leży NA minimum,
+    // a największy (CORE, jedyny, którego bryła zasłania krawędź) — WYRAŹNIE nad nim.
+    // Bez drugiej połowy próg mógłby mierzyć wielkość niezależną od bryły w ogóle.
+    // Sześć miejsc: skala instancji czytana jest z `Float32Array` macierzy, więc ta sama
+    // wielkość policzona dla dwóch komórek różni się w ostatnich bitach (~10⁻⁷ px).
+    expect(widthByType.get('PYLON')!).toBeCloseTo(worstPx, 6);
+    expect(widthByType.get('CORE')!).toBeGreaterThan(worstPx * 1.05);
+    console.log(
+      `[KANAŁ] przerwa obręczy: minimum po populacji ${worstPx.toFixed(2)} px (PYLON), ` +
+        `CORE ${widthByType.get('CORE')!.toFixed(2)} px, próg ${MIN_VISIBLE_PX} px, ` +
+        `przerw ${gaps.length} po ${((Math.min(...gaps) * 180) / Math.PI).toFixed(1)}°`,
+    );
+
+    // ## PARA MUTACJI, obie połówki TUŻ przy granicy
+    //
+    // Kąt progowy liczony z MIERZONYCH wielkości (promień wewnętrzny z geometrii, skala
+    // z macierzy, przelicznik ze stałych `camera.ts`) i z `MIN_VISIBLE_PX` — nie ze stałej,
+    // którą testuje. Geometria budowana tym samym budowniczym, co produkcyjna, i mierzona
+    // tym samym przyrządem.
+    const worstRadius = inner * basisColumn(matrixAt(layer.alert, 0), 0).length();
+    const thresholdAngle = MIN_VISIBLE_PX / PIXELS_PER_UNIT / worstRadius;
+    const measure = (fractionOfTurn: number): number => {
+      const spans = alertSpans(ALERT_BREAK_COUNT, fractionOfTurn);
+      const geometry = buildAlertGeometry(spans.broken, 24);
+      const widthPx = px(Math.min(...ringGaps(geometry)) * worstRadius);
+      geometry.dispose();
+      return widthPx;
+    };
+    const justUnder = measure((thresholdAngle * 0.99) / (Math.PI * 2));
+    const justOver = measure((thresholdAngle * 1.01) / (Math.PI * 2));
+    expect(justUnder, 'połówka „ma OBLAĆ": 0,99 px').toBeLessThan(MIN_VISIBLE_PX);
+    expect(justOver, 'połówka „ma PRZEJŚĆ": 1,01 px').toBeGreaterThanOrEqual(MIN_VISIBLE_PX);
+    // Obie połówki NAPRAWDĘ leżą przy granicy, a nie rząd wielkości od niej — inaczej para
+    // dowodziłaby wyłącznie tego, że przyrząd reaguje na wielkie zmiany.
+    expect(justUnder).toBeCloseTo(0.99, 3);
+    expect(justOver).toBeCloseTo(1.01, 3);
+    // Zapasu produkcyjnego NIE ma tu asercji — byłby kotwicą na dzisiejszą wartość przebraną
+    // za próg (katalog wad tej fazy). Wiążący próg to `MIN_VISIBLE_PX` wyżej; ile jest ponad
+    // nim, mówi `console.log` i raport zadania.
+
+    layer.dispose();
+  });
+
+  it('27. [MUTACJA] dwie przyczyny dają DWA różne obrazy — zrównanie kodowania oblewa', () => {
+    // Stan z briefu: oba budynki mają `powered === false` i do Zadania 4 wyglądały
+    // identycznie. Test wiąże OBIE strony: odcięty od sieci NIE dostaje domknięcia, zgaszony
+    // kaskadą — dostaje.
+    const layer = createBuildingLayer(planet, geo);
+    const list = emptyBuildings();
+    const shedCell = 200;
+    const orphanCell = 400;
+    place(list, shedCell, 'EXTRACTOR', { powered: false });
+    place(list, orphanCell, 'EXTRACTOR', { powered: false });
+
+    const outage = new Uint8Array(CELL_COUNT);
+    outage[shedCell] = OUTAGE_SHED;
+    outage[orphanCell] = OUTAGE_UNLINKED;
+    layer.update(list, outage);
+
+    // Kanał NADRZĘDNY nietknięty: obręcz jest pod OBOMA (to jest `powered === false`).
+    expect(layer.alert.count).toBe(2);
+    // …a domknięcie — tylko pod zgaszonym kaskadą, i to na JEGO komórce, nie byle której.
+    expect(layer.link.count).toBe(1);
+    const at = translationOf(matrixAt(layer.link, 0)).normalize();
+    const cell = planet.cells[shedCell];
+    expect(at.dot(new Vector3(cell.normal.x, cell.normal.y, cell.normal.z))).toBeGreaterThan(0.99999);
+
+    // MUTACJA „zrównaj kodowanie obu": jedna wartość dla obu przyczyn. Cokolwiek by nią było,
+    // liczba domknięć przestaje wynosić 1 — więc obraz przestaje rozróżniać przyczyny.
+    for (const single of [OUTAGE_SHED, OUTAGE_UNLINKED]) {
+      outage[shedCell] = single;
+      outage[orphanCell] = single;
+      layer.update(list, outage);
+      expect(layer.link.count, `zrównane kodowanie (${single}) rozróżnia przyczyny`).not.toBe(1);
+    }
+
+    // Brak informacji o przyczynie ⇒ obręcz PEŁNA pod każdym, czyli wygląd sprzed Zadania 4.
+    // Bez tej połówki wywołujący, który zapomni podać `outage`, ogłaszałby awarię sieci pod
+    // każdym zgaszonym budynkiem — i byłby to fałsz, którego nikt by nie zauważył.
+    layer.update(list);
+    expect(layer.link.count).toBe(2);
+
+    // Budynek ZASILONY nie dostaje ani obręczy, ani domknięcia — nawet gdy bufor przyczyn
+    // niesie przy nim śmieć (a niesie, bo to bufor współdzielony między tickami).
+    list[shedCell]!.powered = true;
+    list[orphanCell]!.powered = true;
+    outage[shedCell] = OUTAGE_SHED;
+    outage[orphanCell] = OUTAGE_UNLINKED;
+    layer.update(list, outage);
+    expect(layer.alert.count).toBe(0);
+    expect(layer.link.count).toBe(0);
+
+    layer.dispose();
+  });
+
+  it('28. [NIEZMIENNIK] obie połowy obręczy tworzą RAZEM pełny okrąg — bez luki i bez zakładki', () => {
+    // Zamknięta obręcz ma być DOKŁADNIE tą obręczą, którą Zadanie 3 Fazy 2B zmierzyło
+    // i obejrzało: brownout nie może wyglądać inaczej niż „bez prądu" wyglądał przedtem,
+    // bo wtedy zmiana z Zadania 4 przestrojałaby kanał, który miała tylko uszczegółowić.
+    //
+    // Zakładka byłaby z kolei dwiema powierzchniami w tej samej płaszczyźnie — czyli walką
+    // o bufor głębokości, awarią widoczną wyłącznie na GPU (ten sam tryb, dla którego
+    // istnieje `SURFACE_LIFT_FACTOR`).
+    const layer = createBuildingLayer(planet, geo);
+    const broken = coveredAngles(layer.alert.geometry);
+    const closing = coveredAngles(layer.link.geometry);
+    expect(broken.length).toBe(ALERT_BREAK_COUNT);
+    expect(closing.length).toBe(ALERT_BREAK_COUNT);
+
+    const total = (spans: { from: number; to: number }[]): number =>
+      spans.reduce((sum, s) => sum + (s.to - s.from), 0);
+    // Sześć miejsc, nie dziewięć: kąty są odczytywane z bufora `Float32Array`, więc mają
+    // precyzję pojedynczą (~10⁻⁷ rad). Zmierzona rozbieżność to 7,5 · 10⁻⁸ rad, czyli
+    // 2 · 10⁻⁷ jednostki świata — o siedem rzędów wielkości poniżej piksela.
+    expect(total(broken) + total(closing)).toBeCloseTo(Math.PI * 2, 6);
+    // Rozłączność: żaden łuk przerywanej nie zachodzi na żaden łuk domykającej. Tolerancja
+    // 10⁻⁶ rad wynika z precyzji bufora (`Float32Array`), a nie z pobłażliwości: to jest
+    // 3 · 10⁻⁶ jednostki świata, czyli 10⁻⁵ piksela. Zakładka, która ma znaczenie (walka
+    // o bufor głębokości między dwiema powierzchniami), zaczyna się rzędy wielkości wyżej.
+    for (const a of broken) {
+      for (const b of closing) {
+        expect(Math.min(a.to, b.to) - Math.max(a.from, b.from), 'łuki zachodzą na siebie').toBeLessThan(1e-6);
+      }
+    }
+    // Ten sam PROMIEŃ i te same PASY: domknięcie jest fragmentem tej samej obręczy, a nie
+    // osobną ozdobą o własnej geometrii.
+    expect(alertBandRadii({ alert: { geometry: layer.link.geometry } })).toEqual(alertBandRadii(layer));
+
+    // Pełny okrąg NAPRAWDĘ nie ma przerw — kontrola pozytywna na sam przyrząd `ringGaps`,
+    // który wyżej znalazł cztery.
+    const full = buildAlertGeometry([[0, Math.PI * 2]], 24);
+    expect(ringGaps(full)).toEqual([]);
+    full.dispose();
+
+    layer.dispose();
+  });
+
+  it('29. bufor przyczyn o złej długości to RangeError, a `update` go nie mutuje', () => {
+    // Ta sama klasa rozjazdu, co `buildings.length` i `light.length`: dwie tablice
+    // indeksowane tym samym `cellId`, których nic nie wiąże składniowo. Plus zakaz zapisu:
+    // bufor należy do symulacji i jest przepisywany w każdym ticku — render, który by go
+    // tknął, kłamałby symulacji o jej własnym stanie w następnej klatce.
+    const layer = createBuildingLayer(planet, geo);
+    const list = emptyBuildings();
+    place(list, 300, 'PYLON', { powered: false });
+    expect(() => layer.update(list, new Uint8Array(CELL_COUNT - 1))).toThrow(RangeError);
+    expect(() => layer.update(list, new Uint8Array(CELL_COUNT + 1))).toThrow(RangeError);
+
+    const outage = new Uint8Array(CELL_COUNT);
+    outage[300] = OUTAGE_UNLINKED;
+    const before = [...outage];
+    layer.update(list, outage);
+    layer.update(list, outage, planet.radius * ALERT_PULSE_AMPLITUDE_FACTOR);
+    expect([...outage]).toEqual(before);
     layer.dispose();
   });
 });

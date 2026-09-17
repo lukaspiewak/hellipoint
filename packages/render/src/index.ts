@@ -38,12 +38,15 @@ export {
 } from './camera.js';
 export {
   alertPulse,
+  alertSpans,
   buildCellBases,
   buildDiscGeometry,
   coreScale,
   createBuildingLayer,
   healthFraction,
   writeCoreColor,
+  ALERT_BREAK_COUNT,
+  ALERT_BREAK_FRACTION,
   ALERT_COLOR_DARK,
   ALERT_COLOR_LIGHT,
   ALERT_INNER_FACTOR,
@@ -62,6 +65,7 @@ export {
   SHELL_TAPER,
   SURFACE_LIFT_FACTOR,
   type AlertPulseOffset,
+  type AlertSpan,
   type BuildingLayer,
 } from './buildingMesh.js';
 export {

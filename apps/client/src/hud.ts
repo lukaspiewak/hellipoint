@@ -1,11 +1,13 @@
 import {
+  BROWNOUT_ORDER,
   BUILDINGS,
   canBuild,
   type BuildCheck,
   type BuildingType,
+  type PowerReport,
   type SimState,
 } from '@heliopolis/sim';
-import { playerBuildableTypes } from './input.js';
+import { playerBuildableTypes, type Report } from './input.js';
 
 /**
  * # HUD zasobów i budowy (Faza 2C, Zadanie 3)
@@ -34,10 +36,22 @@ import { playerBuildableTypes } from './input.js';
  * | koszt budynku | liczba z `BUILDINGS`, nie własność komórki |
  * | POWÓD odmowy | zdarzenie, które się NIE stało — nie ma czego narysować |
  * | `phase` | po `DEFEAT` symulacja kasuje kolejkę; bez tego sterowanie wygląda na zepsute |
+ * | BILANS energii (Zadanie 4) | produkcja/pobór/magazyn to sumy po CAŁEJ sieci |
  *
- * Czego tu świadomie NIE MA, bo należy do Zadania 4: bilansu energii (`PowerReport`).
- * `demand` jest tam liczone PO kaskadzie gaszenia, a UI chce wartości SPRZED — to osobna
- * zmiana w `packages/sim`, nie coś, co ma powstać przy okazji menu.
+ * ## Bilans energii jest po WŁAŚCIWEJ stronie tej granicy (Zadanie 4)
+ *
+ * Zadanie 3 zostawiło go sobie na później, i słusznie: `demand` było liczone PO kaskadzie
+ * gaszenia, więc UI nie miało czego pokazać. Zadanie 4 dołożyło `rawDemand` i podział
+ * wyszedł czysty:
+ *
+ * - **do HUD** idą LICZBY — ile sieć produkuje, ile była winna przed gaszeniem i co
+ *   zgaszono. To są sumy po całej planecie; kula nie ma gdzie ich narysować;
+ * - **do świata** idzie „KTÓRY budynek i DLACZEGO" — pierścień alarmu (`powered === false`)
+ *   i jego PRZERWANIE, odróżniające budynek odcięty od sieci od zgaszonego kaskadą
+ *   (`buildingMesh.ts`, Krok 6 Zadania 4).
+ *
+ * Panel nadal nie czyta ANI JEDNEGO pola `Building` — pilnuje tego test granicy zakresu,
+ * przemalowując świeży panel na stanie o innym `hp` i innym `powered`.
  *
  * ## Właścicielem wyboru jest WEJŚCIE, nie HUD
  *
@@ -111,11 +125,20 @@ export function buildMenuRows(s: SimState, cellId: number | null): MenuRow[] {
 /**
  * Powody odmowy po polsku. Słownik **wolno mieć nadmiarowy** (klucz bez powodu nikomu nie
  * szkodzi), ale nie wolno mieć niepełnego — pilnuje tego test, który zbiera powody
- * z `commands.ts` i sprawdza je wszystkie.
+ * z `commands.ts` ORAZ z `refusalReason` (`input.ts`) i sprawdza je wszystkie.
  *
  * Każdy komunikat mówi, CO ZROBIĆ albo DLACZEGO się nie da — nie powtarza identyfikatora
  * innymi literami. To jest cała różnica między „odmowa: CELL_OCCUPIED" a informacją, że
  * komórkę trzeba najpierw rozebrać prawym przyciskiem.
+ *
+ * ## Dziewięć, nie siedem (Faza 2C, Zadanie 4)
+ *
+ * Zadanie 3 opisało siedem powodów `canBuild` i zapisało granicę: `refusalReason` ma
+ * jeszcze DWA własne, dotyczące rozbiórki (`NOTHING_TO_DEMOLISH`, `CORE_INDESTRUCTIBLE`),
+ * których `canBuild` nie zna, bo rozbiórki nie dotyczy. Dopóki meldunek był gotowym
+ * napisem, te dwa trafiały na ekran jako surowe identyfikatory — i to jest dokładnie ta
+ * połowa rozjazdu, którą naprawia Krok 0 tego zadania. Po zmianie meldunków na
+ * strukturalne KAŻDY powód idzie tą samą drogą, więc słownik obejmuje wszystkie dziewięć.
  */
 export const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
   NO_SUCH_CELL: 'wskaż komórkę — kursor jest poza planetą',
@@ -125,6 +148,8 @@ export const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
   WRONG_CELL_TYPE: 'ten budynek tu nie stanie',
   INSUFFICIENT_ORE: 'za mało rudy',
   EVAC_LOCKED: 'jeszcze zamknięty — otwiera się w ostatniej tercji runu',
+  NOTHING_TO_DEMOLISH: 'nie ma tu czego rozbierać',
+  CORE_INDESTRUCTIBLE: 'Core zostaje — bez niego run kończy się przegraną',
 };
 
 /**
@@ -145,6 +170,43 @@ export const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
  */
 export function refusalMessage(reason: string): string {
   return REFUSAL_MESSAGES[reason] ?? `brak opisu odmowy: ${reason}`;
+}
+
+/**
+ * Meldunek strukturalny (`Report`, `input.ts`) zamieniony na jedną linijkę dla gracza.
+ *
+ * **To jest JEDYNE miejsce, w którym zdarzenie wejścia staje się napisem** — i to jest cały
+ * powód, dla którego Krok 0 Zadania 4 przerobił `report(string)` na `report(Report)`.
+ * Przedtem odmowę opisywały DWA źródła: panel tłumaczył powód przez `refusalMessage`,
+ * a nakładka diagnostyczna dostawała gotowe `odmowa: CELL_OCCUPIED` sklejone w `input.ts`.
+ * Gracz widział oba naraz. Teraz obie drogi schodzą się w `refusalMessage` niżej.
+ *
+ * **Nazwy budynków zostają angielskimi identyfikatorami** (`LASER_TURRET`) i to nie jest
+ * niedokończona robota, tylko decyzja Fazy 4 (brief Zadania 4, Krok 0): polskie nazwy
+ * byłyby drugim słownikiem bez źródła, z którym dałoby się je związać własnością —
+ * w odróżnieniu od powodów, które mają źródło w `commands.ts` — i rozjechałyby się z menu
+ * oraz ze skrótami 1-9, gdzie gracz widzi dokładnie te identyfikatory.
+ *
+ * Koszt czytany z `BUILDINGS` TUTAJ, a nie niesiony w meldunku: tabela kosztów ma być
+ * jedna (patrz `buildMenuRows`).
+ */
+export function reportMessage(report: Report): string {
+  switch (report.kind) {
+    case 'QUEUED':
+      return report.intent.kind === 'BUILD'
+        ? `buduję ${report.intent.type} na komórce ${report.intent.cellId}`
+        : `rozbieram na komórce ${report.intent.cellId}`;
+    case 'REFUSED':
+      return `${refusalMessage(report.reason)} (komórka ${report.intent.cellId})`;
+    case 'MISSED':
+      return 'kliknięcie w tło — poza planetą';
+    case 'FOCUS_CORE':
+      return `powrót do Core (komórka ${report.cellId})`;
+    case 'TYPE_CHOSEN':
+      return `wybrany typ: ${report.type} (${BUILDINGS[report.type].costOre} rudy)`;
+    case 'SHADING':
+      return `cieniowanie jednostek: ${report.mode}`;
+  }
 }
 
 /**
@@ -176,9 +238,93 @@ export function shownAmount(value: number): number {
   return Math.floor(value);
 }
 
+/**
+ * Tempo (jednostki na sekundę) w DZIESIĄTYCH — liczba całkowita, a nie napis.
+ *
+ * Dziesiąte, bo podaż jest z natury ułamkowa (panel słoneczny daje `peakRate × light`,
+ * a `light` zmienia się w każdym ticku), więc podłoga jak przy rudzie pokazywałaby „9/s"
+ * przy 9,98 i gracz nie widziałby, że produkcja właśnie dobija do dziesięciu.
+ *
+ * Liczba CAŁKOWITA, a nie `toFixed(1)`, bo ta sama wartość służy DWÓM rzeczom: napisowi
+ * i bramce świeżości panelu. Gdyby bramka porównywała surowe `supply`, przemalowywałaby
+ * panel w KAŻDEJ klatce (światło pełznie ciągle), czyli alokowałaby dziewięć obiektów menu
+ * sześćdziesiąt razy na sekundę — dokładnie to, czego zabrania `global-constraints.md`.
+ * Porównanie po dziesiątych zmienia się wtedy i tylko wtedy, gdy zmienia się ZNAK NA EKRANIE.
+ */
+export function shownRateTenths(value: number): number {
+  return Math.round(value * 10);
+}
+
+/** Dziesiąte z powrotem na napis — jedna kropka dziesiętna, przecinek jak w polskim zapisie. */
+export function rateText(tenths: number): string {
+  return `${(tenths / 10).toFixed(1).replace('.', ',')}/s`;
+}
+
 /** Wiersz z liczbami, których świat unieść nie może. Bez `powered`, bez punktów życia. */
 export function resourceLine(s: SimState): string {
-  return `ruda ${shownAmount(s.ore)} · energia ${shownAmount(s.storedEnergy)}`;
+  return `ruda ${shownAmount(s.ore)} · magazyn ${shownAmount(s.storedEnergy)}`;
+}
+
+/**
+ * # Bilans energii (Faza 2C, Zadanie 4, Krok 5)
+ *
+ * Trzy wielkości w jednej linii: **produkcja**, **zapotrzebowanie** i **magazyn** (ten
+ * ostatni w `resourceLine` wyżej — jedna liczba ma jedno miejsce).
+ *
+ * Zapotrzebowanie to `rawDemand`, czyli popyt SPRZED kaskady gaszenia. `demand` na ekranie
+ * byłoby liczbą bezużyteczną: kaskada gasi DOPÓKI popyt nie zejdzie do podaży, więc
+ * `demand` po niej jest w przybliżeniu równe `supply` i deficyt znika z ekranu dokładnie
+ * w chwili, w której zaczyna boleć.
+ *
+ * Granica zakresu HUD jest zachowana: to są WIELKOŚCI GLOBALNE (ile wchodzi, ile wychodzi),
+ * których kula unieść nie może. Który KONKRETNIE budynek zgasł i z jakiego powodu, zostaje
+ * w świecie — pierścień alarmu i jego przerwanie (`buildingMesh.ts`, Krok 6).
+ */
+export function powerLine(power: PowerReport): string {
+  return `prąd ${rateText(shownRateTenths(power.supply))} z ${rateText(shownRateTenths(power.rawDemand))} potrzebnych`;
+}
+
+/**
+ * Zdanie o SKUTKU niedoboru — albo pusty napis, gdy niedoboru nie ma.
+ *
+ * ## Kryterium, nie technika
+ *
+ * Brief: *gracz ma widzieć „brakuje 38/s, zgaszono kopalnie" zamiast „kopalnie nie
+ * działają"*. Pierwsze niesie PRZYCZYNĘ, drugie tylko skutek — a bez przyczyny łańcuch Q3
+ * (cztery lasery po 12/s przy produkcji 10/s gaszą EKSTRAKTORY, bo `BROWNOUT_ORDER` gasi
+ * je pierwsze) jest nie do odkrycia z ekranu.
+ *
+ * ## Trzy stany, nie dwa
+ *
+ * Trzeci — „magazyn pokrywa niedobór" — jest tu dlatego, że to jedyne OSTRZEŻENIE PRZED
+ * faktem: sieć już jest na minusie, ale rezerwa jeszcze go zasypuje. Bez niego brownout
+ * przychodzi bez zapowiedzi, w chwili, w której magazyn schodzi do zera, czyli zwykle
+ * w środku ataku (§5.1).
+ *
+ * ## Dlaczego deficyt liczy się z LICZB NA EKRANIE
+ *
+ * `brakuje` jest różnicą dwóch liczb, które gracz właśnie przeczytał w `powerLine`, a nie
+ * osobno zaokrągloną różnicą surowych wartości. Inaczej panel potrafiłby pokazać
+ * „prąd 10,0/s z 48,0/s — brakuje 37,9/s", czyli zdanie, które samo siebie nie zgadza się
+ * o jedną dziesiątą i którego gracz nie ma jak rozstrzygnąć.
+ *
+ * Warunek wyzwalający jest jednak liczony z WARTOŚCI SUROWYCH (`rawDemand > supply`),
+ * nie z zaokrąglonych: zaokrąglenie do dziesiątych mogłoby ogłosić niedobór 0,1/s tam,
+ * gdzie sieć ma nadwyżkę 0,04/s.
+ */
+export function shortfallLine(power: PowerReport): string {
+  const missingTenths = shownRateTenths(power.rawDemand) - shownRateTenths(power.supply);
+  const missing = power.rawDemand > power.supply && missingTenths > 0
+    ? `brakuje ${rateText(missingTenths)}`
+    : '';
+  if (power.shedTypes.length > 0) {
+    // Kolejność `shedTypes` JEST kolejnością gaszenia (`BROWNOUT_ORDER`) — nie sortować.
+    // To ona mówi graczowi, że ekstraktory padają PIERWSZE, czyli dlaczego po brownoucie
+    // nie ma z czego odbudować obrony.
+    const shed = `zgaszono: ${power.shedTypes.join(', ')}`;
+    return missing === '' ? shed : `${missing} — ${shed}`;
+  }
+  return missing === '' ? '' : `${missing} — magazyn pokrywa niedobór`;
 }
 
 // =========================================================================================
@@ -231,7 +377,12 @@ export interface HudView {
    * (przyrząd: `packages/render/test/support/gcWindows.ts`). Bramka porównuje wyłącznie
    * skalary i referencje — bez sklejania napisów, bez tablic.
    */
-  update(s: SimState, cellId: number | null, selectedType: BuildingType): boolean;
+  update(
+    s: SimState,
+    power: PowerReport,
+    cellId: number | null,
+    selectedType: BuildingType,
+  ): boolean;
   detach(): void;
 }
 
@@ -249,6 +400,24 @@ const COST_WIDTH = 4; // [WYGLĄD] najdroższy budynek kosztuje 300
  * budynek dodany w Fazie 3 wywalił się GŁOŚNO przy rozruchu, a nie objawił się panelem,
  * który czasem nie nadąża.
  */
+/**
+ * Podstawa klucza pozycyjnego, którym bramka świeżości porównuje `shedTypes` (patrz
+ * `HudView.update`). Cyfra to `indeks w BROWNOUT_ORDER + 2`, więc podstawa musi być
+ * większa od największej możliwej cyfry — inaczej dwa różne przebiegi gaszenia dałyby
+ * ten sam klucz i panel przestałby się przemalowywać przy zmianie KOLEJNOŚCI gaszenia.
+ *
+ * Straż niżej stoi z tego samego powodu co `MAX_MENU_TYPES`: czwarty typ w
+ * `BROWNOUT_ORDER` (Faza 3 może go dołożyć) ma wywalić się GŁOŚNO przy rozruchu, a nie
+ * objawić panelem, który czasem nie nadąża.
+ */
+const SHED_KEY_RADIX = 8;
+if (BROWNOUT_ORDER.length + 2 > SHED_KEY_RADIX) {
+  throw new RangeError(
+    `hud.ts: BROWNOUT_ORDER ma ${BROWNOUT_ORDER.length} pozycji, a klucz świeżości unosi ` +
+      `najwyżej ${SHED_KEY_RADIX - 2} (podstawa ${SHED_KEY_RADIX}). Podnieś podstawę.`,
+  );
+}
+
 const MAX_MENU_TYPES = 31;
 if (MENU_TYPES.length > MAX_MENU_TYPES) {
   throw new RangeError(
@@ -302,6 +471,17 @@ export function createHudView(
   resources.className = 'hud-resources';
   root.appendChild(resources);
 
+  // Bilans energii i jego SKUTEK — dwa elementy, nie jeden napis: skutek jest ostrzeżeniem
+  // i ma własny kolor, a bilans stoi zawsze, także gdy wszystko jest w porządku. Zlepienie
+  // ich w jedną linię kazałoby malować całość na czerwono albo nie malować wcale.
+  const power = doc.createElement('div');
+  power.className = 'hud-power';
+  root.appendChild(power);
+
+  const shortfall = doc.createElement('div');
+  shortfall.className = 'hud-shortfall';
+  root.appendChild(shortfall);
+
   const headline = doc.createElement('div');
   headline.className = 'hud-headline';
   root.appendChild(headline);
@@ -353,12 +533,35 @@ export function createHudView(
   let lastAffordMask = -1;
   let lastEvacLocked: boolean | undefined;
   let lastOreLeft: boolean | undefined;
+  let lastSupplyTenths = NaN;
+  let lastDemandTenths = NaN;
+  let lastShedKey = -1;
 
   return {
-    update(s: SimState, cellId: number | null, selectedType: BuildingType): boolean {
+    update(
+      s: SimState,
+      report: PowerReport,
+      cellId: number | null,
+      selectedType: BuildingType,
+    ): boolean {
       // Wszystko, od czego zależy CHOĆ JEDEN znak na panelu — i nic ponadto.
       const ore = shownAmount(s.ore);
       const energy = shownAmount(s.storedEnergy);
+      // Po DZIESIĄTYCH, nie po surowych wartościach: podaż pełznie w każdym ticku razem ze
+      // światłem, więc surowe porównanie przemalowywałoby panel co klatkę — patrz
+      // `shownRateTenths`. Porównywane jest dokładnie to, co idzie na ekran.
+      const supplyTenths = shownRateTenths(report.supply);
+      const demandTenths = shownRateTenths(report.rawDemand);
+      // Klucz LICZBOWY, nie `shedTypes.join(',')`: bramka biegnie co klatkę, a sklejony
+      // napis byłby alokacją w pętli renderu przez cały czas trwania brownoutu — czyli
+      // dokładnie wtedy, gdy klatka ma najwięcej roboty. Liczba pozycyjna, nie maska bitowa,
+      // bo KOLEJNOŚĆ gaszenia jest treścią (to ona mówi, że ekstraktory padają pierwsze),
+      // a maska by ją zgubiła. `+2`, żeby typ spoza `BROWNOUT_ORDER` (indexOf → −1) dał 1,
+      // czyli wartość różną od „nie ma nic".
+      let shedKey = 0;
+      for (let i = 0; i < report.shedTypes.length; i++) {
+        shedKey = shedKey * SHED_KEY_RADIX + (BROWNOUT_ORDER.indexOf(report.shedTypes[i]) + 2);
+      }
       // Maska osobno od `ore`: koszty są dziś całkowite, więc zmiana podłogi rudy pokrywa
       // każdą zmianę dostępności — ale `[STROJENIE]` Fazy 3 może dać koszt ułamkowy, a wtedy
       // panel przestałby się przemalowywać w chwili, w której pozycja staje się osiągalna.
@@ -373,10 +576,15 @@ export function createHudView(
       if (
         cellId === lastCell && selectedType === lastType && s.phase === lastPhase &&
         occupant === lastOccupant && ore === lastOre && energy === lastEnergy &&
-        affordMask === lastAffordMask && evacLocked === lastEvacLocked && oreLeft === lastOreLeft
+        affordMask === lastAffordMask && evacLocked === lastEvacLocked && oreLeft === lastOreLeft &&
+        supplyTenths === lastSupplyTenths && demandTenths === lastDemandTenths &&
+        shedKey === lastShedKey
       ) {
         return false;
       }
+      lastSupplyTenths = supplyTenths;
+      lastDemandTenths = demandTenths;
+      lastShedKey = shedKey;
       lastCell = cellId;
       lastType = selectedType;
       lastPhase = s.phase;
@@ -388,6 +596,17 @@ export function createHudView(
       lastOreLeft = oreLeft;
 
       resources.textContent = resourceLine(s);
+      power.textContent = powerLine(report);
+      // Zdanie o skutku pojawia się WYŁĄCZNIE wtedy, gdy jest skutek — pusty napis daje
+      // element o zerowej wysokości, więc panel nie trzyma rezerwy na ostrzeżenie, którego
+      // nie ma. Klasa niesie ODDZIELNIE fakt zgaszenia (kolor alarmu) od samego niedoboru
+      // (magazyn jeszcze go pokrywa), bo to dwie różne pilności.
+      const shed = shortfallLine(report);
+      shortfall.textContent = shed;
+      shortfall.className =
+        shed === ''
+          ? 'hud-shortfall'
+          : `hud-shortfall${report.shedTypes.length > 0 ? ' hud-shortfall--shed' : ' hud-shortfall--drain'}`;
       // Wskazana komórka zostaje w nagłówku TAKŻE po końcu runu. Pierwsza wersja podmieniała
       // całą linię na ostrzeżenie i zabierała przy tym jedyny odczyt wskazania — zmierzone
       // na ekranie po `DEFEAT`: menu dalej liczyło powody odmowy dla komórki, której numeru

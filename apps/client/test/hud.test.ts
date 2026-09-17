@@ -9,6 +9,7 @@ import {
   type BuildCheck,
   type BuildingType,
   type Planet,
+  type PowerReport,
   type SimState,
 } from '@heliopolis/sim';
 import { createCamera, type OrbitCamera, type UnitShadingMode } from '@heliopolis/render';
@@ -31,16 +32,34 @@ import {
   buildMenuRows,
   commandsAccepted,
   createHudView,
+  powerLine,
+  rateText,
   refusalMessage,
+  reportMessage,
   REFUSAL_MESSAGES,
   resourceLine,
+  shortfallLine,
   shownAmount,
+  shownRateTenths,
   type ElementLike,
   type MenuRow,
 } from '../src/hud.js';
-import { attachInput, createSelection, playerBuildableTypes, type RayCamera } from '../src/input.js';
+import {
+  attachInput,
+  createSelection,
+  playerBuildableTypes,
+  refusalReason,
+  type RayCamera,
+  type Report,
+} from '../src/input.js';
 import { wireClient, type Client, type ClientScene } from '../src/client.js';
-import { buildableNear, builtCell, freeHexagonNear, worldFingerprint } from './support/fixtures.js';
+import {
+  buildableNear,
+  builtCell,
+  fourFreeHexagonsNear,
+  freeHexagonNear,
+  worldFingerprint,
+} from './support/fixtures.js';
 
 // Ta sama planeta-fixture, co w `input.test.ts` i w testach `packages/render` — jedna
 // „prawdziwa planeta", o której mówi cała gałąź.
@@ -58,6 +77,37 @@ function row(rows: readonly MenuRow[], type: BuildingType): MenuRow {
   const found = rows.find((r) => r.type === type);
   if (found === undefined) throw new Error(`menu nie ma pozycji ${type}`);
   return found;
+}
+
+/**
+ * Bilans energii SPOCZYNKOWY — sieć bez odbiorców i bez awarii.
+ *
+ * Jeden obiekt na cały plik, nie świeży przy każdym wywołaniu, i to nie jest oszczędność:
+ * test alokacji (21) woła `update` sto tysięcy razy w mierzonym oknie, więc fikstura
+ * tworzona w pętli byłaby alokacją PRZYRZĄDU udającą alokację panelu.
+ */
+const IDLE_POWER: PowerReport = {
+  supply: 0,
+  demand: 0,
+  rawDemand: 0,
+  shedTypes: [],
+  outage: new Uint8Array(planet.cells.length),
+};
+
+/**
+ * Bilans z niedoborem: podaż, popyt sprzed kaskady i to, co zgaszono.
+ *
+ * `demand` (popyt PO kaskadzie) domyślnie tam, gdzie kaskada by go zostawiła, ale podawalny
+ * osobno — test 8d musi mieć wartość różną OD OBU pozostałych, żeby dało się rozstrzygnąć,
+ * którą z nich panel faktycznie pokazuje.
+ */
+function powerWith(
+  supply: number,
+  rawDemand: number,
+  shedTypes: BuildingType[],
+  demand = Math.min(supply, rawDemand),
+): PowerReport {
+  return { supply, demand, rawDemand, shedTypes, outage: IDLE_POWER.outage };
 }
 
 describe('buildMenuRows — menu podaje POWÓD odmowy, nie tylko jej fakt', () => {
@@ -207,7 +257,9 @@ describe('buildMenuRows — skład, kolejność i źródło liczb', () => {
     // `ruda 141.66666666666666`. Wiązany jest cały napis plus zakaz ułamka.
     s.ore = 141.66666666666666;
     s.storedEnergy = 12.9;
-    expect(resourceLine(s)).toBe('ruda 141 · energia 12');
+    // „magazyn", nie „energia": od Zadania 4 obok stoi WIELKOŚĆ NA SEKUNDĘ (produkcja
+    // i pobór), więc zapas musi się nazywać tak, żeby gracz nie czytał go jako tempa.
+    expect(resourceLine(s)).toBe('ruda 141 · magazyn 12');
     expect(resourceLine(s)).not.toMatch(/\d[.,]\d/);
   });
 });
@@ -220,47 +272,74 @@ function typeWithCost(s: SimState, cell: number, cost: number): BuildingType {
 }
 
 // =========================================================================================
-// Siedem powodów — siedem komunikatów. WŁASNOŚĆ, nie siedem przypadków.
+// DZIEWIĘĆ powodów — dziewięć komunikatów. WŁASNOŚĆ, nie dziewięć przypadków.
+//
+// Zadanie 3 wiązało SIEDEM (te z `canBuild`) i zapisało granicę: `refusalReason` ma jeszcze
+// dwa własne, dotyczące rozbiórki, których `canBuild` nie zna. Dopóki meldunek był gotowym
+// napisem, tamte dwa i tak trafiały na ekran surowe. Krok 0 Zadania 4 to zmienia, więc
+// własność obejmuje teraz OBA źródła powodów.
 // =========================================================================================
 
 /**
- * Źródło `canBuild` — miejsce, w którym powstaje SIEDEM powodów odmowy budowy, czyli
- * dokładnie te, które opisuje słownik tego zadania.
+ * Oba miejsca, w których powstaje powód odmowy: `canBuild` (siedem powodów budowy) oraz
+ * `refusalReason` (dwa powody rozbiórki, plus `NO_SUCH_CELL` wspólny z tamtym).
  *
- * Nie jest to jedyne miejsce w repozytorium, gdzie powstaje jakikolwiek powód: `input.ts`
- * (`refusalReason`, gałąź `DEMOLISH`) ma własne `NOTHING_TO_DEMOLISH` i `CORE_INDESTRUCTIBLE`,
- * których `canBuild` nie zna, bo rozbiórki nie dotyczy. Rozszerzenie słownika o te dwa
- * należy do zmiany kształtu meldunków (Zadanie 4) i tutaj świadomie go NIE ma — patrz
- * `task-3-report.md`, §7.1.
+ * Drugi plik jest tu od Zadania 4 i to jest cała różnica wobec Zadania 3: dopóki skan
+ * czytał wyłącznie `commands.ts`, słownik mógł nie mieć `NOTHING_TO_DEMOLISH`
+ * i `CORE_INDESTRUCTIBLE`, a test był zielony.
  */
-const COMMANDS_SOURCE = readFileSync(
-  new URL('../../../packages/sim/src/sim/commands.ts', import.meta.url),
-  'utf8',
-);
+function functionBody(source: string, name: string): string {
+  const start = source.indexOf(`export function ${name}(`);
+  const end = source.indexOf('\n}', start);
+  if (start < 0 || end < 0) {
+    throw new Error(
+      `functionBody: nie znalazłem ciała funkcji ${name} — skan powodów czytałby pusty ` +
+        'napis i przechodził, nie mierząc niczego.',
+    );
+  }
+  return source.slice(start, end);
+}
+
+const REASON_SOURCES: readonly (readonly [string, string])[] = [
+  ['commands.ts', readFileSync(new URL('../../../packages/sim/src/sim/commands.ts', import.meta.url), 'utf8')],
+  // WYŁĄCZNIE ciało `refusalReason`, nie cały plik: `input.ts` zwraca literały także
+  // z `keyCode` (`'Space'`), a skan po całym pliku wziąłby je za powód odmowy i wywalił się
+  // na własnej straży literału. Wycinek jest tu granicą skanu, nie jego osłabieniem —
+  // brak funkcji o tej nazwie RZUCA.
+  ['input.ts:refusalReason', functionBody(readFileSync(new URL('../src/input.ts', import.meta.url), 'utf8'), 'refusalReason')],
+];
 
 /**
- * Powody ZADEKLAROWANE w `commands.ts`, wyjęte z literałów `reason: '…'`.
+ * Powody ZADEKLAROWANE w źródłach wyżej, wyjęte z literałów.
  *
  * **Granica skanu, domknięta GŁOŚNO, a nie po cichu:** rozpoznaje wyłącznie literał. Powód
  * podany stałą (`reason: EIGHTH`) byłby dla niego niewidzialny i test przeszedłby mimo
  * braku komunikatu — zmierzone w przeglądzie rundy 1 jako 53/53 zielone. Zamiast udawać,
- * że skan to rozumie, rzuca: odejście od stylu domowego `commands.ts` ma zatrzymać test
- * z komunikatem, co poszerzyć, a nie przepuścić powód bez opisu.
+ * że skan to rozumie, rzuca: odejście od stylu domowego ma zatrzymać test z komunikatem,
+ * co poszerzyć, a nie przepuścić powód bez opisu.
+ *
+ * Dwa wzorce, bo powody powstają w dwóch kształtach: `commands.ts` zwraca `{ ok: false,
+ * reason: '…' }`, a `refusalReason` — samo `return '…'`. Oba są zakotwiczone w WARTOŚCI,
+ * nie w deklaracji typu (`{ ok: false; reason: string }` ma średnik, więc tam nie wpada).
  */
 function declaredReasons(): Set<string> {
-  // Zakotwiczone w `ok: false,` — czyli w WARTOŚCI odmowy, a nie w deklaracji typu
-  // (`{ ok: false; reason: string }` ma średnik, więc tu nie wpada).
-  const wartosci = [...COMMANDS_SOURCE.matchAll(/ok:\s*false,\s*reason:\s*([^,}\n]+)/g)]
-    .map((m) => m[1].trim());
-  const nieliteraly = wartosci.filter((v) => !/^'[A-Z_]+'$/.test(v));
-  if (nieliteraly.length > 0) {
-    throw new Error(
-      `declaredReasons: w commands.ts jest powód podany INACZEJ niż literałem — ` +
-        `${JSON.stringify(nieliteraly)}. Ten skan rozumie wyłącznie literały, więc taki ` +
-        'powód przeszedłby bez komunikatu. Poszerz skan albo wróć do literału.',
-    );
+  const out = new Set<string>();
+  for (const [name, source] of REASON_SOURCES) {
+    const wartosci = [
+      ...[...source.matchAll(/ok:\s*false,\s*reason:\s*([^,}\n]+)/g)].map((m) => m[1].trim()),
+      ...[...source.matchAll(/return\s+('[A-Z_]+'|'[^']*')\s*;/g)].map((m) => m[1].trim()),
+    ];
+    const nieliteraly = wartosci.filter((v) => !/^'[A-Z_]+'$/.test(v));
+    if (nieliteraly.length > 0) {
+      throw new Error(
+        `declaredReasons: w ${name} jest powód podany INACZEJ niż literałem — ` +
+          `${JSON.stringify(nieliteraly)}. Ten skan rozumie wyłącznie literały, więc taki ` +
+          'powód przeszedłby bez komunikatu. Poszerz skan albo wróć do literału.',
+      );
+    }
+    for (const v of wartosci) out.add(v.slice(1, -1));
   }
-  return new Set(wartosci.map((v) => v.slice(1, -1)));
+  return out;
 }
 
 /**
@@ -284,6 +363,15 @@ function observedReasons(): Set<string> {
   collect(canBuild(s, hex, 'GWIAZDA_ŚMIERCI' as BuildingType));
   collect(canBuild(s, hex, 'GEOTHERMAL_CAP'));
   collect(canBuild(s, hex, 'EVACUATION_MODULE'));
+  // Powody ROZBIÓRKI — te, których `canBuild` nie zna, bo jej nie dotyczy. Prowokowane
+  // przez `refusalReason`, czyli przez tę samą funkcję, z której korzysta wejście gracza.
+  for (const intent of [
+    { kind: 'DEMOLISH', cellId: hex } as const,
+    { kind: 'DEMOLISH', cellId: planet.startCell } as const,
+  ]) {
+    const reason = refusalReason(s, intent);
+    if (reason !== null) seen.add(reason);
+  }
   s.ore = 0;
   collect(canBuild(s, hex, 'LASER_TURRET'));
   return seen;
@@ -294,9 +382,19 @@ describe('refusalMessage — każdy powód odmowy mówi po ludzku', () => {
     const declared = declaredReasons();
     const observed = observedReasons();
 
-    // Kontrola na przyrząd — bez niej pusta pętla przeszłaby na zielono.
-    expect(declared.size).toBeGreaterThanOrEqual(7);
-    expect(observed.size).toBeGreaterThanOrEqual(7);
+    // Kontrola na przyrząd — bez niej pusta pętla przeszłaby na zielono. DZIEWIĘĆ, nie
+    // siedem: Krok 0 Zadania 4 wprowadził powody rozbiórki na tę samą drogę, co powody
+    // budowy, więc własność obejmuje je od tej pory obie.
+    expect(declared.size).toBeGreaterThanOrEqual(9);
+    expect(observed.size).toBeGreaterThanOrEqual(9);
+    // …i są wśród nich DOKŁADNIE te dwa, których Zadanie 3 nie umiało objąć. Asercja
+    // z nazwy, nie tylko po liczbie: podniesiona granica byłaby spełniona także przez dwa
+    // powody dowolne inne.
+    for (const reason of ['NOTHING_TO_DEMOLISH', 'CORE_INDESTRUCTIBLE']) {
+      expect({ reason, declared: declared.has(reason), observed: observed.has(reason) }).toEqual({
+        reason, declared: true, observed: true,
+      });
+    }
     // Ta połowa pilnuje SAMEGO SKANU: każdy powód, który `canBuild` naprawdę zwraca, musi
     // dać się w źródle znaleźć. Gdyby wyrażenie przestało łapać którykolwiek, wyjdzie to tu,
     // a nie dopiero wtedy, gdy graczowi pokaże się napis zastępczy.
@@ -320,8 +418,8 @@ describe('refusalMessage — każdy powód odmowy mówi po ludzku', () => {
       expect({ reason, carriesId: message.includes(reason) }).toEqual({ reason, carriesId: false });
     }
 
-    // Siedem powodów ma dać siedem RÓŻNYCH zdań. Jeden komunikat skopiowany pod wszystkie
-    // klucze spełniłby każdą asercję wyżej i nie powiedziałby graczowi niczego.
+    // Dziewięć powodów ma dać dziewięć RÓŻNYCH zdań. Jeden komunikat skopiowany pod
+    // wszystkie klucze spełniłby każdą asercję wyżej i nie powiedziałby graczowi niczego.
     const messages = [...declared].map((r) => refusalMessage(r));
     expect(new Set(messages).size).toBe(declared.size);
   });
@@ -335,6 +433,200 @@ describe('refusalMessage — każdy powód odmowy mówi po ludzku', () => {
     const unknown = refusalMessage('CZWARTY_KSIĘŻYC');
     expect(unknown).toContain('CZWARTY_KSIĘŻYC');
     expect(declaredReasons().has('CZWARTY_KSIĘŻYC')).toBe(false);
+  });
+});
+
+// =========================================================================================
+// Krok 0: JEDNO źródło zdań (Faza 2C, Zadanie 4)
+//
+// Zadanie 3 zgłosiło rozjazd i świadomie go nie naprawiło: panel mówił „komórka zajęta —
+// najpierw rozbierz", a nakładka diagnostyczna obok, o TYM SAMYM kliknięciu, pokazywała
+// surowe `odmowa: CELL_OCCUPIED`. Przyczyną były dwa źródła napisów, nie dwa złe napisy.
+// =========================================================================================
+
+describe('reportMessage — meldunek strukturalny staje się zdaniem w JEDNYM miejscu', () => {
+  it('8b. [WŁASNOŚĆ] odmowa w nakładce mówi DOKŁADNIE to, co panel — i nie niesie identyfikatora', () => {
+    // To jest rozjazd z `task-3-report.md` §7.1, zmierzony na obu wyjściach naraz: napis
+    // nakładki musi ZAWIERAĆ to samo zdanie, które panel stawia przy pozycji menu.
+    const { s } = richRun();
+    const occupied = builtCell(s);
+    const panel = makePanel();
+    panel.view.update(s, IDLE_POWER, occupied, 'BARRICADE');
+
+    const intent = { kind: 'BUILD', cellId: occupied, type: 'BARRICADE' } as const;
+    const reason = refusalReason(s, intent);
+    expect(reason).toBe('CELL_OCCUPIED');
+    const overlay = reportMessage({ kind: 'REFUSED', intent, reason: reason! });
+
+    // POŁOWA PIERWSZA: nakładka i panel niosą TO SAMO zdanie.
+    expect(overlay).toContain(refusalMessage('CELL_OCCUPIED'));
+    expect(panel.text()).toContain(refusalMessage('CELL_OCCUPIED'));
+    // POŁOWA DRUGA, i to ona była zepsuta: identyfikator NIE trafia na ekran ŻADNYM z dwóch
+    // wyjść. Napis `odmowa: CELL_OCCUPIED` (kształt sprzed tej zmiany) oblewa tutaj.
+    expect(overlay).not.toContain('CELL_OCCUPIED');
+    expect(panel.text()).not.toContain('CELL_OCCUPIED');
+    // …a komórka, której dotyczy, jest nadal w meldunku — bez niej gracz nie wie, o co chodzi.
+    expect(overlay).toContain(String(occupied));
+  });
+
+  it('8c. [WŁASNOŚĆ] KAŻDY rodzaj meldunku daje zdanie po polsku, bez surowego identyfikatora powodu', () => {
+    // Pętla po WSZYSTKICH dziewięciu powodach plus po każdym pozostałym rodzaju meldunku.
+    // Rodzaj bez gałęzi w `reportMessage` jest dziś błędem kompilacji (unia wyczerpana), ale
+    // gałąź zwracająca identyfikator — już nie, i to ona jest tu badana.
+    const reports: Report[] = [
+      { kind: 'QUEUED', intent: { kind: 'BUILD', cellId: 7, type: 'LASER_TURRET' } },
+      { kind: 'QUEUED', intent: { kind: 'DEMOLISH', cellId: 7 } },
+      { kind: 'MISSED' },
+      { kind: 'FOCUS_CORE', cellId: planet.startCell },
+      { kind: 'TYPE_CHOSEN', type: 'PYLON' },
+      { kind: 'SHADING', mode: 'threshold' },
+      ...[...declaredReasons()].map(
+        (reason): Report => ({ kind: 'REFUSED', intent: { kind: 'BUILD', cellId: 7, type: 'PYLON' }, reason }),
+      ),
+    ];
+    const seen = new Set<string>();
+    for (const report of reports) {
+      const message = reportMessage(report);
+      expect({ report: report.kind, empty: message.length === 0 }).toEqual({ report: report.kind, empty: false });
+      if (report.kind === 'REFUSED') {
+        expect({ reason: report.reason, carriesId: message.includes(report.reason) }).toEqual({
+          reason: report.reason, carriesId: false,
+        });
+      }
+      seen.add(message);
+    }
+    // Każdy meldunek mówi coś INNEGO — jedno zdanie pod wszystkie rodzaje spełniłoby
+    // asercje wyżej i nie powiedziałoby graczowi niczego.
+    expect(seen.size).toBe(reports.length);
+    // Koszt w meldunku o wyborze typu jest CZYTANY z `BUILDINGS`, nie przepisany — ta sama
+    // tabela, co w menu.
+    expect(reportMessage({ kind: 'TYPE_CHOSEN', type: 'PYLON' })).toContain(String(BUILDINGS.PYLON.costOre));
+    // Nazwy budynków zostają angielskimi identyfikatorami (decyzja Fazy 4) — i to jest
+    // ZGODNE z menu oraz ze skrótami 1-9, gdzie gracz widzi dokładnie te same napisy.
+    expect(reportMessage({ kind: 'TYPE_CHOSEN', type: 'PYLON' })).toContain('PYLON');
+  });
+});
+
+// =========================================================================================
+// Krok 5: BILANS — liczba, po której da się odkryć łańcuch Q3
+// =========================================================================================
+
+describe('bilans energii — HUD mówi, CZEGO brakuje i CO przez to zgasło', () => {
+  it('8d. [PRÓG] linia bilansu niesie WSZYSTKIE TRZY wielkości i bierze popyt SPRZED kaskady', () => {
+    // `demand` (po kaskadzie) na ekranie byłoby liczbą bezużyteczną: kaskada gasi DOPÓKI
+    // popyt nie zejdzie do podaży, więc deficyt znikałby dokładnie wtedy, gdy zaczyna boleć.
+    // Test podaje raport, w którym obie wartości RÓŻNIĄ SIĘ, i sprawdza, którą widać.
+    // `demand` różne OD OBU pozostałych — inaczej „nie widać popytu po kaskadzie" byłoby
+    // prawdziwe z konstrukcji, bo pokrywałoby się z podażą.
+    const power = powerWith(10, 48, ['EXTRACTOR'], 7.3);
+    expect(power.demand).not.toBe(power.rawDemand);
+    expect(power.demand).not.toBe(power.supply);
+    const line = powerLine(power);
+    expect(line).toContain(rateText(shownRateTenths(10)));
+    expect(line).toContain(rateText(shownRateTenths(48)));
+    expect(line).not.toContain(rateText(shownRateTenths(power.demand)));
+
+    // Trzecia wielkość — MAGAZYN — stoi w wierszu zasobów, bo tam stała od Zadania 3.
+    // Jedna liczba ma jedno miejsce (`client.ts`): duplikat w dwóch zaokrągleniach był
+    // defektem, który Zadanie 3 usuwało.
+    const { s } = richRun();
+    s.storedEnergy = 47.9;
+    expect(resourceLine(s)).toContain('magazyn 47');
+  });
+
+  it('8e. [PARA] „brakuje X/s — zgaszono: …" pojawia się z niedoborem i znika bez niego', () => {
+    // Kryterium briefu, nie technika: gracz ma widzieć PRZYCZYNĘ („brakuje 38/s, zgaszono
+    // kopalnie"), a nie sam skutek („kopalnie nie działają").
+    const shed = shortfallLine(powerWith(10, 48, ['EXTRACTOR', 'KINETIC_TURRET']));
+    expect(shed).toContain(rateText(shownRateTenths(38))); // LICZBA niedoboru
+    expect(shed).toContain('EXTRACTOR'); // CO zgasło
+    expect(shed).toContain('KINETIC_TURRET');
+    // KOLEJNOŚĆ gaszenia jest treścią: to ona mówi, że kopalnie padają PIERWSZE, czyli
+    // dlaczego po brownoucie nie ma z czego odbudować obrony.
+    expect(shed.indexOf('EXTRACTOR')).toBeLessThan(shed.indexOf('KINETIC_TURRET'));
+
+    // POŁOWA „MA ZNIKNĄĆ": sieć z nadwyżką nie mówi nic. Bez niej ostrzeżenie mogłoby stać
+    // na ekranie zawsze i nie znaczyć nic.
+    expect(shortfallLine(powerWith(48, 10, []))).toBe('');
+    expect(shortfallLine(powerWith(10, 10, []))).toBe('');
+
+    // TRZECI STAN: niedobór jest, ale magazyn go jeszcze pokrywa — ostrzeżenie PRZED faktem.
+    const draining = shortfallLine(powerWith(10, 48, []));
+    expect(draining).toContain(rateText(shownRateTenths(38)));
+    expect(draining).toContain('magazyn');
+    expect(draining).not.toContain('zgaszono');
+
+    // Liczba niedoboru zgadza się z RÓŻNICĄ liczb pokazanych w linii bilansu — inaczej
+    // panel potrafiłby pokazać „10,0/s z 48,0/s — brakuje 37,9/s", czyli zdanie, które samo
+    // siebie nie zgadza się o dziesiątą.
+    const power = powerWith(9.97, 48.02, ['EXTRACTOR']);
+    const shownSupply = shownRateTenths(power.supply);
+    const shownDemand = shownRateTenths(power.rawDemand);
+    expect(shortfallLine(power)).toContain(rateText(shownDemand - shownSupply));
+  });
+
+  it('8f. [ŁAŃCUCH Q3] cztery lasery gaszą kopalnie, a panel to MÓWI — z prawdziwej symulacji', () => {
+    // Serce zadania, na prawdziwym `Sim`, nie na ręcznej fiksturze: `LASER_TURRET.energyDrain`
+    // 12 × 4 = 48/s przy produkcji CORE 10/s, a `BROWNOUT_ORDER` gasi EKSTRAKTOR pierwszy.
+    // Gracz autoryzował WIĘCEJ obrony i dostał MNIEJ — dopóki tego nie widać, nie ma jak tego
+    // odkryć (Faza 1C: cztery lasery 10 224 tiki, dwa lasery 13 323).
+    const sim = new Sim(planet, DEFAULT_RUN);
+    const s = sim.state;
+    s.ore = 10_000; // [STROJENIE] w teście: skarbiec ponad ekstraktorem i czterema laserami
+    sim.enqueue({ kind: 'BUILD', cellId: buildableNear(s, 'EXTRACTOR'), type: 'EXTRACTOR' });
+    sim.step();
+    for (const cellId of fourFreeHexagonsNear(s)) {
+      sim.enqueue({ kind: 'BUILD', cellId, type: 'LASER_TURRET' });
+    }
+    sim.step();
+    s.storedEnergy = 0; // magazyn wyczerpany: kaskada musi zadziałać
+    sim.step();
+
+    const power = sim.lastPower;
+    expect(power.shedTypes, 'kopalnie gasną PIERWSZE').toContain('EXTRACTOR');
+
+    const panel = makePanel();
+    expect(panel.view.update(s, power, null, 'BARRICADE')).toBe(true);
+    const text = panel.text();
+
+    // 1. LICZBA, której brakuje — bez niej gracz widzi skutek, nie przyczynę.
+    expect(text).toContain(rateText(shownRateTenths(power.rawDemand) - shownRateTenths(power.supply)));
+    // 2. CO zgasło.
+    expect(text).toContain('zgaszono');
+    expect(text).toContain('EXTRACTOR');
+    // 3. …oraz OBIE strony bilansu, żeby dało się zobaczyć, że to POBÓR urósł, a nie
+    //    produkcja spadła. To jest zdanie, które odróżnia „dobuduj panele" od „rozbierz laser".
+    expect(text).toContain(rateText(shownRateTenths(power.supply)));
+    expect(text).toContain(rateText(shownRateTenths(power.rawDemand)));
+    expect(power.rawDemand).toBeGreaterThan(4 * BUILDINGS.LASER_TURRET.energyDrain);
+
+    console.log(`[Q3] panel mówi: ${panel.text().split('\\n').join(' | ')}`);
+  });
+
+  it('8g. [BRAMKA] zmiana bilansu przemalowuje panel — a bilans bez zmiany nie', () => {
+    // Bramka świeżości porównuje DZIESIĄTE, czyli dokładnie to, co idzie na ekran. Gdyby
+    // porównywała surowe `supply`, panel przemalowywałby się w KAŻDEJ klatce (podaż pełznie
+    // razem ze światłem), czyli alokowałby dziewięć obiektów menu sześćdziesiąt razy na
+    // sekundę — dokładnie to, czego zabrania `global-constraints.md`.
+    const { s } = richRun();
+    const panel = makePanel();
+    const cell = freeHexagonNear(s);
+    expect(panel.view.update(s, powerWith(10, 20, []), cell, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, powerWith(10, 20, []), cell, 'BARRICADE')).toBe(false);
+
+    // Zmiana PONIŻEJ rozdzielczości wyświetlania nie przemalowuje — bo nie zmienia znaku.
+    expect(panel.view.update(s, powerWith(10.001, 20, []), cell, 'BARRICADE')).toBe(false);
+    // …a zmiana widoczna na ekranie — przemalowuje. Para przy samej granicy dziesiątej.
+    expect(panel.view.update(s, powerWith(10.06, 20, []), cell, 'BARRICADE')).toBe(true);
+
+    // Sama LISTA zgaszonych typów jest osobnym kanałem: te same liczby, inny skutek.
+    expect(panel.view.update(s, powerWith(10.06, 20, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, powerWith(10.06, 20, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(false);
+    // …łącznie z KOLEJNOŚCIĄ, której maska bitowa by nie uniosła.
+    expect(
+      panel.view.update(s, powerWith(10.06, 20, ['KINETIC_TURRET', 'EXTRACTOR']), cell, 'BARRICADE'),
+    ).toBe(true);
+    expect(panel.text()).toContain('KINETIC_TURRET, EXTRACTOR');
   });
 });
 
@@ -449,7 +741,7 @@ describe('HudView — panel zasobów i budowy', () => {
   it('12. panel niesie POLSKI powód, a surowy identyfikator na ekran NIE trafia', () => {
     const { s } = richRun();
     const panel = makePanel();
-    expect(panel.view.update(s, freeHexagonNear(s), 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE')).toBe(true);
 
     const geothermal = rowText(panel, 'GEOTHERMAL_CAP');
     expect(geothermal).toContain(refusalMessage('WRONG_CELL_TYPE'));
@@ -476,13 +768,13 @@ describe('HudView — panel zasobów i budowy', () => {
     if (building === null) throw new Error('fixture: komórka miała być zabudowana');
 
     const panel = makePanel();
-    expect(panel.view.update(s, cell, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(true);
     const before = panel.dump();
 
     building.hp = Math.floor(building.hp / 3);
     building.powered = !building.powered;
     // POŁOWA PIERWSZA: nic z tego nie każe panelowi się przemalować.
-    expect(panel.view.update(s, cell, 'BARRICADE')).toBe(false);
+    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(false);
 
     // POŁOWA DRUGA, i to ona niesie tu ciężar: ŚWIEŻY panel, malowany od zera na stanie
     // z innym `hp` i innym `powered`, ma dać wyjście identyczne CO DO ZNAKU.
@@ -495,14 +787,14 @@ describe('HudView — panel zasobów i budowy', () => {
     // Zrzut obejmuje klasę, treść i kontrakt wskaźnika na KAŻDEJ głębokości, więc obie
     // drogi przemytu wpadają pod jednego strażnika zamiast pod dwie łatki.
     const fresh = makePanel();
-    expect(fresh.view.update(s, cell, 'BARRICADE')).toBe(true);
+    expect(fresh.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(true);
     expect(fresh.dump()).toBe(before);
 
     // Kontrola pozytywna na przyrząd: panel NAPRAWDĘ reaguje na to, co MA nieść — bez niej
     // „dwa zrzuty są równe" mogłoby znaczyć „zrzut jest stały", a nie „hp nie przecieka".
     s.ore -= 1;
     const moved = makePanel();
-    expect(moved.view.update(s, cell, 'BARRICADE')).toBe(true);
+    expect(moved.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(true);
     expect(moved.dump()).not.toBe(before);
   });
 
@@ -516,10 +808,10 @@ describe('HudView — panel zasobów i budowy', () => {
 
     s.ore = 1000;
     const bogaty = makePanel();
-    bogaty.view.update(s, occupied, 'BARRICADE');
+    bogaty.view.update(s, IDLE_POWER, occupied, 'BARRICADE');
     s.ore = 0;
     const biedny = makePanel();
-    biedny.view.update(s, occupied, 'BARRICADE');
+    biedny.view.update(s, IDLE_POWER, occupied, 'BARRICADE');
 
     // TREŚĆ wierszy menu jest identyczna — i to jest cała trudność tego przypadku. (Wiersz
     // zasobów oczywiście się różni; on nie mówi, KTÓREJ pozycji brakuje na koncie.)
@@ -540,7 +832,7 @@ describe('HudView — panel zasobów i budowy', () => {
     // deklaruje się jako łapiące wskaźnik. Bez tego naprawa nie miałaby strażnika w ogóle.
     const { s } = richRun();
     const panel = makePanel();
-    panel.view.update(s, freeHexagonNear(s), 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE');
 
     const wszystkie: FakeElement[] = [];
     const zbierz = (e: FakeElement): void => {
@@ -572,7 +864,7 @@ describe('HudView — panel zasobów i budowy', () => {
     // elementem, który łapie wskaźnik) gracz dostałby natywne menu przeglądarki.
     const { s } = richRun();
     const panel = makePanel();
-    panel.view.update(s, freeHexagonNear(s), 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE');
     let prevented = 0;
     // Zdarzenie z „łapki" bąbelkuje do korzenia — `pointer-events` rozstrzyga TRAFIANIE,
     // nie propagację — więc nasłuch na korzeniu je łapie.
@@ -586,8 +878,8 @@ describe('HudView — panel zasobów i budowy', () => {
     const cell = freeHexagonNear(s);
     const other = planet.cells[cell].neighbors[0];
 
-    expect(panel.view.update(s, cell, 'BARRICADE')).toBe(true); // pierwsze malowanie
-    expect(panel.view.update(s, cell, 'BARRICADE')).toBe(false); // nic się nie ruszyło
+    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(true); // pierwsze malowanie
+    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(false); // nic się nie ruszyło
 
     // Każdy kanał z osobna, i każdy w parze „zmiana → true, powtórka → false". Kanał, który
     // przestanie wchodzić do bramki, zostawia panel NIEAKTUALNY — a to wada widoczna dopiero
@@ -600,17 +892,17 @@ describe('HudView — panel zasobów i budowy', () => {
       ['faza', () => { s.phase = 'DEFEAT'; }],
       ['tick odblokowania Evac', () => { s.tick = s.evacUnlockTick; }],
     ];
-    expect(panel.view.update(s, other, 'BARRICADE')).toBe(true); // wskazana komórka
-    expect(panel.view.update(s, other, 'BARRICADE')).toBe(false);
-    expect(panel.view.update(s, other, 'PYLON')).toBe(true); // wybrany typ
-    expect(panel.view.update(s, other, 'PYLON')).toBe(false);
+    expect(panel.view.update(s, IDLE_POWER, other, 'BARRICADE')).toBe(true); // wskazana komórka
+    expect(panel.view.update(s, IDLE_POWER, other, 'BARRICADE')).toBe(false);
+    expect(panel.view.update(s, IDLE_POWER, other, 'PYLON')).toBe(true); // wybrany typ
+    expect(panel.view.update(s, IDLE_POWER, other, 'PYLON')).toBe(false);
     for (const [nazwa, zmien] of kanaly.slice(2)) {
       zmien();
-      expect({ nazwa, przemalowane: panel.view.update(s, other, 'PYLON') }).toEqual({
+      expect({ nazwa, przemalowane: panel.view.update(s, IDLE_POWER, other, 'PYLON') }).toEqual({
         nazwa,
         przemalowane: true,
       });
-      expect({ nazwa, przemalowane: panel.view.update(s, other, 'PYLON') }).toEqual({
+      expect({ nazwa, przemalowane: panel.view.update(s, IDLE_POWER, other, 'PYLON') }).toEqual({
         nazwa,
         przemalowane: false,
       });
@@ -619,7 +911,7 @@ describe('HudView — panel zasobów i budowy', () => {
     // Zabudowanie wskazanej komórki też jest zmianą — bez tego menu dalej pokazywałoby
     // „można budować" na komórce, na której właśnie coś stanęło.
     s.buildings[other] = { cellId: other, type: 'BARRICADE', hp: 1, powered: false };
-    expect(panel.view.update(s, other, 'PYLON')).toBe(true);
+    expect(panel.view.update(s, IDLE_POWER, other, 'PYLON')).toBe(true);
   });
 
   it('14b. [BRAMKA] wyczerpanie złoża pod kursorem przemalowuje menu', () => {
@@ -630,12 +922,12 @@ describe('HudView — panel zasobów i budowy', () => {
     const panel = makePanel();
     const deposit = buildableNear(s, 'EXTRACTOR');
     expect(s.oreRemaining[deposit]).toBeGreaterThan(0);
-    expect(panel.view.update(s, deposit, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, IDLE_POWER, deposit, 'BARRICADE')).toBe(true);
     const before = rowText(panel, 'EXTRACTOR');
     expect(before).not.toContain(refusalMessage('WRONG_CELL_TYPE'));
 
     s.oreRemaining[deposit] = 0;
-    expect(panel.view.update(s, deposit, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, IDLE_POWER, deposit, 'BARRICADE')).toBe(true);
     expect(rowText(panel, 'EXTRACTOR')).toContain(refusalMessage('WRONG_CELL_TYPE'));
   });
 
@@ -651,7 +943,7 @@ describe('HudView — panel zasobów i budowy', () => {
     try {
       BUILDINGS.BARRICADE.costOre = 7.5; // [STROJENIE] w teście: koszt ułamkowy
       s.ore = 7.2;
-      expect(panel.view.update(s, cell, 'PYLON')).toBe(true);
+      expect(panel.view.update(s, IDLE_POWER, cell, 'PYLON')).toBe(true);
       expect(row(buildMenuRows(s, cell), 'BARRICADE').affordable).toBe(false);
 
       // Ta sama PODŁOGA rudy (7), a dostępność się zmieniła. Jedynym kanałem, który to widzi,
@@ -659,7 +951,7 @@ describe('HudView — panel zasobów i budowy', () => {
       s.ore = 7.7;
       expect(shownAmount(7.2)).toBe(shownAmount(7.7));
       expect(row(buildMenuRows(s, cell), 'BARRICADE').affordable).toBe(true);
-      expect(panel.view.update(s, cell, 'PYLON')).toBe(true);
+      expect(panel.view.update(s, IDLE_POWER, cell, 'PYLON')).toBe(true);
     } finally {
       BUILDINGS.BARRICADE.costOre = original;
     }
@@ -670,10 +962,10 @@ describe('HudView — panel zasobów i budowy', () => {
     const { s } = richRun();
     const panel = makePanel();
     const cell = freeHexagonNear(s);
-    panel.view.update(s, cell, 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
     expect(panel.text()).not.toContain('nie są przyjmowane');
     s.phase = 'DEFEAT';
-    panel.view.update(s, cell, 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
     expect(panel.text()).toContain('nie są przyjmowane');
     expect(panel.text()).toContain('DEFEAT');
     // …a numer wskazanej komórki NIE znika razem z runem. Zmierzone na ekranie: pierwsza
@@ -685,7 +977,7 @@ describe('HudView — panel zasobów i budowy', () => {
   it('16. kliknięcie w pozycję menu wybiera JEJ typ — każdą pozycję z osobna', () => {
     const { s } = richRun();
     const panel = makePanel();
-    panel.view.update(s, freeHexagonNear(s), 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE');
     const types = playerBuildableTypes();
     const picks = panel.picks();
     expect(picks.length).toBe(types.length);
@@ -724,7 +1016,7 @@ describe('HudView — panel zasobów i budowy', () => {
       fireOn(keys, 'keydown', {
         code: `Digit${n}`, key: '', shiftKey: false, preventDefault: () => {},
       });
-      panel.view.update(s, cell, selection.selectedType);
+      panel.view.update(s, IDLE_POWER, cell, selection.selectedType);
       // Pozycja, którą panel oznaczył jako wybraną, ma być tą, której napis zaczyna się od
       // wciśniętej cyfry.
       const wybrany = panel.rows().filter((r) => r.className.includes('hud-row--selected'));
@@ -753,6 +1045,8 @@ interface Rig {
   keys: ReturnType<typeof createFakeEventTarget>;
   sim: Sim;
   root: FakeElement;
+  /** Co spięcie podało warstwie budynków — po to, żeby dało się zmierzyć, że COŚ podało. */
+  buildingCalls: { outage?: Uint8Array; pulseSeconds?: number }[];
   rows(): FakeElement[];
   picks(): FakeElement[];
   text(): string;
@@ -768,9 +1062,10 @@ function makeRig(): Rig {
   camera.updateProjectionMatrix();
   const keys = createFakeEventTarget();
   const shading: UnitShadingMode[] = [];
+  const buildingCalls: { outage?: Uint8Array; pulseSeconds?: number }[] = [];
   const scene: ClientScene = {
     camera: orbit,
-    updateBuildings: () => {},
+    updateBuildings: (_list, outage, pulseSeconds) => buildingCalls.push({ outage, pulseSeconds }),
     updateUnits: () => {},
     setUnitShading: (mode) => shading.push(mode),
     render: () => {},
@@ -800,6 +1095,7 @@ function makeRig(): Rig {
     keys,
     sim,
     root,
+    buildingCalls,
     rows,
     picks: () => rows().map((r) => r.children[0]),
     text: () => allText(root),
@@ -870,7 +1166,7 @@ describe('wireClient — panel na ekranie gracza', () => {
     const before = worldFingerprint(rig.sim.state);
     const buildingsBefore = rig.sim.state.buildings.map((b) => b?.type ?? null).join(',');
     const paths: [string, () => void][] = [
-      ['hud.update', () => void rig.client.hud.update(rig.sim.state, cell, 'PYLON')],
+      ['hud.update', () => void rig.client.hud.update(rig.sim.state, rig.sim.lastPower, cell, 'PYLON')],
       ['klik w pozycję menu', () => void fireOn(rig.picks()[3], 'click', {})],
       ['klik w pozycję już wybraną', () => void fireOn(rig.picks()[3], 'click', {})],
     ];
@@ -906,6 +1202,44 @@ describe('wireClient — panel na ekranie gracza', () => {
     fireOn(rig.picks()[5], 'click', {});
     expect(framesUntilOverlay(rig)).toContain('powrót do Core');
     expect(rig.client.selection.selectedType).toBe(types[5]);
+  });
+
+  it('18b. [POZYTYWNA] bilans z symulacji dociera NA PANEL, a przyczyna awarii DO ŚWIATA', () => {
+    // Obie połowy Zadania 4 w jednym miejscu — i obie są dokładnie tym rodzajem przekazania,
+    // którego brak zostawiał w tym projekcie cały pakiet zielony (runda 2 Zadania 2: usunięcie
+    // `sim.enqueue` → 631/631). Mierzone na PRAWDZIWYM `Sim` wewnątrz spięcia:
+    //   • panel pokazuje niedobór, którego nikt mu nie podał ręcznie,
+    //   • warstwa budynków dostaje TĘ SAMĄ tablicę przyczyn, którą wystawia symulacja.
+    const rig = makeRig();
+    const s = rig.sim.state;
+    s.ore = 10_000; // [STROJENIE] w teście: skarbiec ponad czterema laserami
+    // Klatka „na rozbiegu": bez niej pierwszy `frame()` robi zero kroków (akumulator pusty).
+    rig.advance(16);
+    rig.client.frame();
+    for (const cellId of fourFreeHexagonsNear(s)) {
+      rig.sim.enqueue({ kind: 'BUILD', cellId, type: 'LASER_TURRET' });
+    }
+    // Dość czasu na kilka kroków symulacji — komendy wykonują się w `sim.step()`, nie w `frame()`.
+    for (let i = 0; i < 6; i++) {
+      rig.advance(60);
+      rig.client.frame();
+    }
+    s.storedEnergy = 0;
+    rig.advance(60);
+    rig.client.frame();
+
+    const power = rig.sim.lastPower;
+    expect(power.shedTypes.length, 'fikstura: kaskada NAPRAWDĘ zadziałała').toBeGreaterThan(0);
+    expect(rig.text()).toContain('zgaszono');
+    expect(rig.text()).toContain(
+      rateText(shownRateTenths(power.rawDemand) - shownRateTenths(power.supply)),
+    );
+
+    // DO ŚWIATA: warstwa dostała tablicę przyczyn TOŻSAMĄ z tą z symulacji (nie kopię i nie
+    // `undefined`). Bez tego obręcz alarmu wyglądałaby tak samo dla brownoutu i dla odcięcia
+    // od sieci, a żadna asercja o panelu by tego nie zobaczyła.
+    expect(rig.buildingCalls.at(-1)!.outage).toBe(power.outage);
+    expect(rig.buildingCalls.at(-1)!.pulseSeconds).toBeGreaterThan(0);
   });
 
   it('19b. [POZYTYWNA] wybrany typ dociera ze spięcia NA PANEL, a nie tylko do `Selection`', () => {
@@ -984,7 +1318,7 @@ describe('wireClient — panel na ekranie gracza', () => {
       // na próbkę mierzyłaby wyłącznie gałąź „zmieniło się".
       if (i % 2 === 0) aimAt(camera, Math.floor(rand() * planet.cells.length));
       const moved = handle.refreshPointedCell();
-      const repainted = panel.view.update(sim.state, selection.selectedCell, selection.selectedType);
+      const repainted = panel.view.update(sim.state, IDLE_POWER, selection.selectedCell, selection.selectedType);
       if (moved) {
         changes++;
         expect({ i, moved, repainted }).toEqual({ i, moved: true, repainted: true });
@@ -995,7 +1329,7 @@ describe('wireClient — panel na ekranie gracza', () => {
       expect({ i, ponownie: handle.refreshPointedCell() }).toEqual({ i, ponownie: false });
       expect({
         i,
-        ponownie: panel.view.update(sim.state, selection.selectedCell, selection.selectedType),
+        ponownie: panel.view.update(sim.state, IDLE_POWER, selection.selectedCell, selection.selectedType),
       }).toEqual({ i, ponownie: false });
       if (!moved) stills++;
     }
@@ -1015,7 +1349,7 @@ describe('wireClient — panel na ekranie gracza', () => {
       const { s } = richRun();
       const panel = makePanel();
       const cell = freeHexagonNear(s);
-      panel.view.update(s, cell, 'BARRICADE'); // pierwsze malowanie poza pomiarem
+      panel.view.update(s, IDLE_POWER, cell, 'BARRICADE'); // pierwsze malowanie poza pomiarem
       // Sto tysięcy, nie cztery: przy 4000 iteracjach KONTROLA (czyli wersja bez bramki,
       // alokująca dziesięć obiektów na klatkę) wypadała 0/0/0 — 40 tys. drobnych obiektów
       // nie wypełnia młodej generacji, więc `GCProfiler` nie miał czego policzyć i asercja
@@ -1030,7 +1364,7 @@ describe('wireClient — panel na ekranie gracza', () => {
         },
         measured: () => {
           for (let i = 0; i < ITERATIONS; i++) {
-            sink += panel.view.update(s, cell, 'BARRICADE') ? 1 : 0;
+            sink += panel.view.update(s, IDLE_POWER, cell, 'BARRICADE') ? 1 : 0;
           }
         },
         // Kontrolą jest DOKŁADNIE ten defekt, przed którym broni bramka: ta sama praca plus
@@ -1038,7 +1372,7 @@ describe('wireClient — panel na ekranie gracza', () => {
         // sztuczna alokacja dobrana pod przyrząd, tylko wersja bez bramki.
         control: () => {
           for (let i = 0; i < ITERATIONS; i++) {
-            sink += panel.view.update(s, cell, 'BARRICADE') ? 1 : 0;
+            sink += panel.view.update(s, IDLE_POWER, cell, 'BARRICADE') ? 1 : 0;
             sink += buildMenuRows(s, cell).length;
           }
         },

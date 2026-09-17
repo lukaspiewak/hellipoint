@@ -251,6 +251,59 @@ export function refusalReason(s: SimState, intent: Intent): string | null {
   return null;
 }
 
+/** Tryb cieniowania jednostek — narzędzie diagnostyczne Fazy 2B, Zadanie 4. */
+export type ShadingMode = 'flat' | 'threshold' | 'smooth';
+
+/**
+ * # Meldunek dla gracza — STRUKTURALNY, nie gotowy napis (Faza 2C, Zadanie 4, Krok 0)
+ *
+ * Do tego zadania `report` przyjmował `string`, a napis składał się TUTAJ. Skutek zmierzył
+ * i zgłosił wykonawca Zadania 3, świadomie go nie naprawiając (naprawa rusza kontrakt
+ * Zadania 2): **panel mówił „komórka zajęta — najpierw rozbierz", a nakładka diagnostyczna
+ * obok, o tym samym kliknięciu, pokazywała surowe `odmowa: CELL_OCCUPIED`.** Gracz widział
+ * oba naraz i miał prawo sądzić, że to dwa różne zdarzenia.
+ *
+ * Przyczyną nie były dwa złe napisy, tylko dwa ŹRÓDŁA napisów: panel tłumaczył powód przez
+ * `refusalMessage` (`hud.ts`), a tutaj nie było już czego tłumaczyć — napis przychodził
+ * gotowy. Meldunek strukturalny usuwa drugie źródło: ten moduł mówi, CO SIĘ STAŁO,
+ * a jedno miejsce (`reportMessage` w `hud.ts`) zamienia to na zdanie. Dla powodu odmowy
+ * jest to DOKŁADNIE ta sama funkcja, której używa panel.
+ *
+ * Kształt jest przy okazji testowalny bez czytania napisów: asercja „meldunek mówi
+ * o odmowie z powodu `CELL_OCCUPIED`" nie łamie się przy zmianie interpunkcji.
+ */
+export type Report =
+  /** Komenda poszła do kolejki (klient NIE jest bramkarzem — patrz `refusalReason`). */
+  | { readonly kind: 'QUEUED'; readonly intent: Intent }
+  /** Komenda też poszła do kolejki, ale symulacja ją odrzuci — i oto dlaczego. */
+  | { readonly kind: 'REFUSED'; readonly intent: Intent; readonly reason: string }
+  /** Promień minął planetę: gracz kliknął w tło. */
+  | { readonly kind: 'MISSED' }
+  /** Skrót „wróć do Core" — kamera leci nad komórkę startową. */
+  | { readonly kind: 'FOCUS_CORE'; readonly cellId: number }
+  /** Wybór typu z menu albo skrótem 1-9. */
+  | { readonly kind: 'TYPE_CHOSEN'; readonly type: BuildingType }
+  /** Przełącznik cieniowania jednostek (Shift+1/2/3). */
+  | { readonly kind: 'SHADING'; readonly mode: ShadingMode };
+
+/**
+ * Komórka, której meldunek dotyczy — albo `null`, gdy żadnej (kliknięcie w tło, wybór typu).
+ *
+ * Wydzielone, bo formatowanie (`hud.ts`) i testy pytają o to samo, a `intent.cellId`
+ * schowane w dwóch wariantach unii kusiłoby do rozgałęzień w obu miejscach.
+ */
+export function reportCell(report: Report): number | null {
+  switch (report.kind) {
+    case 'QUEUED':
+    case 'REFUSED':
+      return report.intent.cellId;
+    case 'FOCUS_CORE':
+      return report.cellId;
+    default:
+      return null;
+  }
+}
+
 /**
  * Wybór gracza: komórka pod kursorem i typ budynku z menu.
  *
@@ -364,10 +417,14 @@ export interface InputWiring {
   readonly selection: Selection;
   /** „Wróć do Core" — przeniesienie kamery; `camera.ts` ma na to `focusOn`. */
   focusOn(target: Vec3): void;
-  /** Jedna linijka dla gracza: co się stało albo dlaczego nic. */
-  report(message: string): void;
+  /**
+   * Co się stało albo dlaczego nic — STRUKTURALNIE, nie gotowym napisem (patrz `Report`).
+   * Zamianę na zdanie robi `reportMessage` w `hud.ts`, czyli to samo miejsce, z którego
+   * bierze zdania panel.
+   */
+  report(report: Report): void;
   /** Przełącznik trybu cieniowania jednostek (narzędzie diagnostyczne Fazy 2B). */
-  setUnitShading(mode: 'flat' | 'threshold' | 'smooth'): void;
+  setUnitShading(mode: ShadingMode): void;
 }
 
 export interface InputHandle {
@@ -419,7 +476,7 @@ export function keyCode(event: KeyStroke): string {
 }
 
 /** Klawisze trybu cieniowania (z Shiftem) — narzędzie diagnostyczne Fazy 2B, Zadanie 4. */
-const SHADING_KEYS: Readonly<Record<string, 'flat' | 'threshold' | 'smooth'>> = {
+const SHADING_KEYS: Readonly<Record<string, ShadingMode>> = {
   Digit1: 'flat',
   Digit2: 'threshold',
   Digit3: 'smooth',
@@ -499,7 +556,7 @@ export function attachInput(w: InputWiring): InputHandle {
       rect(),
     );
     if (intent === null) {
-      w.report('kliknięcie w tło — poza planetą');
+      w.report({ kind: 'MISSED' });
       return;
     }
 
@@ -509,11 +566,7 @@ export function attachInput(w: InputWiring): InputHandle {
     // stronie). Klient, który filtruje po swojemu, w chwili rozjazdu z serwerem Fazy 5
     // połyka wejście gracza bez śladu.
     const reason = refusalReason(w.sim.state, intent);
-    w.report(
-      reason === null
-        ? `${intent.kind === 'BUILD' ? `buduję ${intent.type}` : 'rozbieram'} na komórce ${intent.cellId}`
-        : `odmowa: ${reason} (komórka ${intent.cellId})`,
-    );
+    w.report(reason === null ? { kind: 'QUEUED', intent } : { kind: 'REFUSED', intent, reason });
 
     // ↓ JEDYNA droga wejścia gracza do świata. `global-constraints.md`: „Wejście gracza
     // idzie wyłącznie przez kolejkę komend (`Sim.enqueue`), nigdy przez zapis do stanu.
@@ -532,7 +585,7 @@ export function attachInput(w: InputWiring): InputHandle {
       const next = SHADING_KEYS[code];
       if (next === undefined) return;
       w.setUnitShading(next);
-      w.report(`cieniowanie jednostek: ${next}`);
+      w.report({ kind: 'SHADING', mode: next });
       event.preventDefault();
       return;
     }
@@ -542,7 +595,7 @@ export function attachInput(w: InputWiring): InputHandle {
     // mimo przewidywanego ryzyka gubienia bazy, ale POD WARUNKIEM istnienia tego skrótu.
     if (code === 'Space') {
       w.focusOn(focusCoreTarget(w.planet));
-      w.report(`powrót do Core (komórka ${w.planet.startCell})`);
+      w.report({ kind: 'FOCUS_CORE', cellId: w.planet.startCell });
       event.preventDefault();
       return;
     }
@@ -553,7 +606,7 @@ export function attachInput(w: InputWiring): InputHandle {
       const type: BuildingType | undefined = types[Number(digit[1]) - 1];
       if (type === undefined) return;
       w.selection.chooseType(type);
-      w.report(`wybrany typ: ${type} (${BUILDINGS[type].costOre} rudy)`);
+      w.report({ kind: 'TYPE_CHOSEN', type });
       event.preventDefault();
     }
   };

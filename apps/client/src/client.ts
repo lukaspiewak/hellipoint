@@ -6,19 +6,19 @@ import {
   type UnitShadingMode,
 } from '@heliopolis/render';
 import {
-  BUILDINGS,
   createPlanet,
   lightFieldInto,
   sunDirection,
   TICK_SECONDS,
   type Building,
   type Planet,
+  type PowerReport,
   type RunConfig,
   type SimState,
   type Unit,
   type Vec3,
 } from '@heliopolis/sim';
-import { createHudView, type ElementLike, type HudView } from './hud.js';
+import { createHudView, reportMessage, type ElementLike, type HudView } from './hud.js';
 import {
   attachInput,
   createSelection,
@@ -58,17 +58,27 @@ import {
  * spację na PRAWDZIWEJ kamerze, widzi, czy kamera faktycznie się ruszyła.
  */
 
-/** Tyle ze `Sim`, ile widzi spięcie: kolejka, stan do ODCZYTU, krok i zegar. */
+/** Tyle ze `Sim`, ile widzi spięcie: kolejka, stan do ODCZYTU, krok, zegar i bilans energii. */
 export interface ClientSim extends CommandQueue {
   step(): void;
   readonly elapsedSeconds: number;
   readonly cycle: number;
+  /**
+   * Raport energetyczny ostatniego ticku (Faza 2C, Zadanie 4). Pole `Sim`, NIE pole
+   * `SimState` — to jest czysta funkcja ticku, więc w stanie byłoby wielkością, którą
+   * migawka Fazy 5 musiałaby serializować, a `stateHash` pilnować.
+   */
+  readonly lastPower: Readonly<PowerReport>;
 }
 
 /** Tyle z `PlanetScene`, ile widzi spięcie. */
 export interface ClientScene {
   readonly camera: Pick<OrbitCamera, 'object' | 'focusOn'>;
-  updateBuildings(buildings: readonly (Building | null)[], alertPulseSeconds?: number): void;
+  updateBuildings(
+    buildings: readonly (Building | null)[],
+    outage?: Uint8Array,
+    alertPulseSeconds?: number,
+  ): void;
   updateUnits(units: readonly Unit[], light: Float32Array): void;
   setUnitShading(mode: UnitShadingMode): void;
   render(light: Float32Array, sunDir: Vec3): void;
@@ -180,7 +190,10 @@ export function wireClient(deps: ClientDeps): Client {
    */
   const hud = createHudView(deps.hudRoot, (type) => {
     if (!selection.chooseType(type)) return;
-    lastMessage = `wybrany typ: ${type} (${BUILDINGS[type].costOre} rudy)`;
+    // Ten SAM meldunek i ta sama droga do napisu, co przy skrócie 1-9 (`input.ts`): dwa
+    // miejsca składające zdanie o jednym zdarzeniu to dokładnie rozjazd, który Krok 0
+    // Zadania 4 usuwał przy powodach odmowy.
+    lastMessage = reportMessage({ kind: 'TYPE_CHOSEN', type });
   });
 
   const input = attachInput({
@@ -192,8 +205,11 @@ export function wireClient(deps: ClientDeps): Client {
     selection,
     // Wyprowadzane ze `scene`, nie przyjmowane z zewnątrz — patrz „Czego tu NIE ma" wyżej.
     focusOn: (target) => scene.camera.focusOn(target),
-    report: (message) => {
-      lastMessage = message;
+    // Meldunek przychodzi STRUKTURALNY (`Report`), a zdanie składa `reportMessage` — to samo
+    // miejsce, z którego bierze zdania panel. Do Zadania 4 napis przychodził gotowy i nakładka
+    // pokazywała surowe `odmowa: CELL_OCCUPIED` obok polskiego zdania w panelu.
+    report: (report) => {
+      lastMessage = reportMessage(report);
     },
     setUnitShading: (mode) => {
       shadingMode = mode;
@@ -290,10 +306,16 @@ export function wireClient(deps: ClientDeps): Client {
       // obiektów i tablicę sześćdziesiąt razy na sekundę. Bramka i jej uzasadnienie:
       // `HudView.update` w `hud.ts`. Wskazanie i typ wchodzą tu WARTOŚCIĄ, prosto z
       // `Selection` — HUD nie pamięta ani jednego, ani drugiego.
-      hud.update(sim.state, selection.selectedCell, selection.selectedType);
+      // Bilans energii wchodzi tu WARTOŚCIĄ, prosto z `Sim` — panel go nie pamięta i nie
+      // liczy, tak samo jak nie pamięta wskazania ani typu.
+      const power = sim.lastPower;
+      hud.update(sim.state, power, selection.selectedCell, selection.selectedType);
 
       // Render CZYTA stan symulacji i nigdy go nie zapisuje (`global-constraints.md`).
-      scene.updateBuildings(sim.state.buildings, renderSeconds);
+      // `power.outage` niesie PRZYCZYNĘ braku prądu per komórka — bez niej obręcz alarmu
+      // wygląda tak samo dla budynku zgaszonego kaskadą i odciętego od sieci, a to są dwie
+      // różne reakcje gracza („dobuduj produkcję" kontra „napraw pylon").
+      scene.updateBuildings(sim.state.buildings, power.outage, renderSeconds);
       scene.updateUnits(sim.state.units, light);
       scene.render(light, sunDir);
 

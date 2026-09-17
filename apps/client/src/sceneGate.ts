@@ -23,6 +23,9 @@ import {
   ENEMIES,
   lightFieldInto,
   motionContext,
+  OUTAGE_NONE,
+  OUTAGE_SHED,
+  OUTAGE_UNLINKED,
   spawnUnit,
   sunDirection,
   TICK_SECONDS,
@@ -134,6 +137,8 @@ const DEMO_TYPES: readonly BuildingType[] = [
 const DEMO_HP_FRACTIONS = [1, 0.75, 0.5, 0.25, 0.05];
 
 const demoBuildings: (Building | null)[] = new Array<Building | null>(planet.cells.length).fill(null);
+/** Przyczyna braku prądu per komórka — kształt `PowerReport.outage` (Faza 2C, Zadanie 4). */
+const demoOutage = new Uint8Array(planet.cells.length);
 let demoOrdinal = 0;
 function placeDemo(cellId: number): void {
   if (demoBuildings[cellId] !== null) return;
@@ -148,6 +153,15 @@ function placeDemo(cellId: number): void {
     // który jest niezasilony" jest pytaniem porównawczym.
     powered: ordinal % 4 !== 0,
   };
+  // PRZYCZYNA braku prądu, na przemian (Faza 2C, Zadanie 4, Krok 6): budynek zgaszony
+  // kaskadą ma obręcz ZAMKNIĘTĄ, odcięty od sieci — PRZERWANĄ. Bramka musi pokazywać oba
+  // stany OBOK SIEBIE z tego samego powodu, dla którego pokazuje oba stany zasilenia:
+  // „widać, że te dwa alarmy znaczą co innego" jest pytaniem porównawczym.
+  //
+  // Wprost, a nie z `updatePower`: to jest scena podglądu, w której zabudowa jest ręczna
+  // i nie ma sieci energetycznej do policzenia (ten sam wzorzec i to samo uzasadnienie,
+  // co ręczne `hp` i `powered` wyżej).
+  demoOutage[cellId] = ordinal % 4 !== 0 ? OUTAGE_NONE : ordinal % 8 === 0 ? OUTAGE_SHED : OUTAGE_UNLINKED;
 }
 // Skupisko wokół komórki startowej (sąsiedzi i sąsiedzi sąsiadów) — żeby dało się zobaczyć,
 // jak budynki wyglądają obok siebie i obok kraty...
@@ -733,7 +747,7 @@ function tick(): void {
   }
   lastFrameAt = frameStart;
 
-  world.updateBuildings(demoBuildings, alertPulseAt(elapsedSeconds));
+  world.updateBuildings(demoBuildings, demoOutage, alertPulseAt(elapsedSeconds));
   world.updateUnits(unitsToDraw, light);
   gate.renderFrame();
 

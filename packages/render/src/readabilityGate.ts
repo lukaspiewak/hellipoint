@@ -399,7 +399,11 @@ export interface GateWorld {
    * rzucało `RangeError`-em dopiero po 0,13 s, na losowej klatce. Wartość bierze się z
    * `alertPulse(radius, seconds)`; spoczynek to `alertPulse(radius, 0)`, czyli dokładne zero.
    */
-  updateBuildings(buildings: readonly (Building | null)[], alertPulseOffset?: AlertPulseOffset): void;
+  updateBuildings(
+    buildings: readonly (Building | null)[],
+    outage?: Uint8Array,
+    alertPulseOffset?: AlertPulseOffset,
+  ): void;
   updateUnits(units: readonly Unit[], light: Float32Array): void;
   /**
    * Przemalowuje teren i kratę DOWOLNYM polem oświetlenia — dla fazy SWOBODNEJ bramki pełnego
@@ -527,7 +531,7 @@ export function createReadabilityGate(
     world = {
       buildings,
       units,
-      updateBuildings: (list, alertPulseOffset) => buildings.update(list, alertPulseOffset),
+      updateBuildings: (list, outage, alertPulseOffset) => buildings.update(list, outage, alertPulseOffset),
       updateUnits: (list, light) => units.update(list, light),
       setUnitShading: (next) => units.setShadingMode(next),
       setUnitShadingBands: (bands) => units.setShadingBands(bands),
