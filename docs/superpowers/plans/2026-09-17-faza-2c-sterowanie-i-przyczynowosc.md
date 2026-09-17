@@ -50,7 +50,15 @@ Zweryfikowane w kodzie 2026-09-17. Budowanie tego jeszcze raz byłoby czystą st
 
 **Czego NIE ma i trzeba zbudować:** wskazania komórki (`grep -rn "Raycaster"` → zero trafień), jakiegokolwiek HUD, wysyłania komend z klienta, widocznego bilansu energii.
 
-**Kluczowy fakt geometryczny dla Zadania 1:** wielościan Goldberga jest **diagramem Voronoi swoich środków** — komórka to dokładnie zbiór punktów sfery bliższych jej środkowi niż każdemu innemu. Wskazanie komórki nie wymaga więc raycastu po trójkątach: wystarczy przeciąć promień ze sferą i wziąć **najbliższy środek**. Wynik jest dokładny, a nie przybliżony.
+**Kluczowy fakt geometryczny dla Zadania 1 — POPRAWIONY PO ZADANIU 1, bo pierwsza wersja była fałszywa.**
+
+Pierwotnie napisałem tu, że wielościan Goldberga **jest** diagramem Voronoi swoich środków, więc „najbliższy środek" daje wynik **dokładny**. To nieprawda dla **tej** konstrukcji. `buildDual` (`packages/sim/src/world/dual.ts:28-30`) buduje narożniki jako **centroidy** trójkątów siatki geodezyjnej, a nie jako **cyrkumcentry** — a te pokrywają się wyłącznie dla trójkąta równobocznego, czego subdywizja nie gwarantuje. Dokładnym diagramem Voronoi byłby dual z cyrkumcentrów.
+
+**Zmierzony skutek** (wykonawca Zadania 1 na 2000 próbek, ja niezależnie na 20 000): dla **1,25–1,46%** losowych punktów sfery „najbliższy środek" **nie zgadza się** z „wewnątrz narysowanego wieloboku". Niezgodność zawsze dotyczy **bezpośredniego sąsiada**, a pas niezgody leży 10–100× **poniżej jednego piksela** ekranu — przy kroku grafu 5,74°, czyli **34,2 px** przy domyślnej odległości kamery.
+
+**Ruling:** zostajemy przy „najbliższym środku". Uzasadnienie: pas niezgody jest podpikselowy, więc gracz nie ma jak w niego trafić, a uzależnienie `picking.ts` od buforów `buildPlanetGeometry` byłoby gorszym handlem niż podpikselowa nieścisłość — moduł jest dziś wolny od Three.js i od geometrii renderu. **Ale nie wolno twierdzić, że wynik jest dokładny.** Jest dokładny co do piksela, nie co do definicji.
+
+**Osobne odkrycie, POZA zakresem tej fazy:** czy `buildDual` powinien używać cyrkumcentrów, jest pytaniem o Fazę 1A. Zmiana przesunęłaby narożniki **każdej** komórki, czyli unieważniła wszystkie baseline'y renderu łącznie z odległością barw przez terminator (0,9005). Nie teraz.
 
 ---
 
