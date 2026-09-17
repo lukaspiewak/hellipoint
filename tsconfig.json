@@ -7,6 +7,7 @@
     { "path": "tools/headless/tsconfig.test.json" },
     { "path": "packages/render" },
     { "path": "packages/render/tsconfig.test.json" },
-    { "path": "apps/client" }
+    { "path": "apps/client" },
+    { "path": "apps/client/tsconfig.test.json" }
   ]
 }

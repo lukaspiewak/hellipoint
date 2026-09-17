@@ -7,24 +7,25 @@ import {
   type UnitShadingMode,
 } from '@heliopolis/render';
 import {
-  buildAllFlowFields,
   BUILDINGS,
   createPlanet,
-  createState,
   DEFAULT_RUN,
-  ENEMIES,
   lightFieldInto,
-  motionContext,
-  spawnUnit,
+  Sim,
   sunDirection,
   TICK_SECONDS,
-  updateBurning,
-  updateMovement,
-  type Building,
   type BuildingType,
-  type EnemyType,
-  type Unit,
 } from '@heliopolis/sim';
+import {
+  createSelection,
+  focusCoreTarget,
+  intentFromPointer,
+  isClick,
+  playerBuildableTypes,
+  pointedCell,
+  refusalReason,
+  type PointerButton,
+} from './input.js';
 
 console.log(`Heliopolis render ${RENDER_VERSION}`);
 
@@ -33,155 +34,181 @@ if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('apps/client: brak <canvas id="app"> w index.html');
 }
 
-// Zadanie 4 Fazy 2A: pierwsza PRAWDZIWA planeta na ekranie — geometria (Zadanie 2),
-// progowane światło (Zadanie 3) i kamera K1 (`@heliopolis/render`'s `camera.ts`) spięte
-// przez `createScene`. Seed na sztywno, ten sam co we wszystkich testach/pomiarach Zadań 2-3
-// (`geometry.test.ts`, `shading.test.ts`) — to, co widać na ekranie, ma odpowiadać temu,
-// co już zmierzone w raportach tych zadań, nie osobnej, niezależnej planecie. Wybór seeda
-// dla rozgrywki (roguelite, draft co świt) to Faza 2C, nie ten widok.
+// Seed na sztywno, ten sam co we wszystkich testach i pomiarach gałęzi
+// (`geometry.test.ts`, `shading.test.ts`, `input.test.ts`) — to, co widać na ekranie, ma
+// odpowiadać temu, co już zmierzone, a nie osobnej, niezależnej planecie. Wybór seeda dla
+// rozgrywki (roguelite, draft co świt) to osobne wymaganie, poza tą fazą.
 const planet = createPlanet({ seed: 20260915 });
 const scene = createScene(planet, canvas);
 
-// --- Podgląd budynków (Faza 2B, Zadanie 3) ---------------------------------------------
-// TYMCZASOWE RUSZTOWANIE, nie rozgrywka. `Sim` wchodzi do klienta dopiero w Fazie 2C
-// (`global-constraints.md`), a bez ani jednego budynku na ekranie nie da się ani obejrzeć
-// tego, co to zadanie dowozi, ani zadać pytań 2 i 3 bramki Zadania 5 („czy widać, który
-// budynek jest niezasilony"). To jest więc zwykła TABLICA o kształcie `SimState.buildings`,
-// budowana tutaj deterministycznie — NIE `SimState`, i nic tego stanu nie mutuje: render go
-// wyłącznie czyta. Faza 2C podmieni to na `sim.state.buildings` i nic poza tym blokiem
-// nie będzie musiało się zmienić.
-//
-// Dobór tak, żeby dało się OBEJRZEĆ wszystko, o co pyta to zadanie, w jednej scenie:
-// wszystkie dziesięć typów, pełny zakres `hp` i oba stany zasilenia, rozsiane po CAŁEJ
-// kuli — czyli w każdej chwili obrotu część z nich stoi na nocy, część na zmierzchu, a
-// część na dniu — plus zwarte skupisko wokół komórki startowej, żeby dało się zobaczyć,
-// jak sąsiadujące budynki wyglądają obok siebie i obok kraty.
-const DEMO_TYPES: readonly BuildingType[] = [
-  'CORE', 'BARRICADE', 'PYLON', 'SOLAR_PANEL', 'BATTERY',
-  'EXTRACTOR', 'KINETIC_TURRET', 'LASER_TURRET', 'GEOTHERMAL_CAP', 'EVACUATION_MODULE',
-];
-const DEMO_HP_FRACTIONS = [1, 0.75, 0.5, 0.25, 0.05];
+// --- Prawdziwa symulacja (Faza 2C, Zadanie 2) -------------------------------------------
+// Do Fazy 2B stało tu RUSZTOWANIE: zwykła tablica o kształcie `SimState.buildings` plus
+// dwa wybrane systemy (`updateMovement`, `updateBurning`) puszczone na stanie z
+// `createState`. Było to świadomie tymczasowe — `Sim` (pełna pętla: komendy, energia,
+// ekonomia, walka, fale, warunki końca) wchodzi do klienta dopiero w tej fazie
+// (`global-constraints.md`). Teraz wchodzi, a razem z nim jedyna droga, którą wolno
+// wejściu gracza dotrzeć do świata: `sim.enqueue`.
+const sim = new Sim(planet, DEFAULT_RUN);
 
-const demoBuildings: (Building | null)[] = new Array<Building | null>(planet.cells.length).fill(null);
-function placeDemo(cellId: number, ordinal: number): void {
-  if (demoBuildings[cellId] !== null) return;
-  const type = DEMO_TYPES[ordinal % DEMO_TYPES.length];
-  demoBuildings[cellId] = {
-    cellId,
-    type,
-    hp: BUILDINGS[type].hp * DEMO_HP_FRACTIONS[ordinal % DEMO_HP_FRACTIONS.length],
-    powered: ordinal % 4 !== 0,
-  };
-}
-let demoOrdinal = 0;
-// Skupisko: komórka startowa, jej sąsiedzi i sąsiedzi sąsiadów.
-const cluster = new Set<number>([planet.startCell]);
-for (let ring = 0; ring < 2; ring++) {
-  for (const id of [...cluster]) {
-    for (const neighbor of planet.cells[id].neighbors) cluster.add(neighbor);
-  }
-}
-for (const id of cluster) placeDemo(id, demoOrdinal++);
-// Rozsianie: co jedenasta komórka — 131 sztuk rozłożonych po całej kuli.
-for (let id = 0; id < planet.cells.length; id += 11) placeDemo(id, demoOrdinal++);
-console.log(`[PODGLĄD] budynków w scenie: ${demoBuildings.filter((b) => b !== null).length}`);
+// --- Wejście gracza ----------------------------------------------------------------------
+// Logika mieszka w `input.ts` i jest tam WOLNA OD DOM-u (i przetestowana bez przeglądarki,
+// `test/input.test.ts`). Tutaj zostaje wyłącznie to, czego bez DOM-u zrobić się nie da:
+// odczyt zdarzeń i jedno wywołanie `sim.enqueue`.
+const selection = createSelection();
+const buildableTypes = playerBuildableTypes();
 
-// --- Podgląd jednostek (Faza 2B, Zadanie 4) ---------------------------------------------
-// TYMCZASOWE RUSZTOWANIE, dokładnie jak blok budynków wyżej: `Sim` (pełna pętla, fale,
-// energia, walka) wchodzi do klienta dopiero w Fazie 2C (`global-constraints.md`). Tutaj
-// biegną wyłącznie DWA systemy symulacji — `updateMovement` i `updateBurning` — na stanie
-// zbudowanym `createState`, bo bez PRAWDZIWEGO ruchu i PRAWDZIWEJ akumulacji ekspozycji nie
-// da się odpowiedzieć na Krok 3 briefu („czy pasma na jednostce migoczą przy przechodzeniu
-// między komórkami") ani zobaczyć tego, co Krok 2 ma pokazać (ARMOR wchodzący w światło
-// jest skazany, SWARM ucieknie). Render tego stanu wyłącznie CZYTA.
-const sim = createState(planet, DEFAULT_RUN.startingOre);
-for (let i = 0; i < demoBuildings.length; i++) sim.buildings[i] = demoBuildings[i];
-const flowFields = buildAllFlowFields(sim); // budynki się nie zmieniają, więc RAZ
-const motion = motionContext(planet, DEFAULT_RUN.rotationPeriod);
+/** Ostatni komunikat dla gracza — powód odmowy albo potwierdzenie. Zadanie 3 zastąpi to
+ *  prawdziwym HUD-em; tutaj to jedna linia w nakładce diagnostycznej. */
+let lastMessage = 'lewy: buduj · prawy: rozbierz · 1-9: typ · spacja: wróć do Core';
 
-// „Linijka" spalania: 3 typy × 5 poziomów ekspozycji, ustawione w RÓWNYCH odstępach na
-// jednym wielkim okręgu i NIE symulowane — żeby dało się porównać całą rampę obok siebie,
-// na każdym paśmie po kolei, w miarę jak przechodzi po niej terminator. Pozycje liczone
-// wprost na okręgu (nie na środkach komórek), bo cała ta warstwa rysuje jednostki tam,
-// gdzie NAPRAWDĘ są, a nie na komórkach.
-const RULER_TYPES: readonly EnemyType[] = ['SWARM', 'DISRUPTOR', 'ARMOR'];
-const RULER_LEVELS = [0, 0.25, 0.5, 0.75, 1];
-function nearestCell(x: number, y: number, z: number): number {
-  let best = 0;
-  let bestDot = -Infinity;
-  for (let i = 0; i < planet.cells.length; i++) {
-    const n = planet.cells[i].normal;
-    const d = n.x * x + n.y * y + n.z * z;
-    if (d > bestDot) {
-      bestDot = d;
-      best = i;
-    }
-  }
-  return best;
+/** Skąd zaczęło się naciśnięcie — do odróżnienia kliknięcia od obrotu kamery (`isClick`). */
+let pressX = 0;
+let pressY = 0;
+let pressButton: PointerButton | null = null;
+
+function buttonOf(event: PointerEvent): PointerButton | null {
+  if (event.button === 0) return 'LEFT';
+  if (event.button === 2) return 'RIGHT';
+  return null; // środkowy przycisk należy do zoomu `OrbitControls`
 }
-const rulerUnits: Unit[] = [];
-RULER_TYPES.forEach((type, row) => {
-  RULER_LEVELS.forEach((level, column) => {
-    // Wiersz = typ (przesunięty w „szerokości"), kolumna = ekspozycja (wzdłuż okręgu).
-    // Wyśrodkowana na +Z, czyli dokładnie tam, gdzie patrzy kamera startowa
-    // (`createCamera` stawia ją w `(0, 0, 3R)`) — linijka ma być widoczna od razu, a nie
-    // na limbie, gdzie każda płaska tarcza jest skrócona perspektywicznie do kreski.
-    const lat = (row - 1) * 0.11;
-    const lon = (column - 2) * 0.11;
-    const x = Math.cos(lat) * Math.sin(lon);
-    const y = Math.sin(lat);
-    const z = Math.cos(lat) * Math.cos(lon);
-    rulerUnits.push({
-      id: -(row * 10 + column + 1),
-      type,
-      cellId: nearestCell(x, y, z),
-      pos: { x: x * planet.radius, y: y * planet.radius, z: z * planet.radius },
-      hp: ENEMIES[type].hp,
-      exposure: ENEMIES[type].burnTime * level,
-    });
-  });
+
+// Ruch kursora aktualizuje WYBRANĄ KOMÓRKĘ — stan należący do wejścia, nie do HUD
+// (`progress.md`, Ruling 1). `pointAt` zwraca, czy wskazanie faktycznie się zmieniło;
+// Zadanie 3 powiesi na tej odpowiedzi przemalowanie menu budowy, żeby nie liczyć go na
+// każde drgnięcie myszy wewnątrz tej samej komórki.
+canvas.addEventListener('pointermove', (event) => {
+  selection.pointAt(pointedCell(planet, scene.camera.object, canvas, event.clientX, event.clientY));
 });
 
-// Strumień jednostek z pentagonów — tyle, żeby w każdej chwili część z nich szła przez
-// terminator w obie strony.
-const SPAWN_EVERY_TICKS = 3;
-const SPAWN_TYPES: readonly EnemyType[] = ['SWARM', 'DISRUPTOR', 'ARMOR'];
-let spawnCursor = 0;
-let simTick = 0;
-let simAccumulator = 0;
+canvas.addEventListener('pointerdown', (event) => {
+  pressButton = buttonOf(event);
+  pressX = event.clientX;
+  pressY = event.clientY;
+});
 
-// Przełącznik trybu cieniowania (Krok 3 briefu) — klawisze 1/2/3. Narzędzie deweloperskie
-// tego zadania, nie element rozgrywki: pytanie „progowo czy nie" rozstrzyga się przez
-// PRZEŁĄCZANIE tam i z powrotem na tej samej scenie, a nie przez dwa osobne uruchomienia.
-const SHADING_KEYS: Readonly<Record<string, UnitShadingMode>> = { '1': 'flat', '2': 'threshold', '3': 'smooth' };
+canvas.addEventListener('pointerup', (event) => {
+  const button = pressButton;
+  pressButton = null;
+  // Przeciągnięcie to obrót kamery (`OrbitControls`), nie kliknięcie — inaczej każdy obrót
+  // stawiałby budynek w punkcie, w którym gracz zaczął przeciągać.
+  if (button === null || button !== buttonOf(event)) return;
+  if (!isClick(pressX, pressY, event.clientX, event.clientY)) return;
+
+  const intent = intentFromPointer(
+    planet,
+    scene.camera.object,
+    canvas,
+    { clientX: event.clientX, clientY: event.clientY, button },
+    selection.selectedType,
+  );
+  if (intent === null) {
+    lastMessage = 'kliknięcie w tło — poza planetą';
+    return;
+  }
+
+  // Powód liczony PRZED wysłaniem, wyłącznie po to, żeby gracz zobaczył, dlaczego nic się
+  // nie stało. Klient NIE jest bramkarzem: komenda idzie do kolejki niezależnie od tego,
+  // co tu wyszło, bo autorytatywna jest symulacja (`applyCommand` sprawdza to samo po
+  // swojej stronie). Klient, który filtruje komendy po swojemu, w chwili rozjazdu
+  // z serwerem Fazy 5 połyka wejście gracza bez śladu.
+  const reason = refusalReason(sim.state, intent);
+  lastMessage =
+    reason === null
+      ? `${intent.kind === 'BUILD' ? `buduję ${intent.type}` : 'rozbieram'} na komórce ${intent.cellId}`
+      : `odmowa: ${reason} (komórka ${intent.cellId})`;
+
+  // ↓ JEDYNA droga wejścia gracza do świata. `global-constraints.md`: „Wejście gracza idzie
+  // wyłącznie przez kolejkę komend (`Sim.enqueue`), nigdy przez zapis do stanu. To jest
+  // warunek Fazy 5 (autorytatywny serwer), nie wygoda." Pilnuje tego strażnik strukturalny
+  // czytający ten plik: `input.test.ts`, test 12.
+  sim.enqueue(intent);
+});
+
+// Prawy przycisk to rozbiórka — menu kontekstowe przeglądarki musi zejść z drogi.
+canvas.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+});
+
+// Przełącznik trybu cieniowania jednostek — narzędzie DIAGNOSTYCZNE z Fazy 2B, Zadanie 4
+// (pytanie „progowo czy gładko" rozstrzyga się przełączaniem na tej samej scenie).
+// Przeniesione na `Shift`+cyfra, bo same cyfry są teraz wyborem typu budynku; czytane
+// przez `event.code`, nie `event.key`, bo `Shift+1` to `!` na klawiaturze amerykańskiej
+// i `!` na polskiej — kod klawisza jest jedyną wartością niezależną od układu.
+const SHADING_KEYS: Readonly<Record<string, UnitShadingMode>> = {
+  Digit1: 'flat',
+  Digit2: 'threshold',
+  Digit3: 'smooth',
+};
 let shadingMode: UnitShadingMode = 'flat';
+
+/**
+ * Który KLAWISZ naciśnięto, w postaci niezależnej od układu klawiatury.
+ *
+ * `event.code` jest wartością właściwą (`Digit3` to trzeci klawisz górnego rzędu niezależnie
+ * od tego, czy trzeba do niego Shifta, jak na AZERTY) — ale NIE ZAWSZE JEST OBECNY. Zmierzone
+ * na tej gałęzi przy sterowaniu przeglądarką zdalnie: zdarzenie dociera z `code === ''`
+ * i samym `key`. To samo zgłaszają zdalne pulpity i część metod wprowadzania. Stąd
+ * `code` jako źródło pierwsze, `key` jako zapasowe — zamiast sterowania, które po cichu
+ * przestaje działać na części konfiguracji.
+ */
+function keyCode(event: KeyboardEvent): string {
+  if (event.code !== '') return event.code;
+  if (event.key === ' ' || event.key === 'Spacebar') return 'Space';
+  return /^[0-9]$/.test(event.key) ? `Digit${event.key}` : event.key;
+}
+
 window.addEventListener('keydown', (event) => {
-  const next = SHADING_KEYS[event.key];
-  if (next === undefined) return;
-  shadingMode = next;
-  scene.setUnitShading(next);
-  console.log(`[PODGLĄD] cieniowanie jednostek: ${next}`);
+  const code = keyCode(event);
+  if (event.shiftKey) {
+    const next = SHADING_KEYS[code];
+    if (next === undefined) return;
+    shadingMode = next;
+    scene.setUnitShading(next);
+    lastMessage = `cieniowanie jednostek: ${next}`;
+    event.preventDefault();
+    return;
+  }
+
+  // Skrót „wróć do Core" — wymaganie bramki Fazy 0
+  // (`docs/superpowers/specs/2026-09-14-faza-0-wyniki.md`): kamera K1 wygrała pomiar mimo
+  // przewidywanego ryzyka gubienia bazy, ale POD WARUNKIEM istnienia tego skrótu.
+  // Matematyka (zachowanie odległości + przycięcie do zakresu zoomu) siedzi w
+  // `focusPosition`/`focusOn` od Fazy 2A — tutaj jest tylko klawisz i cel.
+  if (code === 'Space') {
+    scene.camera.focusOn(focusCoreTarget(planet));
+    lastMessage = `powrót do Core (komórka ${planet.startCell})`;
+    event.preventDefault();
+    return;
+  }
+
+  const digit = /^Digit([1-9])$/.exec(code);
+  if (digit !== null) {
+    const type: BuildingType | undefined = buildableTypes[Number(digit[1]) - 1];
+    if (type === undefined) return;
+    selection.chooseType(type);
+    lastMessage = `wybrany typ: ${type} (${BUILDINGS[type].costOre} rudy)`;
+    event.preventDefault();
+  }
 });
 
-// --- Licznik klatek (Zadanie 5, Krok 2 briefu) -----------------------------------------
+// --- Licznik klatek (Faza 2B, Zadanie 5) -------------------------------------------------
 // Budżet z `global-constraints.md` (8 ms na CAŁY render przy 1442 komórkach) mówi o czasie
 // PRACY per klatka, nie o odstępie między wywołaniami rAF (ten drugi to głównie odświeżanie
 // monitora, ok. 16,6 ms przy 60 Hz, NIEZALEŻNIE od tego, jak szybko faktycznie skończyła się
 // praca) — więc mierzone jest dokładnie to, co Faza 0 mierzyła w P4 (§4 wyników): znacznik
 // czasu na wejściu do ciała tick(), drugi na wyjściu (PO renderze), różnica to czas CPU tej
-// klatki — aktualizacja słońca, `lightField`, aktualizacja kamery (bezwładność orbity K1),
-// przepisanie kolorów komórek i samo `renderer.render()`.
+// klatki. Czas symulacji jest mierzony OSOBNO i odejmowany: budżet 8 ms dotyczy RENDERU,
+// a `sim.step()` ma w Fazie 3 dostać własny.
 const FRAME_WINDOW = 1000;
 const frameTimes = createRollingWindow(FRAME_WINDOW);
-/** Osobne okno na czas rusztowania symulacji (Zadanie 4) — patrz komentarz w `tick`. */
 const simTimes = createRollingWindow(FRAME_WINDOW);
 let totalFrames = 0;
 let loggedBudgetOnce = false;
 
-// Nakładka DOM budowana w JS, nie w index.html: to jest narzędzie deweloperskie tego
-// zadania, nie element rozgrywki (Faza 0: wskaźniki/HUD poza zakresem MVP dotyczą UI GRACZA,
-// nie licznika diagnostycznego) — trzymanie go tutaj, obok logiki, która go wypełnia,
-// zamiast w osobnym pliku HTML, którego trzeba by pilnować w dwóch miejscach naraz.
+// Nakładka DOM budowana w JS, nie w index.html: to jest narzędzie deweloperskie, nie
+// element rozgrywki (prawdziwy HUD gracza to Zadanie 3 tej fazy) — trzymanie go tutaj,
+// obok logiki, która go wypełnia, zamiast w osobnym pliku HTML do pilnowania w dwóch
+// miejscach naraz.
 const hud = document.createElement('div');
 hud.style.cssText =
   'position:fixed;top:8px;left:8px;padding:4px 8px;background:rgba(0,0,0,0.55);' +
@@ -189,49 +216,21 @@ hud.style.cssText =
 hud.textContent = 'klatka: zbieranie danych…';
 document.body.appendChild(hud);
 
-// Planeta jest statyczna; orbituje źródło światła (spec §4.3) — więc pętla renderu liczy
-// upływ czasu WŁASNYM zegarem (nie zależy od żadnego `SimState`, którego tu jeszcze nie
-// ma — wchodzi w Fazie 2C razem z `Sim.enqueue`, patrz `global-constraints.md`) i przelicza
-// `sunDirection`/`lightField` co klatkę na jego podstawie.
-const startTime = performance.now();
-let lastFrameAt = startTime;
-
 // Bufor oświetlenia zaalokowany RAZ, poza pętlą — nie co klatkę. `lightField` zwraca
 // świeżą `Float32Array(1442)` (5768 B) przy każdym wywołaniu, czyli ok. 346 kB/s przy
 // 60 Hz, rzucane pod nogi odśmiecaczowi WEWNĄTRZ tej samej pętli, której czas raportuje
-// licznik klatek wyżej. To ta sama dyscyplina, którą reszta tej gałęzi stosuje wszędzie
-// indziej — `writeCellColors` (`shading.ts`), bufor `colors` (`planetMesh.ts`), okno
-// kroczące (`frameStats.ts`) — i nie było powodu, żeby akurat tu jej nie stosować.
-// Zmierzone w `packages/sim/test/light.test.ts`: 2000 wywołań `lightFieldInto` daje zero
-// cykli odśmiecania, 2000 wywołań `lightField` — kilka.
+// licznik klatek wyżej.
 const light = new Float32Array(planet.cells.length);
+
+let lastFrameAt = performance.now();
+let simAccumulator = 0;
 
 function tick(): void {
   const frameStart = performance.now();
 
-  const elapsedSeconds = (frameStart - startTime) / 1000;
-  const sunDir = sunDirection(elapsedSeconds, DEFAULT_RUN.rotationPeriod);
-  lightFieldInto(planet, sunDir, light);
-  // Co klatkę, mimo że `demoBuildings` się nie zmienia: to jest dokładnie ten koszt, który
-  // w prawdziwej rozgrywce (Faza 2C) będzie płacony co klatkę i ma się mieścić w budżecie
-  // 8 ms. Licznik klatek go obejmuje.
-  //
-  // Drugi argument to czas dla PULSU pierścienia alarmu. Puls jest domyślnym wyglądem gry od
-  // rundy naprawczej 2 Zadania 5 — człowiek przy bramce zobaczył go przy amplitudzie 0,44 px,
-  // co obaliło przesłankę, na której Zadanie 3 go wyłączyło (próg widoczności 1 px pochodzi z
-  // obejrzenia cechy NIERUCHOMEJ, a ruch jest wykrywalny poniżej niego). Zegar zostaje TUTAJ,
-  // bo warstwa ma pozostać funkcją swojego wejścia.
-  scene.updateBuildings(demoBuildings, elapsedSeconds);
-
   // Symulacja w STAŁYM kroku (`TICK_SECONDS`), nie w kroku klatki — §7.2: nic w symulacji
   // nie wolno wiązać z czasem ściennym. Sufit na liczbę kroków w jednej klatce chroni przed
   // spiralą po przełączeniu karty w tle (przeglądarka wstrzymuje rAF, akumulator rośnie).
-  //
-  // Czas TEGO bloku jest mierzony OSOBNO i ODEJMOWANY od czasu klatki niżej. Budżet 8 ms
-  // z `global-constraints.md` dotyczy RENDERU, a ten blok to rusztowanie symulacji, którego
-  // w Fazie 2A w kliencie nie było — wliczenie go uczyniłoby licznik nieporównywalnym z
-  // liczbami Zadań 2-3 i zawyżałoby koszt renderu jednostek o pracę, która należy do
-  // symulacji (i która w Fazie 2C dostanie własny budżet).
   const simStart = performance.now();
   simAccumulator += Math.min(frameStart - lastFrameAt, 250) / 1000;
   lastFrameAt = frameStart;
@@ -239,56 +238,56 @@ function tick(): void {
   while (simAccumulator >= TICK_SECONDS && steps < 5) {
     simAccumulator -= TICK_SECONDS;
     steps++;
-    simTick++;
-    if (simTick % SPAWN_EVERY_TICKS === 0) {
-      const pentagon = planet.pentagons[spawnCursor % planet.pentagons.length];
-      spawnUnit(sim, SPAWN_TYPES[spawnCursor % SPAWN_TYPES.length], pentagon);
-      spawnCursor++;
-    }
-    updateMovement(sim, flowFields, light, sunDir, motion);
-    updateBurning(sim, light);
+    sim.step();
   }
-  // Konkatenacja rusztowania z linijką — jedyna alokacja w tej pętli i należy do
-  // rusztowania, nie do renderu, więc mieści się w mierzonym osobno czasie symulacji.
-  const unitsToDraw = rulerUnits.concat(sim.units);
   const simMs = performance.now() - simStart;
   simTimes.push(simMs);
 
-  scene.updateUnits(unitsToDraw, light);
+  // Zegar RENDERU jest zegarem SYMULACJI, nie ściennym — inaczej terminator na ekranie
+  // byłby gdzie indziej niż terminator, którym symulacja właśnie paliła jednostki, a
+  // czytelność terminatora jest w tej gałęzi ograniczeniem nadrzędnym. `simAccumulator`
+  // dokłada ułamek ticka jeszcze nierozliczonego, żeby słońce szło gładko przy 60 Hz,
+  // zamiast przeskakiwać 20 razy na sekundę o 0,1° (0,6 px przy domyślnym oddaleniu).
+  const renderSeconds = sim.elapsedSeconds + simAccumulator;
+  const sunDir = sunDirection(renderSeconds, DEFAULT_RUN.rotationPeriod);
+  lightFieldInto(planet, sunDir, light);
+
+  // Render CZYTA stan symulacji i nigdy go nie zapisuje (`global-constraints.md`).
+  scene.updateBuildings(sim.state.buildings, renderSeconds);
+  scene.updateUnits(sim.state.units, light);
   scene.render(light, sunDir);
 
   const frameMs = performance.now() - frameStart - simMs;
   frameTimes.push(frameMs);
   totalFrames++;
 
-  // Odświeżanie HUD co 10 klatek — nie co klatkę: sam odczyt tekstu DOM ma swój koszt, a
-  // ma nie stać się zauważalną częścią tego, co mierzy (patrz `frameStats.ts`, uzasadnienie
-  // przy `createRollingWindow` o tej samej zasadzie).
+  // Odświeżanie HUD co 10 klatek — nie co klatkę: sam zapis tekstu DOM ma swój koszt, a ma
+  // nie stać się zauważalną częścią tego, co mierzy.
   if (totalFrames % 10 === 0) {
     const samples = frameTimes.snapshot();
-    const med = median(samples);
-    const p95 = percentile(samples, 95);
-    const simSamples = simTimes.snapshot();
+    const cell = selection.selectedCell;
     hud.textContent =
-      `render: mediana ${med.toFixed(3)} ms · p95 ${p95.toFixed(3)} ms (n=${samples.length}) — budżet 8 ms\n` +
-      `rusztowanie symulacji (poza budżetem): mediana ${median(simSamples).toFixed(3)} ms\n` +
-      `jednostek: ${sim.units.length + rulerUnits.length} (żywych z symulacji ${sim.units.length}) · ` +
-      `cieniowanie [1/2/3]: ${shadingMode}`;
+      `render: mediana ${median(samples).toFixed(3)} ms · p95 ${percentile(samples, 95).toFixed(3)} ms ` +
+      `(n=${samples.length}) — budżet 8 ms\n` +
+      `symulacja (osobny budżet): mediana ${median(simTimes.snapshot()).toFixed(3)} ms · ` +
+      `tick ${sim.state.tick} · cykl ${sim.cycle} · ${sim.state.phase}\n` +
+      `ruda ${sim.state.ore.toFixed(0)} · jednostek ${sim.state.units.length} · ` +
+      `typ [1-9]: ${selection.selectedType} · wskazana komórka: ${cell === null ? '—' : cell}\n` +
+      `${lastMessage}   (cieniowanie Shift+1/2/3: ${shadingMode})`;
   }
 
-  // Wypisanie do konsoli PO 1000 klatkach (Krok 2 briefu) — RAZ, nie za każdym kolejnym
-  // tysiącem: to jest migawka "pierwsze 1000 klatek", porównywalna z `budget.test.ts`
-  // (ten sam próg 1000 pomiarów), nie ciągły spam do logu przez cały czas działania aplikacji.
+  // Wypisanie do konsoli PO 1000 klatkach — RAZ, nie za każdym kolejnym tysiącem: to jest
+  // migawka „pierwsze 1000 klatek", porównywalna z `budget.test.ts` (ten sam próg 1000
+  // pomiarów), nie ciągły spam do logu przez cały czas działania aplikacji.
   if (!loggedBudgetOnce && totalFrames >= FRAME_WINDOW) {
     loggedBudgetOnce = true;
     const samples = frameTimes.snapshot();
-    const med = median(samples);
-    const p95 = percentile(samples, 95);
     const simSamples = simTimes.snapshot();
     console.log(
-      `[BUDGET] pierwsze ${FRAME_WINDOW} klatek renderu: mediana=${med.toFixed(3)} ms, p95=${p95.toFixed(3)} ms (budżet: 8 ms)` +
-        ` — przy ${sim.units.length + rulerUnits.length} jednostkach; rusztowanie symulacji OSOBNO:` +
-        ` mediana=${median(simSamples).toFixed(3)} ms, p95=${percentile(simSamples, 95).toFixed(3)} ms`,
+      `[BUDGET] pierwsze ${FRAME_WINDOW} klatek renderu: mediana=${median(samples).toFixed(3)} ms, ` +
+        `p95=${percentile(samples, 95).toFixed(3)} ms (budżet: 8 ms) — przy ${sim.state.units.length} ` +
+        `jednostkach; symulacja OSOBNO: mediana=${median(simSamples).toFixed(3)} ms, ` +
+        `p95=${percentile(simSamples, 95).toFixed(3)} ms`,
     );
   }
 

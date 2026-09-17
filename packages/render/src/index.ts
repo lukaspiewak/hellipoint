@@ -22,6 +22,7 @@ export {
   type Rgb,
 } from './shading.js';
 export {
+  cameraRay,
   clampDistance,
   createCamera,
   distanceLimits,

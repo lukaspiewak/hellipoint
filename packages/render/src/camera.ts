@@ -1,4 +1,4 @@
-import { PerspectiveCamera } from 'three';
+import { PerspectiveCamera, Vector3 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Vec3 } from '@heliopolis/sim';
 
@@ -124,6 +124,76 @@ export function focusPosition(currentPosition: Vec3, target: Vec3, radius: numbe
   return { x: target.x * s, y: target.y * s, z: target.z * s };
 }
 
+// Wektory robocze `cameraRay` — zaalokowane RAZ, na poziomie modułu. `cameraRay` jest
+// wołane z obsługi `pointermove`, czyli potencjalnie częściej niż raz na klatkę; dyscyplina
+// „brak alokacji w pętli renderu" (`global-constraints.md`) obowiązuje tu tak samo, jak
+// w `writeCellColors` czy w buforze `colors` z `planetMesh.ts`. Funkcja jest synchroniczna
+// i nie oddaje sterowania w środku, więc współdzielenie tych dwóch wektorów między
+// wywołaniami jest bezpieczne; zwracany wynik to ŚWIEŻE, zwykłe obiekty `Vec3`, żeby
+// wołający nie dostał uchwytu do bufora, który zmieni mu się pod ręką przy następnym ruchu.
+const rayOriginScratch = new Vector3();
+const rayDirectionScratch = new Vector3();
+
+/**
+ * Promień świata odpowiadający punktowi `(ndcX, ndcY)` we WSPÓŁRZĘDNYCH ZNORMALIZOWANYCH
+ * URZĄDZENIA (oba w `[-1, 1]`, `+Y` do GÓRY ekranu) — czyli odwrotność rzutowania, które
+ * ta sama kamera stosuje przy rysowaniu. Wynik karmi `pickCell` (`picking.ts`).
+ *
+ * Mieszka w `camera.ts`, a nie w `apps/client`, z dwóch powodów. (1) To jest matematyka
+ * TEJ kamery — `projectionMatrixInverse` i `matrixWorld` są jej polami, a odwrotność
+ * rzutowania należy tam, gdzie samo rzutowanie. (2) `apps/client` z założenia NIE importuje
+ * `three` bezpośrednio (barierka pakietu, patrz `index.ts`), a `Vector3.unproject` jest
+ * jedyną drogą do `projectionMatrixInverse`; zamiana tego na własną arytmetykę macierzową
+ * po stronie klienta byłaby przepisaniem biblioteki po to, żeby ominąć barierkę.
+ *
+ * Podział odpowiedzialności z `screenToRay` (`apps/client/src/input.ts`) jest ostry:
+ * TAM mieszka piksel → NDC (bo wymaga `getBoundingClientRect`, czyli DOM-u), TUTAJ
+ * NDC → promień świata (bo wymaga kamery). Klient nie zna macierzy, kamera nie zna płótna.
+ *
+ * `ndcZ = 0.5` (nie `-1`, czyli płaszczyzna bliska) jest tym, czego używa
+ * `THREE.Raycaster.setFromCamera`: dla rzutu perspektywicznego KAŻDY `ndcZ` z przedziału
+ * daje punkt na tym samym promieniu, więc wartość nie wpływa na kierunek, a 0,5 trzyma
+ * odejmowanie z dala od płaszczyzny bliskiej, gdzie różnica dwóch bliskich liczb traci
+ * cyfry znaczące.
+ *
+ * **Zwracany kierunek jest ZNORMALIZOWANY.** `pickCell` normalizuje po swojej stronie
+ * (przyjmuje kierunek dowolnej długości), więc nie jest to wymóg konsumenta — ale
+ * kierunek jednostkowy pozwala wołającemu czytać `dot` jako cosinus kąta bez dodatkowych
+ * zabiegów, a parametr `t` przecięcia jako odległość w jednostkach świata.
+ *
+ * **Wejście niefinitne NIE rzuca** — ten sam kontrakt i to samo uzasadnienie, co w
+ * `pickCell`: płótno o zerowym rozmiarze na pierwszej klatce ukrytej karty daje
+ * `camera.aspect = 0/0`, a przez to `NaN` w `projectionMatrix`. `NaN` przechodzi tędy na
+ * wylot do `Vec3` i `pickCell` zamienia go na `null` (brak podświetlenia przez jedną
+ * klatkę), zamiast wywalać pętlę renderu wyjątkiem.
+ */
+export function cameraRay(
+  camera: PerspectiveCamera,
+  ndcX: number,
+  ndcY: number,
+): { origin: Vec3; direction: Vec3 } {
+  // Kliknięcie przychodzi MIĘDZY klatkami, a `OrbitControls.update()` zapisuje nową
+  // pozycję wprost do `camera.position` — `matrixWorld` przeliczy dopiero renderer, przy
+  // następnym `render()`. Bez tej linii promień byłby liczony z pozycji sprzed ostatniego
+  // ruchu kamery, czyli gracz celowałby tam, gdzie planeta była klatkę wcześniej.
+  camera.updateMatrixWorld();
+  rayOriginScratch.setFromMatrixPosition(camera.matrixWorld);
+  rayDirectionScratch.set(ndcX, ndcY, 0.5).unproject(camera).sub(rayOriginScratch);
+  // Dzielenie WPROST, bez `Vector3.normalize()`: ta metoda dzieli przez `length() || 1`,
+  // więc dla wejścia niefinitnego albo zdegenerowanego po cichu podstawia 1 i oddaje
+  // wektor, który wygląda na poprawny. Tutaj `NaN` ma dojść do `pickCell` jako `NaN`
+  // (który zwróci `null`), a nie jako fałszywy kierunek.
+  const length = Math.hypot(rayDirectionScratch.x, rayDirectionScratch.y, rayDirectionScratch.z);
+  return {
+    origin: { x: rayOriginScratch.x, y: rayOriginScratch.y, z: rayOriginScratch.z },
+    direction: {
+      x: rayDirectionScratch.x / length,
+      y: rayDirectionScratch.y / length,
+      z: rayDirectionScratch.z / length,
+    },
+  };
+}
+
 /**
  * Buduje kamerę K1: `THREE.PerspectiveCamera` + `OrbitControls` (traktowany jako
  * biblioteka — matematyka warta testowania to `distanceLimits`/`clampDistance`/
@@ -145,6 +215,14 @@ export function createCamera(canvas: HTMLCanvasElement, radius: number): OrbitCa
 
   const controls = new OrbitControls(object, canvas);
   controls.target.set(0, 0, 0);
+  // Przesuwanie WYŁĄCZONE (Faza 2C, Zadanie 2). Domyślnie `OrbitControls` przypisuje je
+  // do prawego przycisku i pozwala odsunąć `controls.target` od `(0,0,0)` — a cały model
+  // kamery K1 stoi na tym, że planeta jest wyśrodkowana i orbitowanie zmienia wyłącznie
+  // kąt i odległość (patrz komentarz funkcji wyżej; `focusOn` też zeruje `target`).
+  // Przesunięcie było więc od zawsze jedyną drogą do złamania tego niezmiennika, tylko
+  // nikt jej nie używał. Zadanie 2 czyni ją SZKODLIWĄ: prawy przycisk to teraz rozbiórka,
+  // więc przeciągnięcie nim jednocześnie rozbijałoby kadr i wysyłało komendę.
+  controls.enablePan = false;
   controls.minDistance = min;
   controls.maxDistance = max;
   controls.enableDamping = true;
