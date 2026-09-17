@@ -231,9 +231,14 @@ git commit -m "Faza 2C/1: wskazanie komorki przez wlasnosc Voronoi, nie raycast 
 
 - [ ] **Krok 1: Test zamiany współrzędnych ekranu na promień**
 
+**Nie buduj własnej atrapy płótna.** `packages/render/test/support/fakeCanvas.ts` już istnieje
+i jest udokumentowana co do tego, które pola faktycznie czyta `OrbitControls` — ale ma dziś
+`clientWidth`/`clientHeight` i **nie ma `getBoundingClientRect`**. Rozszerz **ją**, a nie twórz
+drugiej. Kopia atrapy w pliku testowym to następna liczba, która przeżyje swoje wejście.
+
 ```ts
 it('1. kliknięcie w środek kadru daje promień wzdłuż osi patrzenia kamery', () => {
-  const canvas = { clientWidth: 800, clientHeight: 600, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+  const canvas = createFakeCanvas(800, 600);   // rozszerzona o getBoundingClientRect
   const camera = new PerspectiveCamera(50, 800 / 600, 1, 1000);
   camera.position.set(0, 0, 300);
   camera.lookAt(0, 0, 0);
