@@ -350,6 +350,86 @@ describe('createCamera / OrbitCamera.focusOn — to samo spięte z prawdziwym Or
     camera?.dispose();
   });
 
+  it('[NIEZMIENNIK K1] przesuwanie jest WYŁĄCZONE, a środek orbity zostaje w środku planety', () => {
+    // Cały model kamery K1 stoi na tym, że planeta jest wyśrodkowana, a orbitowanie zmienia
+    // WYŁĄCZNIE kąt i odległość. `OrbitControls` domyślnie wiąże przesuwanie z PRAWYM
+    // przyciskiem i pozwala odsunąć `target` od (0,0,0) — czyli złamać ten niezmiennik.
+    // Od Fazy 2C prawy przycisk to rozbiórka, więc przeciągnięcie nim rozbijałoby kadr
+    // i jednocześnie wysyłało komendę. Do rundy naprawczej 1 ani `enablePan = false`,
+    // ani zerowanie `target` w `focusOn` nie były sprawdzone NICZYM w całym repozytorium:
+    // obie mutacje zostawiały pakiet zielony.
+    //
+    // Sprawdzany jest SAM FAKT PRZYPISANIA (akcesor na prototypie), z tego samego powodu
+    // co przy czułości wyżej — `enablePan` ma domyślnie `true`, więc odczyt wartości
+    // końcowej byłby tautologią dla mutacji „usuń przypisanie" tylko wtedy, gdyby domyślna
+    // była `false`. Tu domyślna jest PRZECIWNA, więc wartość końcowa wystarcza; akcesor
+    // dokłada do tego dowód, że to MY ją ustawiamy, a nie biblioteka zmieniła domyślną.
+    const proto = OrbitControls.prototype as unknown as Record<string, unknown>;
+    const panWrites: boolean[] = [];
+    // Instancja `OrbitControls` przechwycona przez akcesor — potrzebna, żeby PO zdjęciu
+    // akcesora z prototypu przepisać wartości do pól WŁASNYCH obiektu. Bez tego kamera
+    // zostaje z `controls.target === undefined` i `focusOn` wywala się na atrapie
+    // przyrządu zamiast na własności, którą test bada.
+    let instance: Record<string, unknown> | null = null;
+    const targets: { x: number; y: number; z: number; set(x: number, y: number, z: number): void }[] = [];
+    const originalPan = Object.getOwnPropertyDescriptor(proto, 'enablePan');
+    const originalTarget = Object.getOwnPropertyDescriptor(proto, 'target');
+    Object.defineProperty(proto, 'enablePan', {
+      configurable: true,
+      get(this: Record<string, unknown>): unknown {
+        return this.__test_enablePan;
+      },
+      set(this: Record<string, unknown>, value: boolean): void {
+        this.__test_enablePan = value;
+        instance = this;
+        panWrites.push(value);
+      },
+    });
+    Object.defineProperty(proto, 'target', {
+      configurable: true,
+      get(this: Record<string, unknown>): unknown {
+        return this.__test_target;
+      },
+      set(this: Record<string, unknown>, value: unknown): void {
+        this.__test_target = value;
+        instance = this;
+        targets.push(value as (typeof targets)[number]);
+      },
+    });
+
+    let camera: ReturnType<typeof createCamera> | null = null;
+    try {
+      camera = createCamera(createFakeCanvas(), radius);
+    } finally {
+      delete proto.enablePan;
+      delete proto.target;
+      if (originalPan) Object.defineProperty(proto, 'enablePan', originalPan);
+      if (originalTarget) Object.defineProperty(proto, 'target', originalTarget);
+      const held = instance as Record<string, unknown> | null;
+      if (held !== null) {
+        held.enablePan = held.__test_enablePan;
+        held.target = held.__test_target;
+      }
+    }
+
+    // Kontrola pozytywna na przyrząd: akcesor NAPRAWDĘ przechwycił zapis konstruktora.
+    expect(panWrites.length).toBeGreaterThan(0);
+    expect(targets.length).toBeGreaterThan(0);
+    // Konstruktor biblioteki pisze `true`, `createCamera` musi dopisać `false` PO nim.
+    expect(panWrites[0]).toBe(true);
+    expect(panWrites[panWrites.length - 1]).toBe(false);
+
+    // Środek orbity: `focusOn` ma go ZEROWAĆ, a nie tylko zastać w zerze. Odsuwamy go
+    // ręcznie — tak, jak zrobiłoby przesuwanie, gdyby ktoś je z powrotem włączył — i
+    // sprawdzamy, że skrót „wróć do Core" przywraca niezmiennik.
+    const orbitTarget = targets[targets.length - 1];
+    expect([orbitTarget.x, orbitTarget.y, orbitTarget.z]).toEqual([0, 0, 0]);
+    orbitTarget.set(5, -7, 11);
+    camera?.focusOn(target);
+    expect([orbitTarget.x, orbitTarget.y, orbitTarget.z]).toEqual([0, 0, 0]);
+    camera?.dispose();
+  });
+
   it('nasze stałe czułości są DOKŁADNIE dzisiejszymi domyślnymi Three.js — zmiana w bibliotece ma być widoczna, nie cicha', () => {
     // Cały zamiar wpisania tych stałych to „niczego dziś nie zmieniamy, ale wartość jest
     // nasza i jawna". Ten test pilnuje obu połówek naraz: gdyby ktoś zmienił nasze stałe,

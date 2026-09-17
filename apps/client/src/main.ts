@@ -4,28 +4,16 @@ import {
   median,
   percentile,
   RENDER_VERSION,
-  type UnitShadingMode,
 } from '@heliopolis/render';
 import {
-  BUILDINGS,
   createPlanet,
   DEFAULT_RUN,
   lightFieldInto,
   Sim,
   sunDirection,
   TICK_SECONDS,
-  type BuildingType,
 } from '@heliopolis/sim';
-import {
-  createSelection,
-  focusCoreTarget,
-  intentFromPointer,
-  isClick,
-  playerBuildableTypes,
-  pointedCell,
-  refusalReason,
-  type PointerButton,
-} from './input.js';
+import { attachInput, createSelection, type ListenerTarget } from './input.js';
 
 console.log(`Heliopolis render ${RENDER_VERSION}`);
 
@@ -51,144 +39,40 @@ const scene = createScene(planet, canvas);
 const sim = new Sim(planet, DEFAULT_RUN);
 
 // --- Wejście gracza ----------------------------------------------------------------------
-// Logika mieszka w `input.ts` i jest tam WOLNA OD DOM-u (i przetestowana bez przeglądarki,
-// `test/input.test.ts`). Tutaj zostaje wyłącznie to, czego bez DOM-u zrobić się nie da:
-// odczyt zdarzeń i jedno wywołanie `sim.enqueue`.
+// CAŁA logika wejścia — łącznie z treścią nasłuchów — mieszka w `input.ts` i jest WOLNA od
+// DOM-u, więc daje się przetestować bez przeglądarki (`test/input.test.ts`). Tutaj zostaje
+// wyłącznie to, czego bez DOM-u zrobić się nie da: znalezienie płótna, `window` jako
+// źródła zdarzeń klawiatury, pętla renderu i tekst nakładki.
+//
+// To nie jest kosmetyka. Dopóki treść nasłuchów siedziała TUTAJ, ograniczenie nadrzędne
+// fazy nie miało strażnika w obie strony — `main.ts` nie da się zaimportować w teście
+// (DOM na poziomie modułu), więc usunięcie jedynej linii `sim.enqueue(...)` zostawiało
+// cały pakiet zielony. Po przeniesieniu obie połowy są mierzone własnością: hasz stanu
+// nietknięty przez obsługę zdarzenia, świat zmieniony po `step()`.
 const selection = createSelection();
-const buildableTypes = playerBuildableTypes();
 
 /** Ostatni komunikat dla gracza — powód odmowy albo potwierdzenie. Zadanie 3 zastąpi to
  *  prawdziwym HUD-em; tutaj to jedna linia w nakładce diagnostycznej. */
 let lastMessage = 'lewy: buduj · prawy: rozbierz · 1-9: typ · spacja: wróć do Core';
+let shadingMode: 'flat' | 'threshold' | 'smooth' = 'flat';
 
-/** Skąd zaczęło się naciśnięcie — do odróżnienia kliknięcia od obrotu kamery (`isClick`). */
-let pressX = 0;
-let pressY = 0;
-let pressButton: PointerButton | null = null;
-
-function buttonOf(event: PointerEvent): PointerButton | null {
-  if (event.button === 0) return 'LEFT';
-  if (event.button === 2) return 'RIGHT';
-  return null; // środkowy przycisk należy do zoomu `OrbitControls`
-}
-
-// Ruch kursora aktualizuje WYBRANĄ KOMÓRKĘ — stan należący do wejścia, nie do HUD
-// (`progress.md`, Ruling 1). `pointAt` zwraca, czy wskazanie faktycznie się zmieniło;
-// Zadanie 3 powiesi na tej odpowiedzi przemalowanie menu budowy, żeby nie liczyć go na
-// każde drgnięcie myszy wewnątrz tej samej komórki.
-canvas.addEventListener('pointermove', (event) => {
-  selection.pointAt(pointedCell(planet, scene.camera.object, canvas, event.clientX, event.clientY));
-});
-
-canvas.addEventListener('pointerdown', (event) => {
-  pressButton = buttonOf(event);
-  pressX = event.clientX;
-  pressY = event.clientY;
-});
-
-canvas.addEventListener('pointerup', (event) => {
-  const button = pressButton;
-  pressButton = null;
-  // Przeciągnięcie to obrót kamery (`OrbitControls`), nie kliknięcie — inaczej każdy obrót
-  // stawiałby budynek w punkcie, w którym gracz zaczął przeciągać.
-  if (button === null || button !== buttonOf(event)) return;
-  if (!isClick(pressX, pressY, event.clientX, event.clientY)) return;
-
-  const intent = intentFromPointer(
-    planet,
-    scene.camera.object,
-    canvas,
-    { clientX: event.clientX, clientY: event.clientY, button },
-    selection.selectedType,
-  );
-  if (intent === null) {
-    lastMessage = 'kliknięcie w tło — poza planetą';
-    return;
-  }
-
-  // Powód liczony PRZED wysłaniem, wyłącznie po to, żeby gracz zobaczył, dlaczego nic się
-  // nie stało. Klient NIE jest bramkarzem: komenda idzie do kolejki niezależnie od tego,
-  // co tu wyszło, bo autorytatywna jest symulacja (`applyCommand` sprawdza to samo po
-  // swojej stronie). Klient, który filtruje komendy po swojemu, w chwili rozjazdu
-  // z serwerem Fazy 5 połyka wejście gracza bez śladu.
-  const reason = refusalReason(sim.state, intent);
-  lastMessage =
-    reason === null
-      ? `${intent.kind === 'BUILD' ? `buduję ${intent.type}` : 'rozbieram'} na komórce ${intent.cellId}`
-      : `odmowa: ${reason} (komórka ${intent.cellId})`;
-
-  // ↓ JEDYNA droga wejścia gracza do świata. `global-constraints.md`: „Wejście gracza idzie
-  // wyłącznie przez kolejkę komend (`Sim.enqueue`), nigdy przez zapis do stanu. To jest
-  // warunek Fazy 5 (autorytatywny serwer), nie wygoda." Pilnuje tego strażnik strukturalny
-  // czytający ten plik: `input.test.ts`, test 12.
-  sim.enqueue(intent);
-});
-
-// Prawy przycisk to rozbiórka — menu kontekstowe przeglądarki musi zejść z drogi.
-canvas.addEventListener('contextmenu', (event) => {
-  event.preventDefault();
-});
-
-// Przełącznik trybu cieniowania jednostek — narzędzie DIAGNOSTYCZNE z Fazy 2B, Zadanie 4
-// (pytanie „progowo czy gładko" rozstrzyga się przełączaniem na tej samej scenie).
-// Przeniesione na `Shift`+cyfra, bo same cyfry są teraz wyborem typu budynku; czytane
-// przez `event.code`, nie `event.key`, bo `Shift+1` to `!` na klawiaturze amerykańskiej
-// i `!` na polskiej — kod klawisza jest jedyną wartością niezależną od układu.
-const SHADING_KEYS: Readonly<Record<string, UnitShadingMode>> = {
-  Digit1: 'flat',
-  Digit2: 'threshold',
-  Digit3: 'smooth',
-};
-let shadingMode: UnitShadingMode = 'flat';
-
-/**
- * Który KLAWISZ naciśnięto, w postaci niezależnej od układu klawiatury.
- *
- * `event.code` jest wartością właściwą (`Digit3` to trzeci klawisz górnego rzędu niezależnie
- * od tego, czy trzeba do niego Shifta, jak na AZERTY) — ale NIE ZAWSZE JEST OBECNY. Zmierzone
- * na tej gałęzi przy sterowaniu przeglądarką zdalnie: zdarzenie dociera z `code === ''`
- * i samym `key`. To samo zgłaszają zdalne pulpity i część metod wprowadzania. Stąd
- * `code` jako źródło pierwsze, `key` jako zapasowe — zamiast sterowania, które po cichu
- * przestaje działać na części konfiguracji.
- */
-function keyCode(event: KeyboardEvent): string {
-  if (event.code !== '') return event.code;
-  if (event.key === ' ' || event.key === 'Spacebar') return 'Space';
-  return /^[0-9]$/.test(event.key) ? `Digit${event.key}` : event.key;
-}
-
-window.addEventListener('keydown', (event) => {
-  const code = keyCode(event);
-  if (event.shiftKey) {
-    const next = SHADING_KEYS[code];
-    if (next === undefined) return;
-    shadingMode = next;
-    scene.setUnitShading(next);
-    lastMessage = `cieniowanie jednostek: ${next}`;
-    event.preventDefault();
-    return;
-  }
-
-  // Skrót „wróć do Core" — wymaganie bramki Fazy 0
-  // (`docs/superpowers/specs/2026-09-14-faza-0-wyniki.md`): kamera K1 wygrała pomiar mimo
-  // przewidywanego ryzyka gubienia bazy, ale POD WARUNKIEM istnienia tego skrótu.
-  // Matematyka (zachowanie odległości + przycięcie do zakresu zoomu) siedzi w
-  // `focusPosition`/`focusOn` od Fazy 2A — tutaj jest tylko klawisz i cel.
-  if (code === 'Space') {
-    scene.camera.focusOn(focusCoreTarget(planet));
-    lastMessage = `powrót do Core (komórka ${planet.startCell})`;
-    event.preventDefault();
-    return;
-  }
-
-  const digit = /^Digit([1-9])$/.exec(code);
-  if (digit !== null) {
-    const type: BuildingType | undefined = buildableTypes[Number(digit[1]) - 1];
-    if (type === undefined) return;
-    selection.chooseType(type);
-    lastMessage = `wybrany typ: ${type} (${BUILDINGS[type].costOre} rudy)`;
-    event.preventDefault();
-  }
+const input = attachInput({
+  planet,
+  camera: scene.camera.object,
+  canvas,
+  // `window` jako źródło zdarzeń klawiatury. Rzutowanie strukturalne, bo `ListenerTarget`
+  // opisuje tylko te dwie metody — wejście nie ma prawa sięgnąć po nic więcej z `window`.
+  keys: window as unknown as ListenerTarget,
+  sim,
+  selection,
+  focusOn: (target) => scene.camera.focusOn(target),
+  report: (message) => {
+    lastMessage = message;
+  },
+  setUnitShading: (mode) => {
+    shadingMode = mode;
+    scene.setUnitShading(mode);
+  },
 });
 
 // --- Licznik klatek (Faza 2B, Zadanie 5) -------------------------------------------------
@@ -222,6 +106,23 @@ document.body.appendChild(hud);
 // licznik klatek wyżej.
 const light = new Float32Array(planet.cells.length);
 
+/**
+ * Najdłuższa przerwa między klatkami, jaką akumulator w ogóle przyjmuje. `[STROJENIE]` —
+ * po powrocie z karty w tle (przeglądarka wstrzymuje `requestAnimationFrame`) różnica
+ * czasu potrafi wynieść minuty, a bez tego sufitu symulacja próbowałaby je nadrobić
+ * w jednej klatce. Powyżej tej wartości czas jest PO CICHU GUBIONY — to jest świadomy
+ * handel „zgubić czas zamiast zamrozić kartę", a nie przeoczenie.
+ */
+const MAX_FRAME_GAP_MS = 250; // [STROJENIE]
+
+/**
+ * Ile kroków symulacji wolno wykonać w JEDNEJ klatce. `[STROJENIE]` — druga połowa tej
+ * samej ochrony: bez niej akumulator po długiej przerwie nakręca spiralę (im dłużej trwa
+ * nadrabianie, tym większa następna zaległość). Faza 3, dając `sim.step()` własny budżet,
+ * będzie tej liczby szukać greppem po tagu.
+ */
+const MAX_STEPS_PER_FRAME = 5; // [STROJENIE]
+
 let lastFrameAt = performance.now();
 let simAccumulator = 0;
 
@@ -232,10 +133,10 @@ function tick(): void {
   // nie wolno wiązać z czasem ściennym. Sufit na liczbę kroków w jednej klatce chroni przed
   // spiralą po przełączeniu karty w tle (przeglądarka wstrzymuje rAF, akumulator rośnie).
   const simStart = performance.now();
-  simAccumulator += Math.min(frameStart - lastFrameAt, 250) / 1000;
+  simAccumulator += Math.min(frameStart - lastFrameAt, MAX_FRAME_GAP_MS) / 1000;
   lastFrameAt = frameStart;
   let steps = 0;
-  while (simAccumulator >= TICK_SECONDS && steps < 5) {
+  while (simAccumulator >= TICK_SECONDS && steps < MAX_STEPS_PER_FRAME) {
     simAccumulator -= TICK_SECONDS;
     steps++;
     sim.step();
@@ -251,6 +152,12 @@ function tick(): void {
   const renderSeconds = sim.elapsedSeconds + simAccumulator;
   const sunDir = sunDirection(renderSeconds, DEFAULT_RUN.rotationPeriod);
   lightFieldInto(planet, sunDir, light);
+
+  // Wskazana komórka przeliczana CO KLATKĘ z ostatniego znanego piksela kursora, nie tylko
+  // na `pointermove`: `OrbitControls` ma bezwładność, więc kamera jedzie jeszcze około
+  // sekundy po tym, jak gracz przestał ruszać myszą, i przez cały ten czas ten sam piksel
+  // wskazuje kolejne komórki. Wychodzi bez pracy, gdy ani kursor, ani kamera nie drgnęły.
+  input.refreshPointedCell();
 
   // Render CZYTA stan symulacji i nigdy go nie zapisuje (`global-constraints.md`).
   scene.updateBuildings(sim.state.buildings, renderSeconds);

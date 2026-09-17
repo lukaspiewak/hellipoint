@@ -20,9 +20,14 @@ import {
   MAX_DISTANCE_FACTOR,
   MIN_DISTANCE_FACTOR,
 } from '@heliopolis/render';
-import { createFakeCanvas } from '../../../packages/render/test/support/fakeCanvas.js';
+import {
+  createFakeCanvas,
+  createFakeEventTarget,
+  fireOn,
+} from '../../../packages/render/test/support/fakeCanvas.js';
 import { mulberry32 } from '../../../packages/render/test/support/mulberry32.js';
 import {
+  attachInput,
   CLICK_SLOP_PX,
   createSelection,
   focusCoreTarget,
@@ -536,10 +541,20 @@ describe('niezmiennik: klient NIE mutuje stanu symulacji', () => {
     // Kontrola pozytywna SAMEGO strażnika: gdyby nie potrafił rozpoznać zapisu, powyższe
     // przechodziłoby również dla klienta, który stan mutuje. Trzy kształty, w których to
     // realnie wygląda, plus odczyt, który ma zostać przepuszczony.
-    expect(stateWrites('sim.state.ore = 999;')).toEqual(['sim.state.ore']);
+    // SZEŚĆ dróg obejścia zmierzonych w przeglądzie — pierwsza wersja tego strażnika
+    // przepuszczała cztery z nich. Pierwsza pozycja jest najważniejsza: to DOKŁADNIE to,
+    // co robi klient z predykcją w Fazie 5 (bierze obiekt ze stanu i go zmienia).
+    expect(stateWrites('const b = sim.state.buildings[i]; b.hp = 1;')).toEqual(['b.hp']);
+    expect(stateWrites('const { state } = sim; state.ore = 999;')).toEqual(['state.ore']);
+    expect(stateWrites('Object.assign(sim.state, { ore: 999 });')).toEqual(['sim.state']);
+    expect(stateWrites('++sim.state.ore;')).toEqual(['sim.state.ore']);
+    expect(stateWrites('sim.state.ore++;')).toEqual(['sim.state.ore']);
     expect(stateWrites('sim.state.buildings[7] = null;')).toEqual(['sim.state.buildings[…]']);
-    expect(stateWrites('sim.state.units.push(u);')).toEqual(['sim.state.units.push']);
-    expect(stateWrites('const ore = sim.state.ore;')).toEqual([]);
+    // …i trzy, które mają zostać przepuszczone: czysty odczyt, mutacja NIE przez stan,
+    // oraz deklaracja nasłuchu, który stan tylko czyta w swoim ciele.
+    expect(stateWrites('const ore = sim.state.ore; report(ore);')).toEqual([]);
+    expect(stateWrites('const local = []; local.push(1);')).toEqual([]);
+    expect(stateWrites('const onUp = (e) => { report(sim.state.ore); };')).toEqual([]);
     // …i ta sama kontrola dla drugiej połowy strażnika: komentarz i literał napisowy NIE
     // są kodem, wywołanie JEST.
     expect(codeIdentifiers('applyCommand(s, cmd);').has('applyCommand')).toBe(true);
@@ -597,16 +612,29 @@ describe('stan wyboru i skrót „wróć do Core"', () => {
     expect(b.selectedType).toBe('LASER_TURRET');
   });
 
-  it('15. [PRÓG] przeciągnięcie kamery o jeden piksel ponad luz nie jest już kliknięciem', () => {
-    // Para przy samej granicy, w obu kierunkach i po obu osiach naraz (przekątna), bo
-    // kryterium ma być odległością, a nie sumą składowych: dla luzu 4 px przekątna 3/3
-    // (4,24 px) jest PRZECIĄGNIĘCIEM, mimo że żadna składowa nie przekracza 4.
-    expect(isClick(100, 100, 100 + CLICK_SLOP_PX, 100)).toBe(true);
-    expect(isClick(100, 100, 100 + CLICK_SLOP_PX + 1e-9, 100)).toBe(false);
-    expect(isClick(100, 100, 100, 100 - CLICK_SLOP_PX)).toBe(true);
-    expect(isClick(100, 100, 100, 100 - CLICK_SLOP_PX - 1e-9)).toBe(false);
-    expect(isClick(100, 100, 103, 103)).toBe(false);
-    expect(isClick(100, 100, 100, 100)).toBe(true);
+  it('15. [PRÓG] luz kliknięcia wisi między dwoma faktami W PIKSELACH, nie między sobą a sobą', () => {
+    // Pierwsza wersja tego testu budowała parę graniczną ZE STAŁEJ, którą testuje
+    // (`100 + CLICK_SLOP_PX`), więc mierzyła operator `<=` w `isClick`, a nie wartość 4:
+    // luz 0,25 px — czyli „gra nie buduje NIKOMU" — przechodził 17/17. Teraz obie granice
+    // są absolutne i całkowite, przez co `(100 + c) − 100 ≠ c` nie ma jak podstawić
+    // artefaktu zaokrąglenia w miejsce prawdziwego progu.
+    //
+    // OD DOŁU: drgnienie ręki przy klikaniu sięga ~2-3 px — kliknięcie, które przejechało
+    // 3 px, ma dalej być kliknięciem (luz 2 px oblewa, luz 3 px przechodzi).
+    expect(isClick(0, 0, 0, 0)).toBe(true);
+    expect(isClick(0, 0, 3, 0)).toBe(true);
+    expect(isClick(0, 0, 0, -3)).toBe(true);
+    // OD GÓRY: krok kraty to 34,2 px przy domyślnym oddaleniu, więc przeciągnięcie o 10 px
+    // ma już BYĆ obrotem kamery (luz 9 px przechodzi, luz 10 px oblewa).
+    expect(isClick(0, 0, 10, 0)).toBe(false);
+    expect(isClick(0, 0, 0, 10)).toBe(false);
+    // KSZTAŁT: kryterium jest ODLEGŁOŚCIĄ, nie największą składową ani sumą osi —
+    // przekątna 7/7 to 9,9 px, czyli przeciągnięcie, mimo że żadna oś nie sięga 10.
+    expect(isClick(0, 0, 7, 7)).toBe(false);
+    // I OSOBNO, jawnie: granica jest WŁĄCZNA. Ta jedna asercja jest z natury
+    // samozwrotna (odnosi się do stałej), więc nie zastępuje dwóch granic wyżej —
+    // pilnuje wyłącznie tego, żeby `<=` nie zmieniło się w `<`.
+    expect(isClick(0, 0, CLICK_SLOP_PX, 0)).toBe(true);
   });
 
   it('16. lista typów do budowania jest związana z bramką symulacji, nie z ręczną kopią', () => {
@@ -671,6 +699,256 @@ describe('stan wyboru i skrót „wróć do Core"', () => {
   });
 });
 
+// =========================================================================================
+// Spięcie wejścia — WŁAŚCIWY strażnik ograniczenia nadrzędnego (runda naprawcza 1)
+//
+// Do tej rundy treść nasłuchów siedziała w `main.ts`, którego nie da się zaimportować
+// w teście (DOM na poziomie modułu). Skutek zmierzony w przeglądzie: usunięcie jedynej
+// linii `sim.enqueue(intent)` zostawiało 623/623 zielone, a cztery z pięciu dróg obejścia
+// zakazu mutowania stanu przechodziły 17/17. Teraz cała droga od ZDARZENIA do KOLEJKI
+// mieszka w `attachInput`, a poniższe testy mierzą obie połowy jako WŁASNOŚĆ:
+//   • negatywną — `stateHash` przed obsługą zdarzenia i po niej musi być identyczny,
+//   • pozytywną — po `sim.step()` świat musi się zmienić dokładnie tak, jak zapowiadała
+//     komenda (tego żadna asercja o niemutowaniu złapać nie może).
+// =========================================================================================
+
+interface Wiring {
+  camera: RayCamera;
+  canvas: HTMLCanvasElement;
+  keys: ReturnType<typeof createFakeEventTarget>;
+  sim: Sim;
+  selection: ReturnType<typeof createSelection>;
+  messages: string[];
+  focused: Vec3[];
+  shading: string[];
+  handle: ReturnType<typeof attachInput>;
+  rect: { left: number; top: number; width: number; height: number };
+}
+
+const CANVAS_RECT = { left: 0, top: 0, width: 800, height: 600 };
+
+function makeWiring(): Wiring {
+  // DWA osobne płótna. `OrbitControls` rejestruje własne nasłuchy wskaźnika, a `fireOn`
+  // wywołuje WSZYSTKIE zarejestrowane dla danego typu — wystrzelenie w to samo płótno
+  // uruchomiłoby też jego obsługę, która czyta pola `PointerEvent`, których ta atrapa
+  // nie udaje (`pointerId`, `setPointerCapture`). W przeglądarce oba nasłuchy siedzą
+  // na jednym elemencie i nie przeszkadzają sobie, bo żaden nie zatrzymuje propagacji.
+  const camera = createCamera(createFakeCanvas(), radius).object;
+  const canvas = createFakeCanvas(CANVAS_RECT.width, CANVAS_RECT.height, CANVAS_RECT);
+  camera.aspect = CANVAS_RECT.width / CANVAS_RECT.height;
+  camera.updateProjectionMatrix();
+  const keys = createFakeEventTarget();
+  const sim = new Sim(planet, DEFAULT_RUN);
+  const selection = createSelection();
+  const messages: string[] = [];
+  const focused: Vec3[] = [];
+  const shading: string[] = [];
+  const handle = attachInput({
+    planet,
+    camera,
+    canvas,
+    keys,
+    sim,
+    selection,
+    focusOn: (target) => focused.push(target),
+    report: (message) => messages.push(message),
+    setUnitShading: (mode) => shading.push(mode),
+  });
+  return { camera, canvas, keys, sim, selection, messages, focused, shading, handle, rect: CANVAS_RECT };
+}
+
+/** Ustawia kamerę tak, żeby `cellId` wypadła DOKŁADNIE w środku kadru. */
+function aimAt(camera: RayCamera, cellId: number): void {
+  const c = planet.cells[cellId].center;
+  const scale = (radius * 3) / Math.hypot(c.x, c.y, c.z);
+  camera.position.set(c.x * scale, c.y * scale, c.z * scale);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+}
+
+const CENTER_X = CANVAS_RECT.left + CANVAS_RECT.width / 2;
+const CENTER_Y = CANVAS_RECT.top + CANVAS_RECT.height / 2;
+
+/** Pełny gest: wciśnięcie i puszczenie. Zwraca, ilu nasłuchów faktycznie dotknęło. */
+function gesture(
+  w: Wiring,
+  down: [number, number],
+  up: [number, number],
+  button = 0,
+): number {
+  const a = fireOn(w.canvas, 'pointerdown', { clientX: down[0], clientY: down[1], button });
+  const b = fireOn(w.canvas, 'pointerup', { clientX: up[0], clientY: up[1], button });
+  return Math.min(a, b);
+}
+
+function pressKey(w: Wiring, code: string, key = '', shiftKey = false): number {
+  let prevented = 0;
+  const fired = fireOn(w.keys, 'keydown', {
+    code,
+    key,
+    shiftKey,
+    preventDefault: () => {
+      prevented++;
+    },
+  });
+  expect(fired).toBeGreaterThan(0);
+  return prevented;
+}
+
+describe('attachInput — cała droga od zdarzenia do kolejki', () => {
+  it('18. [NIEZMIENNIK, OBIE POŁOWY] kliknięcie nie rusza stanu, a po step() świat zmienia się dokładnie tak, jak zapowiedziała komenda', () => {
+    const w = makeWiring();
+    const target = freeHexagonNear(w.sim.state);
+    aimAt(w.camera, target);
+
+    const before = stateHash(w.sim.state);
+    // Nasłuch musi być NAPRAWDĘ podpięty — `fireOn` zwraca liczbę wykonanych nasłuchów,
+    // więc „zdarzenie poszło w nikogo" jest osobnym, widocznym błędem, a nie cichą zielenią.
+    expect(gesture(w, [CENTER_X, CENTER_Y], [CENTER_X, CENTER_Y])).toBeGreaterThan(0);
+
+    // POŁOWA NEGATYWNA: obsługa zdarzenia nie ruszyła stanu ani o bit. Łapie KAŻDY zapis,
+    // niezależnie od tego, jak zapisany — przez alias, destrukturyzację, `Object.assign`
+    // czy mutację obiektu wyjętego ze stanu.
+    expect(stateHash(w.sim.state)).toBe(before);
+    expect(w.sim.state.buildings[target]).toBeNull(); // komenda leży w KOLEJCE, nie w świecie
+    expect(w.messages.at(-1)).toBe(`buduję BARRICADE na komórce ${target}`);
+
+    // POŁOWA POZYTYWNA: komenda naprawdę dotarła. Bez `enqueue` stan po `step()` byłby
+    // taki, jakby gracz nie kliknął — a żadna asercja o niemutowaniu tego nie widzi.
+    w.sim.step();
+    expect(w.sim.state.buildings[target]?.type).toBe('BARRICADE');
+    expect(stateHash(w.sim.state)).not.toBe(before);
+  });
+
+  it('19. [PRÓG, W PIKSELACH] drgnienie ręki o 3 px to wciąż kliknięcie, przeciągnięcie o 10 px to już obrót kamery', () => {
+    // Oba progi wyrażone w PIKSELACH, nie przez `CLICK_SLOP_PX` — para zbudowana ze stałej,
+    // którą testuje, mierzyła granicę `<=` w `isClick`, a nie wartość 4: luz 0,25 px
+    // (czyli „gra nie buduje nikomu") przechodził 17/17. Liczby całkowite, żeby
+    // `(100 + c) − 100` nie wprowadzało artefaktu zaokrąglenia zamiast prawdziwego progu.
+    const drift = (dx: number, dy: number): boolean => {
+      const w = makeWiring();
+      const target = freeHexagonNear(w.sim.state);
+      aimAt(w.camera, target);
+      gesture(w, [CENTER_X, CENTER_Y], [CENTER_X + dx, CENTER_Y + dy]);
+      w.sim.step();
+      return w.sim.state.buildings[target] !== null;
+    };
+
+    expect(drift(0, 0)).toBe(true); // nieruchome kliknięcie
+    expect(drift(3, 0)).toBe(true); // drgnienie ręki — dolna granica luzu
+    expect(drift(0, -3)).toBe(true); // po drugiej osi i w drugą stronę
+    expect(drift(10, 0)).toBe(false); // obrót kamery — górna granica
+    expect(drift(7, 7)).toBe(false); // przekątna: kryterium jest ODLEGŁOŚCIĄ, nie sumą osi
+    expect(isClick(0, 0, 3, 0)).toBe(true);
+    expect(isClick(0, 0, 10, 0)).toBe(false);
+  });
+
+  it('20. prawy przycisk rozbiera tę samą komórkę, którą lewy zabudował — przez te same nasłuchy', () => {
+    const w = makeWiring();
+    const target = freeHexagonNear(w.sim.state);
+    aimAt(w.camera, target);
+
+    gesture(w, [CENTER_X, CENTER_Y], [CENTER_X, CENTER_Y], 0);
+    w.sim.step();
+    expect(w.sim.state.buildings[target]?.type).toBe('BARRICADE');
+
+    const hashBeforeDemolish = stateHash(w.sim.state);
+    expect(gesture(w, [CENTER_X, CENTER_Y], [CENTER_X, CENTER_Y], 2)).toBeGreaterThan(0);
+    expect(stateHash(w.sim.state)).toBe(hashBeforeDemolish); // dalej: kolejka, nie stan
+    w.sim.step();
+    expect(w.sim.state.buildings[target]).toBeNull();
+    expect(w.messages.at(-1)).toBe(`rozbieram na komórce ${target}`);
+
+    // Rozbiórka CORE jest odmawiana z podanym powodem, a świat zostaje nietknięty.
+    aimAt(w.camera, planet.startCell);
+    gesture(w, [CENTER_X, CENTER_Y], [CENTER_X, CENTER_Y], 2);
+    w.sim.step();
+    expect(w.sim.state.buildings[planet.startCell]?.type).toBe('CORE');
+    expect(w.messages.some((m) => m.includes('CORE_INDESTRUCTIBLE'))).toBe(true);
+  });
+
+  it('21. klawiatura: spacja woła powrót do Core, cyfry wybierają typ, Shift+cyfra przełącza cieniowanie', () => {
+    const w = makeWiring();
+
+    expect(pressKey(w, 'Space')).toBe(1); // `preventDefault` — spacja nie przewija strony
+    expect(w.focused).toEqual([planet.cells[planet.startCell].center]);
+    expect(w.messages.at(-1)).toBe(`powrót do Core (komórka ${planet.startCell})`);
+
+    expect(pressKey(w, 'Digit6')).toBe(1);
+    expect(w.selection.selectedType).toBe('KINETIC_TURRET');
+
+    expect(pressKey(w, 'Digit2', '', true)).toBe(1);
+    expect(w.shading).toEqual(['threshold']);
+    expect(w.selection.selectedType).toBe('KINETIC_TURRET'); // Shift NIE zmienia typu
+
+    // Zapasowy odczyt z `key`, gdy `code` jest pusty — zmierzone przy zdalnym sterowaniu
+    // przeglądarką, zgłaszane też przez zdalne pulpity i część metod wprowadzania.
+    expect(pressKey(w, '', '1')).toBe(1);
+    expect(w.selection.selectedType).toBe('BARRICADE');
+    expect(pressKey(w, '', ' ')).toBe(1);
+    expect(w.focused.length).toBe(2);
+
+    // Klawisz spoza mapy nie robi nic i nie połyka zdarzenia.
+    expect(pressKey(w, 'KeyQ', 'q')).toBe(0);
+  });
+
+  it('22. [ŚWIEŻOŚĆ] wskazana komórka nadąża za kamerą dojeżdżającą bezwładnością, nie tylko za kursorem', () => {
+    // Defekt z przeglądu, zmierzony na ekranie: HUD pokazywał 874, kliknięcie w TEN SAM
+    // piksel budowało na 885, bo wybór przeliczał się wyłącznie na `pointermove`, a
+    // `OrbitControls` (DAMPING_FACTOR 0,08) rusza kamerą jeszcze ~1 s po zatrzymaniu myszy.
+    const w = makeWiring();
+    const first = freeHexagonNear(w.sim.state);
+    aimAt(w.camera, first);
+    expect(fireOn(w.canvas, 'pointermove', { clientX: CENTER_X, clientY: CENTER_Y, button: -1 })).toBeGreaterThan(0);
+
+    expect(w.handle.refreshPointedCell()).toBe(true);
+    expect(w.selection.selectedCell).toBe(first);
+    // Nic się nie ruszyło — przeliczenie ma wyjść bez pracy (i bez alokacji w pętli renderu).
+    expect(w.handle.refreshPointedCell()).toBe(false);
+
+    // Kamera jedzie dalej BEZ ani jednego zdarzenia kursora: dokładnie to robi bezwładność.
+    let moved: number | null = null;
+    for (let i = 0; i < planet.cells.length && moved === null; i++) {
+      const candidate = planet.cells[first].neighbors[0];
+      aimAt(w.camera, candidate);
+      moved = candidate;
+    }
+    expect(moved).not.toBe(first);
+    expect(w.handle.refreshPointedCell()).toBe(true);
+    expect(w.selection.selectedCell).toBe(moved);
+
+    // …i to, co pokazuje wybór, jest tym, co postawi kliknięcie w TEN SAM piksel.
+    const shown = w.selection.selectedCell;
+    gesture(w, [CENTER_X, CENTER_Y], [CENTER_X, CENTER_Y]);
+    w.sim.step();
+    expect(w.sim.state.buildings[shown as number]).not.toBeNull();
+  });
+
+  it('23. detach() odpina wszystkie nasłuchy — po nim kliknięcie nie kolejkuje niczego', () => {
+    const w = makeWiring();
+    const target = freeHexagonNear(w.sim.state);
+    aimAt(w.camera, target);
+    w.handle.detach();
+
+    expect(gesture(w, [CENTER_X, CENTER_Y], [CENTER_X, CENTER_Y])).toBe(0);
+    w.sim.step();
+    expect(w.sim.state.buildings[target]).toBeNull();
+  });
+
+  it('24. kolejność typów budowania jest kontraktem skrótów 1-9, nie luźnym opisem', () => {
+    const offered = playerBuildableTypes();
+    // Kolejność deklaracji w `defs.ts` JEST mapowaniem klawiszy — `.reverse()` w liście
+    // po cichu przemapowałby wszystkie dziewięć skrótów. Porównanie z `Object.keys` nie
+    // jest tautologią: wiąże obietnicę z doc-commentu z INNYM plikiem (`defs.ts`), który
+    // to zamówienie realizuje, a nie z tą samą funkcją.
+    expect(offered).toEqual(Object.keys(BUILDINGS).filter((t) => BUILDINGS[t as BuildingType].playerBuildable));
+    expect(offered[0]).toBe('BARRICADE'); // pierwszy klawisz = najtańszy budynek startowy
+    // Dziesiąty typ byłby nieosiągalny z klawiatury (`Digit1`–`Digit9`) i nikt by tego
+    // nie zauważył, bo lista sama by się rozrosła.
+    expect(offered.length).toBeLessThanOrEqual(9);
+  });
+});
+
 // ---------------------------------------------------------------------------------------
 // Strażnik strukturalny dla Testu 12
 // ---------------------------------------------------------------------------------------
@@ -703,16 +981,6 @@ const MUTATING_METHODS = new Set([
   'set', 'delete', 'clear', 'add',
 ]);
 
-/**
- * Wszystkie ZAPISY przechodzące przez `.state` w podanym źródle, w formie czytelnych
- * ścieżek (`sim.state.ore`, `sim.state.buildings[…]`). Pusta tablica = klient wyłącznie
- * czyta.
- *
- * Lekser TypeScriptu, nie wyrażenie regularne — z tego samego powodu, dla którego wybrał go
- * `contract.test.ts`: komentarze są trywią pomijaną w całości, a literały napisowe są
- * pojedynczymi tokenami, więc ani `// sim.state.ore = 0` w komentarzu, ani `'sim.state.ore ='`
- * w napisie nie są w stanie ani wywołać fałszywego alarmu, ani (co gorsza) go zagłuszyć.
- */
 /**
  * Tokeny źródła, z komentarzami pominiętymi jako trivia i literałami napisowymi jako
  * pojedynczymi, nierozkładalnymi tokenami.
@@ -753,43 +1021,152 @@ function codeIdentifiers(sourceText: string): Set<string> {
   );
 }
 
+/**
+ * Wszystkie ZAPISY przechodzące przez `.state` w podanym źródle, w formie czytelnych
+ * ścieżek (`sim.state.ore`, `b.hp`). Pusta tablica = plik wyłącznie czyta.
+ *
+ * ## Co się zmieniło w rundzie naprawczej 1 — i dlaczego to jest tylko strażnik POMOCNICZY
+ *
+ * Pierwsza wersja rozpoznawała zapis wyłącznie BEZPOŚREDNIO po łańcuchu zaczynającym się
+ * dosłownie od `<ident>.state`, więc przepuszczała cztery z pięciu realnych dróg obejścia
+ * (zmierzone w przeglądzie: alias, destrukturyzacja, `Object.assign`, przyrostek
+ * przedrostkowy). Teraz śledzi SKAŻENIE: identyfikator, do którego przypisano cokolwiek
+ * przechodzącego przez `.state`, sam staje się korzeniem łańcucha.
+ *
+ * **Ale to i tak jest gonienie kształtu składniowego** i tak jest tu traktowane. Właściwym
+ * strażnikiem ograniczenia nadrzędnego są testy 18-20: mierzą WŁASNOŚĆ (`stateHash` przed
+ * obsługą zdarzenia i po niej, plus zmiana świata po `step()`), więc łapią każdy zapis
+ * niezależnie od tego, jak go zapisano. Ten skan zostaje wyłącznie dla `main.ts`, którego
+ * **nie da się uruchomić w teście** (dotyka `document`/`window` przy imporcie) — i to
+ * jest jego znana, zapisana granica, a nie obietnica kompletności.
+ *
+ * Świadome PRZESZACOWANIE: skażenie nie zna typów, więc `const ore = sim.state.ore;`
+ * skaża `ore`, choć to liczba i nie da się przez nią nic zmutować. Fałszywy alarm na
+ * `ore = 0` byłby ceną, którą wolę zapłacić od fałszywej ciszy; dziś żaden plik klienta
+ * takiego aliasu nie tworzy.
+ */
 function stateWrites(sourceText: string): string[] {
   const tokens = tokenize(sourceText);
   const writes: string[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    // Początek łańcucha: `<coś> . state`
-    if (tokens[i].kind !== SyntaxKind.Identifier || tokens[i].text !== 'state') continue;
-    if (i < 2 || tokens[i - 1].kind !== SyntaxKind.DotToken) continue;
-    if (tokens[i - 2].kind !== SyntaxKind.Identifier) continue;
+  const tainted = new Set<string>();
 
-    let path = `${tokens[i - 2].text}.state`;
-    let j = i + 1;
-    let lastMember = 'state';
-    // Konsumowanie dalszej części łańcucha dostępu: `.nazwa` oraz `[ … ]`.
-    for (;;) {
-      if (tokens[j]?.kind === SyntaxKind.DotToken && tokens[j + 1]?.kind === SyntaxKind.Identifier) {
-        lastMember = tokens[j + 1].text;
-        path += `.${lastMember}`;
-        j += 2;
-        continue;
-      }
-      if (tokens[j]?.kind === SyntaxKind.OpenBracketToken) {
-        let depth = 1;
-        j++;
-        while (j < tokens.length && depth > 0) {
-          if (tokens[j].kind === SyntaxKind.OpenBracketToken) depth++;
-          if (tokens[j].kind === SyntaxKind.CloseBracketToken) depth--;
-          j++;
-        }
-        lastMember = '';
-        path += '[…]';
-        continue;
-      }
-      break;
+  const isIdent = (k: number): boolean => tokens[k]?.kind === SyntaxKind.Identifier;
+  /** Czy w tokenach [from, to) zaczyna się gdziekolwiek łańcuch przez stan. */
+  const containsStateChain = (from: number, to: number): boolean => {
+    for (let k = from; k < to && k < tokens.length; k++) {
+      if (isIdent(k) && tokens[k].text === 'state' && tokens[k - 1]?.kind === SyntaxKind.DotToken) return true;
+      if (isIdent(k) && tainted.has(tokens[k].text) && tokens[k - 1]?.kind !== SyntaxKind.DotToken) return true;
     }
+    return false;
+  };
+  /** Indeks pierwszego `;` na głębokości 0, licząc od `from`. */
+  const statementEnd = (from: number): number => {
+    let depth = 0;
+    for (let k = from; k < tokens.length; k++) {
+      const kind = tokens[k].kind;
+      if (kind === SyntaxKind.OpenParenToken || kind === SyntaxKind.OpenBracketToken || kind === SyntaxKind.OpenBraceToken) depth++;
+      else if (kind === SyntaxKind.CloseParenToken || kind === SyntaxKind.CloseBracketToken || kind === SyntaxKind.CloseBraceToken) depth--;
+      else if (kind === SyntaxKind.SemicolonToken && depth <= 0) return k;
+    }
+    return tokens.length;
+  };
+
+  for (let i = 0; i < tokens.length; i++) {
+    const kind = tokens[i].kind;
+
+    // --- Skażenie przez deklarację -------------------------------------------------------
+    if (kind === SyntaxKind.ConstKeyword || kind === SyntaxKind.LetKeyword || kind === SyntaxKind.VarKeyword) {
+      const end = statementEnd(i);
+      // Deklaracja FUNKCJI nie skaża nazwy: `const onPointerUp = (e) => { … sim.state … }`
+      // czyta stan w swoim ciele, ale sama nazwa nie jest uchwytem do stanu. Bez tego
+      // wyjątku każdy nasłuch w `input.ts` był skażony, a jego własna deklaracja
+      // wyglądała jak zapis (zmierzone: dwa fałszywe alarmy).
+      const definesFunction = tokens
+        .slice(i, end)
+        .some((t) => t.kind === SyntaxKind.EqualsGreaterThanToken || t.kind === SyntaxKind.FunctionKeyword);
+      if (isIdent(i + 1) && tokens[i + 2]?.kind === SyntaxKind.EqualsToken) {
+        if (!definesFunction && containsStateChain(i + 3, end)) tainted.add(tokens[i + 1].text);
+        i += 2; // pomiń zadeklarowaną nazwę — inaczej `const x = …` czyta się jako zapis do `x`
+        continue;
+      } else if (tokens[i + 1]?.kind === SyntaxKind.OpenBraceToken) {
+        // Destrukturyzacja: zbieramy nazwy do `}`.
+        const names: string[] = [];
+        let k = i + 2;
+        while (k < tokens.length && tokens[k].kind !== SyntaxKind.CloseBraceToken) {
+          if (isIdent(k) && tokens[k - 1]?.kind !== SyntaxKind.DotToken) names.push(tokens[k].text);
+          k++;
+        }
+        // `const { state } = sim` skaża, nawet gdy po prawej nie ma słowa `state`.
+        if (names.includes('state') || containsStateChain(k + 2, end)) {
+          for (const name of names) tainted.add(name);
+        }
+        i = k; // pomiń całą listę nazw z destrukturyzacji, z tego samego powodu
+      }
+      continue;
+    }
+
+    // --- Object.assign(<łańcuch>, …) -----------------------------------------------------
+    if (
+      isIdent(i) && tokens[i].text === 'assign' &&
+      tokens[i - 1]?.kind === SyntaxKind.DotToken && isIdent(i - 2) && tokens[i - 2].text === 'Object' &&
+      tokens[i + 1]?.kind === SyntaxKind.OpenParenToken
+    ) {
+      const argStart = i + 2;
+      if (containsStateChain(argStart, argStart + 4)) {
+        writes.push(chainPath(tokens, argStart).path);
+      }
+      continue;
+    }
+
+    // --- Korzeń łańcucha: `<coś>.state` albo identyfikator skażony ------------------------
+    let root = -1;
+    if (isIdent(i) && tokens[i].text === 'state' && tokens[i - 1]?.kind === SyntaxKind.DotToken && isIdent(i - 2)) {
+      root = i - 2;
+    } else if (isIdent(i) && tainted.has(tokens[i].text) && tokens[i - 1]?.kind !== SyntaxKind.DotToken) {
+      root = i;
+    }
+    if (root < 0) continue;
+
+    const { path, end: j, lastMember } = chainPath(tokens, root);
     const next = tokens[j]?.kind;
-    if (next !== undefined && ASSIGNMENT_TOKENS.has(next)) writes.push(path);
+    const prefixed =
+      tokens[root - 1]?.kind === SyntaxKind.PlusPlusToken || tokens[root - 1]?.kind === SyntaxKind.MinusMinusToken;
+    if (prefixed) writes.push(path);
+    else if (next !== undefined && ASSIGNMENT_TOKENS.has(next)) writes.push(path);
     else if (next === SyntaxKind.OpenParenToken && MUTATING_METHODS.has(lastMember)) writes.push(path);
+    i = j - 1;
   }
   return writes;
+}
+
+/** Ścieżka dostępu zaczynająca się w `root`: `.nazwa` i `[…]`, aż do pierwszego innego tokenu. */
+function chainPath(
+  tokens: { kind: SyntaxKind; text: string }[],
+  root: number,
+): { path: string; end: number; lastMember: string } {
+  let path = tokens[root].text;
+  let lastMember = tokens[root].text;
+  let j = root + 1;
+  for (;;) {
+    if (tokens[j]?.kind === SyntaxKind.DotToken && tokens[j + 1]?.kind === SyntaxKind.Identifier) {
+      lastMember = tokens[j + 1].text;
+      path += `.${lastMember}`;
+      j += 2;
+      continue;
+    }
+    if (tokens[j]?.kind === SyntaxKind.OpenBracketToken) {
+      let depth = 1;
+      j++;
+      while (j < tokens.length && depth > 0) {
+        if (tokens[j].kind === SyntaxKind.OpenBracketToken) depth++;
+        if (tokens[j].kind === SyntaxKind.CloseBracketToken) depth--;
+        j++;
+      }
+      lastMember = '';
+      path += '[…]';
+      continue;
+    }
+    break;
+  }
+  return { path, end: j, lastMember };
 }

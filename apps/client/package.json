@@ -9,7 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@heliopolis/render": "workspace:*"
+    "@heliopolis/render": "workspace:*",
+    "@heliopolis/sim": "workspace:*"
   },
   "devDependencies": {
     "vite": "^7.0.0"

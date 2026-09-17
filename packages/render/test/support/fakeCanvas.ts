@@ -32,12 +32,79 @@
  *
  * Domyślnie prostokąt POKRYWA SIĘ z `width`/`height` w punkcie (0,0), żeby wołający,
  * którego to nie interesuje (`camera.test.ts`, `scene.test.ts`), niczego nie musiał podawać.
+ *
+ * ## Nasłuchy, które NAPRAWDĘ się wykonują — dołożone w rundzie naprawczej 1 Fazy 2C
+ *
+ * Do tej pory `addEventListener` był pustą funkcją: wystarczało to `OrbitControls`, który
+ * tylko REJESTRUJE nasłuchy, i nie wystarcza wejściu gracza, którego cała treść siedzi
+ * WEWNĄTRZ nasłuchu. Testowanie samych funkcji, które ten nasłuch woła, zostawia bez
+ * strażnika to, czy nasłuch w ogóle jest podpięty i czy robi to, co trzeba — a recenzja
+ * zmierzyła dokładnie tę dziurę: usunięcie jedynego `sim.enqueue(...)` zostawiało cały
+ * pakiet zielony. Teraz atrapa trzyma rejestr nasłuchów, a `fireOn` je wywołuje.
+ *
+ * `fireOn` zwraca LICZBĘ wykonanych nasłuchów, nie `void`: test, który wystrzelił zdarzenie
+ * w nikogo, ma się o tym dowiedzieć z asercji, a nie przejść na zielono, bo „nic nie
+ * rzuciło".
  */
 export interface FakeRect {
   readonly left: number;
   readonly top: number;
   readonly width: number;
   readonly height: number;
+}
+
+/** Rejestr nasłuchów atrapy — klucz symbolowy, żeby nie kolidował z niczym w DOM. */
+const LISTENERS = Symbol.for('heliopolis.fakeCanvas.listeners');
+
+type Listener = (event: never) => void;
+
+/**
+ * Wywołuje wszystkie nasłuchy zarejestrowane na atrapie dla `type`, w kolejności
+ * rejestracji. Zwraca, ile ich było.
+ *
+ * @throws {TypeError} gdy `target` nie jest atrapą z `createFakeCanvas`/`createFakeEventTarget`
+ *   — cicha zerówka dla zwykłego obiektu byłaby nie do odróżnienia od „nasłuch nie został
+ *   podpięty", czyli od defektu, którego ta funkcja ma szukać.
+ */
+export function fireOn(target: unknown, type: string, event: unknown): number {
+  const registry = (target as Record<symbol, unknown> | null)?.[LISTENERS];
+  if (!(registry instanceof Map)) {
+    throw new TypeError('fireOn: target nie jest atrapą z createFakeCanvas/createFakeEventTarget');
+  }
+  const listeners = (registry as Map<string, Listener[]>).get(type) ?? [];
+  for (const listener of [...listeners]) listener(event as never);
+  return listeners.length;
+}
+
+/**
+ * Kształt celu zdarzeń, jaki atrapa faktycznie udaje — struktura, nie DOM-owy `EventTarget`.
+ * `EventTarget` z `lib.dom` typuje nasłuch jako `EventListener` (parametr `Event`), przez co
+ * nie pasuje do modułów, które deklarują własny, węższy kształt zdarzenia — a właśnie o to
+ * chodzi: kod produkcyjny ma czytać ze zdarzenia dokładnie tyle, ile umie podać atrapa.
+ */
+export interface FakeListenerTarget {
+  addEventListener(type: string, listener: (event: never) => void): void;
+  removeEventListener(type: string, listener: (event: never) => void): void;
+}
+
+/** Sam rejestr nasłuchów, bez reszty płótna — atrapa `window` dla zdarzeń klawiatury. */
+export function createFakeEventTarget(): FakeListenerTarget {
+  const registry = new Map<string, Listener[]>();
+  const fake = {
+    [LISTENERS]: registry,
+    addEventListener(type: string, listener: Listener): void {
+      const list = registry.get(type);
+      if (list === undefined) registry.set(type, [listener]);
+      else list.push(listener);
+    },
+    removeEventListener(type: string, listener: Listener): void {
+      const list = registry.get(type);
+      if (list === undefined) return;
+      const at = list.indexOf(listener);
+      if (at >= 0) list.splice(at, 1);
+    },
+  };
+  return fake as unknown as FakeListenerTarget;
 }
 
 export function createFakeCanvas(
@@ -70,12 +137,22 @@ export function createFakeCanvas(
       return { left, top, width: rectWidth, height: rectHeight };
     },
   };
+  // Rejestr nasłuchów wspólny z `createFakeEventTarget` — dzięki temu `fireOn` działa
+  // na płótnie tak samo jak na atrapie `window`, a `OrbitControls` (który tu też
+  // rejestruje) niczego nie zauważa: jego nasłuchy po prostu leżą w tej samej mapie
+  // i nikt ich nie wystrzeliwuje, dopóki test o to nie poprosi.
+  const events = createFakeEventTarget() as unknown as {
+    [LISTENERS]: Map<string, Listener[]>;
+    addEventListener: (type: string, listener: Listener) => void;
+    removeEventListener: (type: string, listener: Listener) => void;
+  };
   const fake = {
     style: {} as Record<string, string>,
     clientWidth: width,
     clientHeight: height,
-    addEventListener: (): void => {},
-    removeEventListener: (): void => {},
+    [LISTENERS]: events[LISTENERS],
+    addEventListener: events.addEventListener,
+    removeEventListener: events.removeEventListener,
     getRootNode: (): typeof noopNode => noopNode,
     ownerDocument: noopNode,
     getBoundingClientRect: (): typeof boundingRect => boundingRect,

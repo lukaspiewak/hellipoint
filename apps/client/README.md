@@ -38,8 +38,11 @@ tamten albo dodaj `--port`.
 | `Shift`+`1/2/3` | tryb cieniowania jednostek (narzędzie diagnostyczne Fazy 2B) |
 
 Wejście gracza dociera do symulacji **wyłącznie** przez `sim.enqueue(cmd)` — nigdy przez
-zapis do `sim.state`. To warunek Fazy 5 (autorytatywny serwer), pilnowany strukturalnie
-przez test `input.test.ts` nr 12, czytający źródło `main.ts` i `input.ts`.
+zapis do `sim.state`. To warunek Fazy 5 (autorytatywny serwer), pilnowany **własnością**:
+`attachInput` (`src/input.ts`) trzyma całą drogę od zdarzenia do kolejki, a testy 18-20
+mierzą obie połowy — hasz stanu nietknięty przez obsługę zdarzenia, świat zmieniony
+dokładnie tak, jak zapowiadała komenda, dopiero po `step()`. Skan źródła (test 12) jest
+tylko siatką pomocniczą na `main.ts`, którego nie da się uruchomić w teście.
 
 ## Testy
 
