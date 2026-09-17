@@ -9,6 +9,7 @@ export const RENDER_VERSION = '0.0.0';
 // `mountEmptyCanvas`/`EmptyCanvasHandle` — w pełni zastąpione przez `createScene` —
 // zostały usunięte zamiast zostać martwym, nieużywanym eksportem.
 export { buildPlanetGeometry, type PlanetGeometry } from './geometry.js';
+export { pickCell } from './picking.js';
 export {
   DEFAULT_OUTLINE_PALETTE,
   DEFAULT_PALETTE,
