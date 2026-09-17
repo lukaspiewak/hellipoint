@@ -405,6 +405,16 @@ W `power.ts` policz `rawDemand` w tej samej pętli co `demand`, **przed** kaskad
 
 - [ ] **Krok 4: Uruchom — ma przejść.**
 
+- [ ] **Krok 0: meldunki strukturalne zamiast gotowych napisów** (rozstrzygnięcie po Zadaniu 3)
+
+Zadanie 3 zgłosiło rozjazd, którego nie naprawiło po cichu — i słusznie, bo naprawa rusza kontrakt z Zadania 2. Panel mówi po polsku („komórka zajęta — najpierw rozbierz"), a **nakładka diagnostyczna obok pokazuje surowy `odmowa: CELL_OCCUPIED`**. Gracz widzi jedno i drugie naraz.
+
+Przyczyna: `report(message: string)` w `input.ts` dostaje napis **już sformatowany**, więc nie ma czego przetłumaczyć. Zmień go na **strukturalny** (powód plus dane), tak żeby jedno źródło komunikatów obsługiwało oba miejsca. Testy 21/22 Zadania 2 wiążą dzisiejsze napisy — zaktualizuj je.
+
+Przy okazji: `refusalReason` ma **dwa powody spoza siódemki `canBuild`** — `NOTHING_TO_DEMOLISH` i `CORE_INDESTRUCTIBLE`. Słownik ma po tej zmianie obejmować **dziewięć**, a własność z Zadania 3 („każdy powód ma komunikat, oblewa przy dodaniu nowego bez komunikatu") ma objąć wszystkie dziewięć, nie siedem.
+
+**Nazwy budynków zostają angielskimi identyfikatorami** (`LASER_TURRET`) — to nie jest zaniedbanie tego kroku. Polskie nazwy byłyby drugim słownikiem bez źródła, z którym dałoby się je związać własnością (w odróżnieniu od powodów, które mają źródło w `commands.ts`), i rozjechałyby się z meldunkami oraz skrótami 1-9. Decyzja należy do Fazy 4 razem z kierunkiem artystycznym i onboardingiem.
+
 - [ ] **Krok 5: HUD pokazuje bilans, nie samą liczbę**
 
 Trzy wielkości: **produkcja**, **zapotrzebowanie (`rawDemand`)**, **magazyn**. Gdy `rawDemand > supply`, HUD nazywa **co zostało zgaszone** — z `shedTypes`, po polsku, w kolejności gaszenia.
