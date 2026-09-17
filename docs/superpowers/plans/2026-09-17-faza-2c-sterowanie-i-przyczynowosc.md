@@ -155,6 +155,20 @@ Run: `npx vitest run packages/render/test/picking.test.ts` → PASS.
 
 - [ ] **Krok 5: Test własności Voronoi — to jest właściwy strażnik**
 
+> **DEFEKT PLANU, naprawiony po Zadaniu 1 — przeczytaj, zanim przepiszesz kod niżej.**
+> Pierwsza wersja tego kroku losowała promienie **osiowe** (`origin = 4R·n`, `direction = −n`),
+> więc punkt trafienia równał się `n` **z konstrukcji**, a wyrocznia porównywała właśnie z `n`.
+> To pierwsza pozycja katalogu wad tej fazy — *asercja prawdziwa z konstrukcji wejścia* —
+> i napisałem ją tu własnoręcznie. Zmierzony skutek: **siedem z ośmiu mutacji na kodzie
+> produkcyjnym przeszło na zielono**, w tym usunięcie normalizacji kierunku (72,4% realnych
+> kliknięć złych) i podmiana punktu trafienia na `−d·R` (99,4% złych). Dla skali: na siatce
+> 81×81 promieni ekranowych w planetę trafia 2885, a **osiowy jest dokładnie jeden**.
+>
+> **Promienie muszą być SKOŚNE:** losuj punkt trafienia i pozycję kamery **osobno**, tak żeby
+> promień nie przechodził przez środek planety. Dołóż też **deterministyczny przelot po
+> wszystkich 1442 komórkach** — losowanie 2000 próbek pokrywa 1067 z nich, więc błąd o jeden
+> w skanie jest dla niego niewidoczny.
+
 Poprzednie dwa testy sprawdzają dwa punkty. Ten sprawdza **własność**, i oblewa, gdy ktoś zamieni „najbliższy środek" na cokolwiek innego:
 
 ```ts
