@@ -156,6 +156,13 @@ export function createFakeCanvas(
     getRootNode: (): typeof noopNode => noopNode,
     ownerDocument: noopNode,
     getBoundingClientRect: (): typeof boundingRect => boundingRect,
+    // Wołane przez `OrbitControls.onPointerDown`/`onPointerUp`. Potrzebne dopiero od chwili,
+    // w której test WYSTRZELIWUJE zdarzenia wskaźnika w to samo płótno, do którego podpięte
+    // są kontrolki orbity — czyli od rundy naprawczej 2, gdzie chodzi o to, żeby
+    // współistnienie `OrbitControls` z `attachInput` było ZMIERZONE, a nie założone.
+    setPointerCapture: (): void => {},
+    releasePointerCapture: (): void => {},
+    hasPointerCapture: (): boolean => false,
   };
   return fake as unknown as HTMLCanvasElement;
 }

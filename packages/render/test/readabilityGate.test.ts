@@ -365,8 +365,6 @@ describe('Krok 1 Zadania 5: kamera NIE celuje w pytaną komórkę', () => {
     // Połówka „ma przejść" jest tu ważniejsza od połówki „ma oblać": mierzy, że test 5c
     // orzeka o POŁOŻENIU NA EKRANIE, a nie o samych liczbach w `CameraOffset`.
     const cellId = 733;
-    const cell = planet.cells[cellId];
-    const normal = new Vector3(cell.normal.x, cell.normal.y, cell.normal.z);
     const screenOffset = (degrees: number, id: number = cellId): number => {
       const aim = aimDirection(planet, id, { polarRad: (degrees * Math.PI) / 180, azimuthRad: 0.7 });
       const view = new Vector3(aim.x, aim.y, aim.z);
@@ -402,7 +400,14 @@ describe('Krok 1 Zadania 5: kamera NIE celuje w pytaną komórkę', () => {
     for (let id = 0; id < planet.cells.length; id++) {
       worstZeroOffset = Math.max(worstZeroOffset, screenOffset(0, id));
     }
-    expect(worstZeroOffset).toBe(0);
+    // TOLERANCJA, nie równość bitowa. Dzisiejszy `aimDirection` przy polar 0 zwraca
+    // normalną co do bitu, więc `toBe(0)` przechodzi — ale kotwiczyłoby test na TOŻSAMOŚCI
+    // ALGEBRAICZNEJ, której nikt nie obiecywał: neutralny znaczeniowo refaktor (normalizacja
+    // wyniku `aimDirection`) daje 7,85·10⁻¹⁵ i czerwieniłby ten test bez żadnego defektu.
+    // 5·10⁻¹⁰ to ta sama tolerancja, którą miała linia zastąpiona w rundzie 1 — i leży
+    // 160 000× nad tym szumem, a jednocześnie 5000× pod błędem starego przyrządu
+    // (`sin(acos(x))`, do 2,581·10⁻⁶), który ten test miał przestać przepuszczać.
+    expect(worstZeroOffset).toBeCloseTo(0, 9);
     expect(screenOffset(CAMERA_OFFSET_MIN_DEGREES) / discRadius).toBeGreaterThan(0.25);
     expect(screenOffset(CAMERA_OFFSET_MAX_DEGREES) / discRadius).toBeLessThan(0.62); // wciąż daleko od limbu
   });

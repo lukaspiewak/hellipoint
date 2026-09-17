@@ -30,6 +30,23 @@ import { BUILDINGS, canBuild, type BuildingType, type Command, type Planet, type
  * właścicieli: ruch kursora (tutaj) i menu (tam).
  */
 
+/**
+ * Prostokąt płótna na ekranie — tyle z `DOMRect`, ile ten moduł czyta.
+ *
+ * Wydzielone jako parametr (z domyślnym odczytem z płótna) w rundzie naprawczej 2:
+ * `getBoundingClientRect()` w przeglądarce **wymusza przeliczenie układu**, a od chwili,
+ * w której wskazanie liczy się CO KLATKĘ, ten odczyt wylądował w pętli renderu. Przyrząd
+ * tego nie widział i nie mógł: atrapa płótna zwraca obiekt zbudowany raz, więc pomiar
+ * w teście pokazywał zero kosztu tam, gdzie w przeglądarce jest wymuszony layout.
+ * `attachInput` buforuje prostokąt i unieważnia go na `resize`.
+ */
+export interface CanvasRect {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 /** Kamera na potrzeby zamiany piksela na promień — dokładnie ta, którą buduje `createCamera`.
  *
  *  Typ wzięty przez indeksowanie `OrbitCamera`, a NIE przez `import { PerspectiveCamera }
@@ -101,8 +118,8 @@ export function screenToRay(
   canvas: HTMLCanvasElement,
   clientX: number,
   clientY: number,
+  rect: CanvasRect = canvas.getBoundingClientRect(),
 ): { origin: Vec3; direction: Vec3 } {
-  const rect = canvas.getBoundingClientRect();
   const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
   const ndcY = -(((clientY - rect.top) / rect.height) * 2 - 1);
   return cameraRay(camera, ndcX, ndcY);
@@ -130,11 +147,14 @@ export function screenToRay(
  *   przejechało 3 px, ma dalej BYĆ kliknięciem, inaczej gra nie buduje nikomu, kto nie
  *   trzyma myszy w imadle;
  * - **od góry**: krok kraty przy domyślnym oddaleniu to **34,2 px** (`pixelScale.ts`,
- *   3,41 px/jednostkę), więc luz musi zostać o rząd wielkości pod nim — inaczej
- *   „kliknięcie" może przejechać na sąsiednią komórkę i postawić budynek nie tam, gdzie
- *   gracz zaczął. Przeciągnięcie o 10 px ma już BYĆ obrotem kamery.
+ *   3,41 px/jednostkę), a luz ma zostać WYRAŹNIE pod połową tej odległości — inaczej
+ *   „kliknięcie" mogłoby przejechać na sąsiednią komórkę i postawić budynek nie tam, gdzie
+ *   gracz zaczął. Przeciągnięcie o 10 px (0,29 kroku kraty) ma już BYĆ obrotem kamery.
  *
- * 4 px leży między nimi z zapasem po obu stronach (3 px < 4 < 10 px).
+ * Test 15 wiąże dokładnie ten przedział: **[3 px; √98 px)**, czyli `[3; 9,8995)`, i tyle
+ * — nie więcej i nie mniej — jest tu obiecane. 4 px leży w nim z zapasem po obu stronach.
+ * (Wcześniejsza wersja tego akapitu mówiła „o rząd wielkości pod 34,2 px", czyli ≤ 3,42 —
+ * czego sama wartość 4 nie spełniała. Trzy różne liczby w jednym miejscu; zostaje jedna.)
  */
 export const CLICK_SLOP_PX = 4; // [WYGLĄD]
 
@@ -166,8 +186,9 @@ export function intentFromPointer(
   canvas: HTMLCanvasElement,
   aim: PointerAim,
   selectedType: BuildingType,
+  rect?: CanvasRect,
 ): Intent | null {
-  const cellId = pointedCell(planet, camera, canvas, aim.clientX, aim.clientY);
+  const cellId = pointedCell(planet, camera, canvas, aim.clientX, aim.clientY, rect);
   if (cellId === null) return null;
   return aim.button === 'RIGHT'
     ? { kind: 'DEMOLISH', cellId }
@@ -186,8 +207,9 @@ export function pointedCell(
   canvas: HTMLCanvasElement,
   clientX: number,
   clientY: number,
+  rect?: CanvasRect,
 ): number | null {
-  const ray = screenToRay(camera, canvas, clientX, clientY);
+  const ray = screenToRay(camera, canvas, clientX, clientY, rect);
   return pickCell(planet, ray.origin, ray.direction);
 }
 
@@ -364,6 +386,11 @@ export interface InputHandle {
    * ani kamera nie ruszyły się od poprzedniego wywołania.
    */
   refreshPointedCell(): boolean;
+  /**
+   * Unieważnia zbuforowany prostokąt płótna. Wołane na `resize` okna — jedyny moment,
+   * w którym prostokąt może się zmienić bez udziału tego modułu.
+   */
+  invalidateCanvasRect(): void;
   /** Odpina wszystkie nasłuchy. */
   detach(): void;
 }
@@ -425,6 +452,8 @@ export function attachInput(w: InputWiring): InputHandle {
   let pressButton: PointerButton | null = null;
   let pointerX: number | null = null;
   let pointerY: number | null = null;
+  let cachedRect: CanvasRect | null = null;
+  const rect = (): CanvasRect => (cachedRect ??= w.canvas.getBoundingClientRect());
   // Migawka wejścia poprzedniego przeliczenia — patrz `refreshPointedCell`. Dziewięć
   // osobnych liczb, a nie sklejony napis: napis byłby alokacją w pętli renderu, czyli
   // dokładnie tym, czego to porównanie ma unikać.
@@ -467,6 +496,7 @@ export function attachInput(w: InputWiring): InputHandle {
       w.canvas,
       { clientX: event.clientX, clientY: event.clientY, button },
       w.selection.selectedType,
+      rect(),
     );
     if (intent === null) {
       w.report('kliknięcie w tło — poza planetą');
@@ -566,7 +596,10 @@ export function attachInput(w: InputWiring): InputHandle {
       lastQy = q.y;
       lastQz = q.z;
       lastQw = q.w;
-      return w.selection.pointAt(pointedCell(w.planet, w.camera, w.canvas, pointerX, pointerY));
+      return w.selection.pointAt(pointedCell(w.planet, w.camera, w.canvas, pointerX, pointerY, rect()));
+    },
+    invalidateCanvasRect(): void {
+      cachedRect = null;
     },
     detach(): void {
       for (const [target, type, listener] of registrations) target.removeEventListener(type, listener);

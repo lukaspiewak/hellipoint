@@ -104,7 +104,14 @@ export function pickCell(planet: Planet, origin: Vec3, direction: Vec3): number 
 
   // Najbliższy środek do punktu trafienia = komórka Voronoi, w której leży ten punkt
   // (patrz uzasadnienie w komentarzu funkcji). Liniowe przejście po wszystkich komórkach:
-  // 1442 iteracje na kliknięcie, poza pętlą renderu — budżet klatki go nie dotyczy.
+  // 1442 iteracje na wywołanie.
+  //
+  // UWAGA, zmieniło się w Fazie 2C: to NIE jest już koszt „tylko na kliknięcie". Od rundy
+  // naprawczej 2 klient woła `pointedCell` CO KLATKĘ (`Client.frame` → `refreshPointedCell`),
+  // żeby wskazanie nadążało za kamerą dojeżdżającą bezwładnością — więc pętla leży w budżecie
+  // klatki. `refreshPointedCell` wychodzi bez pracy, gdy ani kursor, ani kamera nie drgnęły,
+  // więc płaci się za nią wyłącznie w klatkach, w których coś się rusza; zmierzone tam
+  // (raport Zadania 2) mieści się rzędy wielkości pod progiem, ale nie jest zerem.
   let best = -1;
   let bestDot = -Infinity;
   for (let i = 0; i < planet.cells.length; i++) {

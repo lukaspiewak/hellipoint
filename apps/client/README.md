@@ -38,11 +38,18 @@ tamten albo dodaj `--port`.
 | `Shift`+`1/2/3` | tryb cieniowania jednostek (narzędzie diagnostyczne Fazy 2B) |
 
 Wejście gracza dociera do symulacji **wyłącznie** przez `sim.enqueue(cmd)` — nigdy przez
-zapis do `sim.state`. To warunek Fazy 5 (autorytatywny serwer), pilnowany **własnością**:
-`attachInput` (`src/input.ts`) trzyma całą drogę od zdarzenia do kolejki, a testy 18-20
-mierzą obie połowy — hasz stanu nietknięty przez obsługę zdarzenia, świat zmieniony
-dokładnie tak, jak zapowiadała komenda, dopiero po `step()`. Skan źródła (test 12) jest
-tylko siatką pomocniczą na `main.ts`, którego nie da się uruchomić w teście.
+zapis do `sim.state` ani do `Planet`. To warunek Fazy 5 (autorytatywny serwer), pilnowany
+**wyłącznie własnością**, mierzoną tam, gdzie test wykonuje kod:
+
+- `src/input.ts` — `attachInput` trzyma całą drogę od zdarzenia do kolejki;
+- `src/client.ts` — `wireClient` trzyma całe spięcie (pętla klatki, wskazanie, skróty);
+- `src/main.ts` — **sam rozruch**, 29 linii kodu. Nie dostaje ani `Planet`, ani `Sim`,
+  tylko seed i dwie fabryki, więc nie ma w nim uchwytu, przez który dałoby się dotknąć
+  świata.
+
+Odcisk świata (`test/support/fixtures.ts`) obejmuje `SimState` **i** planetę, a testy
+sprawdzają go po KAŻDYM nasłuchu oraz po każdej klatce. Skan źródła, który w rundzie 1
+udawał strażnika, został skasowany — padał na jednej parze zbędnych nawiasów.
 
 ## Testy
 
