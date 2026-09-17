@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { createPlanet, cross, dot, normalize, type Planet, type Vec3 } from '@heliopolis/sim';
+import { add, createPlanet, cross, dot, normalize, scale, type Planet, type Vec3 } from '@heliopolis/sim';
 import { pickCell } from '../src/picking.js';
 import { buildPlanetGeometry, type PlanetGeometry } from '../src/geometry.js';
+import { MAX_DISTANCE_FACTOR, MIN_DISTANCE_FACTOR } from '../src/camera.js';
 import { mulberry32 } from './support/mulberry32.js';
 
 // Ta sama planeta dla wszystkich testów tego pliku — seed dowolny, ustalony raz (spójny
 // z seedem użytym w briefie Zadania 1).
 const planet = createPlanet({ seed: 1 });
 
-// Geometria rysowana przez renderer — testy 5/6 sprawdzają `pickCell` względem TYCH SAMYCH
-// buforów, nie względem `planet.cells[i].corners` wprost (patrz `cornersFromGeometry`).
+// Geometria rysowana przez renderer — testy własności sprawdzają `pickCell` względem TYCH
+// SAMYCH buforów, nie względem `planet.cells[i].corners` wprost (patrz `cornersFromGeometry`).
 const geometry: PlanetGeometry = buildPlanetGeometry(planet);
 
 function vecAt(positions: Float32Array, vertexIndex: number): Vec3 {
@@ -39,24 +40,14 @@ function cornersFromGeometry(geo: PlanetGeometry, cellId: number): Vec3[] {
  * corners[k+1])` jest normalną tej płaszczyzny: dla wielokąta WYPUKŁEGO, `p` jest w środku
  * wtedy i tylko wtedy, gdy leży po TEJ SAMEJ stronie każdej z tych płaszczyzn co dowolny
  * inny punkt znany jako wewnętrzny — standardowy test półpłaszczyznowy, przeniesiony z
- * płaskiego wielokąta na sferę (rodzina tego samego testu — iloczyn potrójny, nie odległość
- * — co Test 6 w `geometry.test.ts`, tam liczony na pojedynczych trójkątach wachlarza).
+ * płaskiego wielokąta na sferę.
  *
  * Punktem odniesienia "na pewno wewnątrz" jest CENTROID SAMYCH `corners` (średnia,
- * rzutowana z powrotem na sferę), a NIE `cell.center`/`cell.normal` — z dwóch powodów:
- *
- * 1. Niezależność: `cell.normal` to DOKŁADNIE dana, na której stoi ranking w `pickCell`.
- *    Używanie jej tutaj jako "referencji wnętrza" związałoby tę kontrolę z tym samym
- *    założeniem, które ma sprawdzać niezależnie (patrz też Test 6 niżej — tam `corners` są
- *    CELOWO cudze, więc `cell.center` w ogóle nie ma prawa mówić, co jest "wewnątrz" tego
- *    podstawionego wieloboku).
- * 2. Centroid wierzchołków wielokąta WYPUKŁEGO leży w jego wnętrzu z definicji (jest w
- *    otoczce wypukłej własnych wierzchołków) — prawdziwe niezależnie od tego, SKĄD te
- *    wierzchołki pochodzą, więc ta funkcja działa identycznie dla prawdziwego i dla
- *    (w Teście 6) podstawionego wieloboku.
- *
- * Celowo NIE korzysta z `.normal`/najbliższego środka w ŻADNYM miejscu — niezależność od
- * pomysłu, na którym stoi `pickCell`, jest tu produktem, nie przypadkiem.
+ * rzutowana z powrotem na sferę), a NIE `cell.center`/`cell.normal`: (1) niezależność —
+ * `.normal` to dokładnie dana, na której stoi ranking w `pickCell`; (2) poprawność —
+ * centroid wierzchołków wielokąta WYPUKŁEGO leży w jego wnętrzu z definicji, niezależnie od
+ * tego, skąd te wierzchołki pochodzą (ważne w teście "[DOWÓD NIEZALEŻNOŚCI]" niżej, gdzie
+ * `corners` są CELOWO cudze).
  */
 function insideSphericalPolygon(corners: readonly Vec3[], p: Vec3): boolean {
   const n = corners.length;
@@ -79,7 +70,7 @@ function insideSphericalPolygon(corners: readonly Vec3[], p: Vec3): boolean {
   return true;
 }
 
-describe('pickCell — przecięcie promienia ze sferą', () => {
+describe('pickCell — przecięcie promienia ze sferą i podstawowe kontrakty', () => {
   it('1. promień w środek planety trafia w komórkę zwróconą do źródła promienia', () => {
     const target = planet.cells[500];
     const n = target.normal;
@@ -88,63 +79,260 @@ describe('pickCell — przecięcie promienia ze sferą', () => {
     expect(pickCell(planet, origin, direction)).toBe(500);
   });
 
-  it('2. promień mijający planetę daje null', () => {
+  it('2. promień mijający planetę bokiem (disc<0) daje null', () => {
     const origin = { x: 0, y: 0, z: planet.radius * 3 };
     const direction = { x: 1, y: 0, z: 0 };
     expect(pickCell(planet, origin, direction)).toBeNull();
   });
 
-  // Własna para mutacji (Krok 6 briefu wymaga co najmniej jednej dodatkowej, obok pary z
-  // briefu — patrz tabela w raporcie) stoi na TYM teście. Bez niego strażnik `dLen > 0` w
-  // `picking.ts` nie miałby czego pilnować: żaden inny test tego pliku nie woła `pickCell`
-  // z kierunkiem zerowym.
   it('3. kierunek zerowy rzuca RangeError, nie liczy w ciszy 0/0', () => {
     const origin = { x: 0, y: 0, z: planet.radius * 3 };
     expect(() => pickCell(planet, origin, { x: 0, y: 0, z: 0 })).toThrow(RangeError);
   });
+
+  // Runda naprawcza 1 (task-1-review.md, Z3): Test 2 wchodzi WYŁĄCZNIE gałęzią `disc<0`
+  // (promień mija bokiem) — strażnik `t<0` (sfera przecięta przez PROSTĄ promienia, ale oba
+  // przecięcia leżą ZA kamerą) nie miał żadnego testu. Konstrukcja: `origin` na zewnątrz,
+  // `direction` skierowany DALEJ od planety (ten sam zwrot co `origin` sam w sobie, nie w
+  // jego stronę) — prosta promienia PRZECINA sferę (disc>=0), ale ruch do przodu nigdy tam
+  // nie dociera.
+  it('4. promień skierowany OD planety (disc≥0, ale t<0) daje null, nie komórkę po drugiej stronie', () => {
+    const origin = { x: 0, y: 0, z: planet.radius * 3 };
+    const direction = { x: 0, y: 0, z: 1 }; // od planety, nie w jej stronę
+    expect(pickCell(planet, origin, direction)).toBeNull();
+  });
+
+  // Z6/rozstrzygnięcie koordynatora (punkt 5): `origin` wewnątrz planety to błąd
+  // WOŁAJĄCEGO (kamera nigdy tam nie jest — `MIN_DISTANCE_FACTOR` w `camera.ts`) — rzuca,
+  // nie zwraca cichego `null` ("promień minął", co jest nieprawdą: promień z wnętrza
+  // trafia ZAWSZE).
+  it('5. origin wewnątrz planety rzuca RangeError — nie ciche "promień minął"', () => {
+    const direction = { x: 0, y: 0, z: -1 };
+    expect(() => pickCell(planet, { x: 0, y: 0, z: 0 }, direction)).toThrow(RangeError);
+    expect(() => pickCell(planet, { x: 0, y: 0, z: planet.radius * 0.999 }, direction)).toThrow(RangeError);
+  });
+
+  // Granica strażnika (5) jest DOKŁADNIE na powierzchni, nie na `MIN_DISTANCE_FACTOR` — ale
+  // realny zakres zoomu (`camera.ts`) nigdy nie schodzi poniżej `MIN_DISTANCE_FACTOR × R`,
+  // więc oba są tu potwierdzone jako "działa".
+  it('6. origin dokładnie na powierzchni albo w realnym zakresie zoomu (MIN_DISTANCE_FACTOR×R) działa, nie rzuca', () => {
+    const direction = { x: 0, y: 0, z: -1 };
+    const onSurface = { x: 0, y: 0, z: planet.radius };
+    const atZoomLimit = { x: 0, y: 0, z: planet.radius * MIN_DISTANCE_FACTOR };
+    expect(() => pickCell(planet, onSurface, direction)).not.toThrow();
+    expect(pickCell(planet, onSurface, direction)).not.toBeNull();
+    expect(() => pickCell(planet, atZoomLimit, direction)).not.toThrow();
+    expect(pickCell(planet, atZoomLimit, direction)).not.toBeNull();
+  });
+
+  // Z2/rozstrzygnięcie koordynatora (punkt 4): wejście NIEFINITNE (na odróżnienie od
+  // kierunku zerowego, punkt 3) to NIE błąd wołającego — to przejściowy stan przeglądarki
+  // (`aspect = 0/0` na pierwszej klatce płótna o zerowym rozmiarze). Strażnik ma być
+  // JAWNY (sześć `Number.isFinite`), nie przypadkowym efektem `NaN > -Infinity === false`,
+  // który wcześniej dawał `-1` — ani komórkę, ani `null`, ani wyjątek.
+  it('7. wejście niefinitne (NaN/Infinity w origin, direction, albo promień planety) daje null — nigdy -1', () => {
+    const validOrigin = { x: 0, y: 0, z: planet.radius * 3 };
+    const validDirection = { x: 0, y: 0, z: -1 };
+    const nonFiniteCases: Array<{ origin: Vec3; direction: Vec3 }> = [
+      { origin: validOrigin, direction: { x: Infinity, y: 0, z: -1 } },
+      { origin: validOrigin, direction: { x: 0, y: 0, z: -Infinity } },
+      { origin: validOrigin, direction: { x: NaN, y: 0, z: -1 } },
+      { origin: { x: NaN, y: 0, z: planet.radius * 3 }, direction: validDirection },
+      { origin: { x: 0, y: 0, z: Infinity }, direction: validDirection },
+    ];
+    for (const { origin, direction } of nonFiniteCases) {
+      expect(pickCell(planet, origin, direction)).toBeNull();
+    }
+
+    // `planet.radius` niefinitny NIE przechodzi przez TEN strażnik (sprawdza tylko origin/
+    // direction) — broni go wartownik `best<0 → null` na końcu funkcji (patrz komentarz w
+    // `picking.ts`): `disc`/`t`/`hx..hz` stają się NaN, każdy `dot` w pętli jest NaN, `dot >
+    // bestDot` nigdy prawdą, `best` zostaje na -1, funkcja zwraca `null` zamiast wartownika.
+    const nanRadiusPlanet: Planet = { ...planet, radius: NaN };
+    expect(pickCell(nanRadiusPlanet, validOrigin, validDirection)).toBeNull();
+  });
+
+  // Kontrakt obronny stojący za wartownikiem `best<0 → null` (patrz komentarz w
+  // `picking.ts`): dla poprawnej, niepustej planety ta gałąź jest NIEOSIĄGALNA (pierwsza
+  // iteracja pętli zawsze ma `dot` finitne, więc `dot > -Infinity` jest zawsze prawdą) —
+  // jedyny sposób ją odwiedzić to planeta bez komórek. `createPlanet` nigdy takiej nie
+  // produkuje, ale sygnatura przyjmuje dowolny `Planet`-kształtny obiekt.
+  it('8. planeta bez komórek daje null, nie -1 (które wyglądałoby jak poprawny indeks)', () => {
+    const emptyPlanet: Planet = { ...planet, cells: [] };
+    expect(pickCell(emptyPlanet, { x: 0, y: 0, z: planet.radius * 3 }, { x: 0, y: 0, z: -1 })).toBeNull();
+  });
+
+  // Z1/naprawa: kierunek w tej grze przychodzi z odrzutowania NDC, więc NIGDY nie jest
+  // czysto jednostkowy. `pickCell` normalizuje wewnątrz siebie (`Math.hypot`) — sprawdzone
+  // tu WPROST, nie tylko jako efekt uboczny losowych próbek niżej: wynik musi być identyczny
+  // dla kierunku ×250 (duży, jak z odrzutowania przy dużej odległości) i ×0.003 (mały).
+  it('9. kierunek nieznormalizowany (×250 i ×0.003) daje ten sam wynik co jednostkowy', () => {
+    const target = planet.cells[500];
+    const n = target.normal;
+    const origin = { x: n.x * planet.radius * 3, y: n.y * planet.radius * 3, z: n.z * planet.radius * 3 };
+    const unit = { x: -n.x, y: -n.y, z: -n.z };
+    const big = { x: unit.x * 250, y: unit.y * 250, z: unit.z * 250 };
+    const small = { x: unit.x * 0.003, y: unit.y * 0.003, z: unit.z * 0.003 };
+    expect(pickCell(planet, origin, big)).toBe(500);
+    expect(pickCell(planet, origin, small)).toBe(500);
+  });
 });
 
-// ---------------------------------------------------------------------------------------
-// Własność Voronoi — 2000 losowych promieni, DWIE niezależne wyrocznie
-// ---------------------------------------------------------------------------------------
+describe('pickCell — przelot deterministyczny po wszystkich komórkach', () => {
+  // Z4/naprawa: 2000 losowych próbek (jakiegokolwiek rozkładu) NIE gwarantuje odwiedzenia
+  // każdego indeksu — zmierzone w recenzji: 375/1442 komórek (26%), w tym OSTATNIA, nigdy
+  // nie były odpowiedzią. Błąd o jeden w granicy pętli (`i < len` → `i < len-1`) był
+  // dlatego niewidoczny. To jest jedyny sposób, żeby uczynić GRANICĘ pętli widoczną: nie
+  // "dość dużo losowych", tylko KAŻDY indeks po imieniu. 1442 wywołania, milisekundy.
+  it('10. każda z 1442 komórek jest osiągalna: promień wzdłuż -cells[i].normal wraca DOKŁADNIE i', () => {
+    let checked = 0;
+    for (let i = 0; i < planet.cells.length; i++) {
+      const n = planet.cells[i].normal;
+      const origin = { x: n.x * planet.radius * 3, y: n.y * planet.radius * 3, z: n.z * planet.radius * 3 };
+      const direction = { x: -n.x, y: -n.y, z: -n.z };
+      expect(pickCell(planet, origin, direction)).toBe(i);
+      checked++;
+    }
+    expect(checked).toBe(planet.cells.length);
+    // Kotwica NIEZALEŻNA od `planet.cells.length` samej siebie (por. `expectedVertexCount`
+    // w `geometry.test.ts`) — bez niej pusta pętla (np. gdyby `cells` zamieniono na `[]`
+    // wcześniej w pliku) "sprawdzałaby" zero komórek i zaliczała formalnie zielono.
+    expect(checked).toBe(1442);
+  });
+});
+
+// =========================================================================================
+// Własność Voronoi na promieniach SKOŚNYCH — runda naprawcza 1
+// =========================================================================================
 //
-// Próbki wygenerowane RAZ (ten sam seed rng co w briefie: 12345), żeby oba testy niżej
-// sprawdzały DOKŁADNIE ten sam zbiór promieni pod dwiema różnymi wyroczniami, zamiast
-// losować dwukrotnie (i przypadkiem sprawdzać różne promienie pod tą samą nazwą "2000
-// próbek").
-const SAMPLE_COUNT = 2000;
-interface Sample {
-  readonly n: Vec3; // punkt na sferze jednostkowej = dokładny, analitycznie znany punkt trafienia
-  readonly origin: Vec3;
-  readonly direction: Vec3;
+// Z1/naprawa (task-1-review.md, znalezisko najpoważniejsze): wszystkie promienie w
+// poprzedniej wersji tego pliku były OSIOWE — `origin = 4R·n`, `direction = -n` — więc
+// PRZECHODZIŁY DOKŁADNIE PRZEZ ŚRODEK planety. Dla tej rodziny punkt trafienia jest równy
+// `R·n` Z KONSTRUKCJI WEJŚCIA (żadna geometria nie jest w to zaangażowana: równanie
+// kwadratowe przecięcia degeneruje się trywialnie), a wyrocznia porównywała właśnie z `n`.
+// Zmierzone przez recenzenta: na siatce 81×81 promieni ekranowych w planetę trafia 2885, i
+// DOKŁADNIE JEDEN z nich jest osiowy. Usunięcie normalizacji kierunku albo podstawienie
+// błędnego wzoru na punkt trafienia dawało 6/6 zielone MIMO 72-99% złych realnych kliknięć.
+//
+// Naprawa: kamera `origin` i punkt trafienia są losowane NIEZALEŻNIE. `origin` to losowa
+// pozycja w realistycznym zakresie zoomu (`MIN_DISTANCE_FACTOR`..`MAX_DISTANCE_FACTOR` ×
+// promień, jak `camera.ts`). Kierunek to "prosto w środek" ODCHYLONY o losowy kąt (0 do
+// prawie kąta horyzontu) w losowym azymucie — czyli promień OGÓLNEGO położenia, nie
+// przechodzący przez środek poza miarą zero. Punkt trafienia NIE jest zakładany: liczy go
+// `raySphereNearPoint` — świeży, niezależny solver (patrz niżej), nie import z `picking.ts`.
+// Kierunek dodatkowo skalowany losowym czynnikiem (0,1-250) — nigdy jednostkowy — bo tak
+// przychodzi z odrzutowania NDC (patrz Test 9).
+
+/**
+ * Niezależne (od `picking.ts`) przecięcie promienia ze sferą o promieniu `radius`
+ * wyśrodkowaną w (0,0,0) — bliższy pierwiastek. Napisane od nowa w TYM pliku (nie import z
+ * `picking.ts`), żeby błąd we WŁAŚCIWEJ implementacji nie mógł "zgodzić się sam ze sobą" w
+ * wyroczni — dokładnie zarzut Z1: poprzednia wersja porównywała `pickCell` z punktem
+ * ZAŁOŻONYM z konstrukcji wejścia, nie WYLICZONYM z przecięcia.
+ */
+function raySphereNearPoint(origin: Vec3, direction: Vec3, radius: number): Vec3 | null {
+  const dLen = Math.hypot(direction.x, direction.y, direction.z);
+  const dx = direction.x / dLen;
+  const dy = direction.y / dLen;
+  const dz = direction.z / dLen;
+  const b = origin.x * dx + origin.y * dy + origin.z * dz;
+  const c = origin.x * origin.x + origin.y * origin.y + origin.z * origin.z - radius * radius;
+  const disc = b * b - c;
+  if (disc < 0) return null;
+  const t = -b - Math.sqrt(disc);
+  if (t < 0) return null;
+  return { x: origin.x + dx * t, y: origin.y + dy * t, z: origin.z + dz * t };
 }
-const samples: Sample[] = (() => {
+
+/** Baza styczna dowolna, ale deterministyczna — jak `tangentBasis` w `dual.ts`. */
+function orthonormalBasis(d0: Vec3): { tangent: Vec3; bitangent: Vec3 } {
+  const helper: Vec3 = Math.abs(d0.y) < 0.9 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+  const tangent = normalize(cross(d0, helper));
+  const bitangent = cross(d0, tangent);
+  return { tangent, bitangent };
+}
+
+const SAMPLE_COUNT = 2000;
+interface ObliqueSample {
+  readonly origin: Vec3;
+  readonly direction: Vec3; // CELOWO nieznormalizowany
+  readonly trueHit: Vec3; // wyliczony z `raySphereNearPoint`, NIE założony; promień = planet.radius
+  /** `trueHit` znormalizowany — do rankingu po iloczynie skalarnym z `.normal` (jednostkowym),
+   *  żeby marginesy były w tej samej skali co przy porównaniu dwóch wektorów jednostkowych
+   *  (inaczej margines wychodzi ×promień razy za duży — złapane Testem 13 przy pierwszym
+   *  uruchomieniu tej wersji, patrz raport). */
+  readonly trueHitDir: Vec3;
+}
+const samples: ObliqueSample[] = (() => {
   const rng = mulberry32(12345);
-  const out: Sample[] = [];
-  for (let k = 0; k < SAMPLE_COUNT; k++) {
-    // Losowy kierunek na sferze (próbkowanie przez `u = cos(theta)` jednostajne, NIE
-    // `theta` jednostajne, żeby uniknąć zagęszczenia przy biegunach), promień z zewnątrz
-    // (4 promienie planety) celujący dokładnie w środek.
+  const out: ObliqueSample[] = [];
+  let attempts = 0;
+  while (out.length < SAMPLE_COUNT) {
+    attempts++;
+    if (attempts > SAMPLE_COUNT * 10) {
+      throw new Error(`Za mało trafień: ${out.length}/${SAMPLE_COUNT} po ${attempts} próbach.`);
+    }
+    // Losowa pozycja kamery: kierunek jednostajny na sferze, odległość w realnym zakresie
+    // zoomu (`camera.ts`).
     const u = rng() * 2 - 1;
     const phi = rng() * Math.PI * 2;
     const r = Math.sqrt(1 - u * u);
-    const n: Vec3 = { x: r * Math.cos(phi), y: u, z: r * Math.sin(phi) };
-    const origin: Vec3 = { x: n.x * planet.radius * 4, y: n.y * planet.radius * 4, z: n.z * planet.radius * 4 };
-    const direction: Vec3 = { x: -n.x, y: -n.y, z: -n.z };
-    out.push({ n, origin, direction });
+    const cameraDir: Vec3 = { x: r * Math.cos(phi), y: u, z: r * Math.sin(phi) };
+    const distFactor = MIN_DISTANCE_FACTOR + rng() * (MAX_DISTANCE_FACTOR - MIN_DISTANCE_FACTOR);
+    const origin: Vec3 = scale(cameraDir, planet.radius * distFactor);
+
+    // Kierunek: "prosto w środek" odchylony o losowy kąt theta (0..prawie-horyzont) w
+    // losowym azymucie — NIE zawsze 0 (to była wada Z1). `Math.sqrt(rng())` waży w stronę
+    // większych theta (powierzchnia widocznej czapy rośnie z sin(theta)), żeby próbki nie
+    // gęstniały sztucznie w samym środku ekranu.
+    const horizonAngle = Math.asin(1 / distFactor); // kąt widziany z origin, promień=1 wzgl. distFactor
+    const theta = Math.sqrt(rng()) * horizonAngle * 0.97; // 0,97: margines od stycznej — Test 4/ME to osobny przypadek
+    const azimuth = rng() * Math.PI * 2;
+    const d0: Vec3 = { x: -cameraDir.x, y: -cameraDir.y, z: -cameraDir.z };
+    const { tangent, bitangent } = orthonormalBasis(d0);
+    const perturbed: Vec3 = add(
+      scale(d0, Math.cos(theta)),
+      scale(add(scale(tangent, Math.cos(azimuth)), scale(bitangent, Math.sin(azimuth))), Math.sin(theta)),
+    );
+    const directionUnit = normalize(perturbed);
+
+    // CELOWO nieznormalizowany (patrz Test 9): czynnik skali losowy w szerokim zakresie.
+    const magnitude = 0.1 + rng() * 250;
+    const direction: Vec3 = scale(directionUnit, magnitude);
+
+    const trueHit = raySphereNearPoint(origin, direction, planet.radius);
+    if (trueHit === null) continue; // theta<horyzont powinno zawsze trafiać; asercja niżej to potwierdza
+    out.push({ origin, direction, trueHit, trueHitDir: normalize(trueHit) });
   }
   return out;
 })();
 
-describe('pickCell — własność Voronoi na 2000 losowych promieniach', () => {
-  it('4. [WŁASNOŚĆ] trafiona komórka jest tą o najbliższym środku (druga pętla po .normal)', () => {
-    // Wyrocznia z briefu: liczy PONOWNIE "najbliższy środek", tą samą formułą co
-    // `pickCell` wewnątrz siebie. Łapie błąd w przecięciu ze sferą (zły pierwiastek, zła
-    // normalizacja kierunku) i w indeksowaniu pętli — ale NIE złapałaby błędu w samej idei
-    // "najbliższy środek = komórka", bo używa dokładnie tej idei do sprawdzenia samej
-    // siebie. Test 6 niżej pokazuje to na żywym przykładzie.
+describe('pickCell — własność Voronoi na promieniach SKOŚNYCH (kamera i punkt trafienia niezależne)', () => {
+  it('11. konstrukcja próbek jest naprawdę skośna, nie osiowa (kontrola pozytywna)', () => {
+    // Bez tej kontroli cała naprawa Z1 mogłaby po cichu wrócić do przypadku osiowego
+    // (theta≈0 dla każdej próbki) i nikt by tego nie zauważył. Kąt padania (theta) musi
+    // pokrywać szeroki zakres, nie klastrować się przy zerze.
+    expect(samples.length).toBe(SAMPLE_COUNT);
+    let sawSmallAngle = false;
+    let sawLargeAngle = false;
+    let sawUnnormalized = false;
+    for (const s of samples) {
+      const dLen = Math.hypot(s.direction.x, s.direction.y, s.direction.z);
+      const dirUnit = scale(s.direction, 1 / dLen);
+      const toHit = normalize(s.trueHit);
+      const cosAngleAtHit = -dot(dirUnit, toHit); // kąt między kierunkiem a normalną w punkcie trafienia
+      if (cosAngleAtHit < 0.999) sawSmallAngle = true; // odchylenie > ok. 2.5°
+      if (cosAngleAtHit < 0.9) sawLargeAngle = true; // odchylenie > ok. 25°
+      if (Math.abs(dLen - 1) > 0.01) sawUnnormalized = true;
+    }
+    expect(sawSmallAngle).toBe(true);
+    expect(sawLargeAngle).toBe(true);
+    expect(sawUnnormalized).toBe(true);
+  });
+
+  it('12. [WŁASNOŚĆ] trafiona komórka jest tą o najbliższym środku do PRAWDZIWEGO (wyliczonego) punktu trafienia', () => {
     let checked = 0;
-    for (const { n, origin, direction } of samples) {
+    for (const { origin, direction, trueHitDir } of samples) {
       const hit = pickCell(planet, origin, direction);
       expect(hit).not.toBeNull();
 
@@ -152,7 +340,7 @@ describe('pickCell — własność Voronoi na 2000 losowych promieniach', () => 
       let bestId = -1;
       for (let i = 0; i < planet.cells.length; i++) {
         const c = planet.cells[i].normal;
-        const d = c.x * n.x + c.y * n.y + c.z * n.z;
+        const d = c.x * trueHitDir.x + c.y * trueHitDir.y + c.z * trueHitDir.z;
         if (d > bestDot) {
           bestDot = d;
           bestId = i;
@@ -164,46 +352,42 @@ describe('pickCell — własność Voronoi na 2000 losowych promieniach', () => 
     expect(checked).toBe(SAMPLE_COUNT);
   });
 
-  it('5. [WŁASNOŚĆ, niezależnie od "najbliższy środek"] punkt trafienia leży w wielokącie zwróconej komórki, liczonym z buforów buildPlanetGeometry', () => {
-    // Druga wyrocznia — geometrycznie INNA, nie kolejne przepisanie tej samej pętli:
-    // sprawdza, że `n` (dokładny punkt trafienia — promień celuje wzdłuż -n prosto w
-    // środek, więc trafia sferę dokładnie w promień*n, NIEZALEŻNIE od tego, jak `pickCell`
-    // policzył to wewnątrz siebie) leży wewnątrz wieloboku sferycznego zwróconej komórki,
-    // odczytanego z TYCH SAMYCH buforów, które rysuje renderer (`buildPlanetGeometry`) — nie
-    // z `planet.cells[i].corners` wprost, i bez użycia `.center`/`.normal` w ogóle (patrz
-    // `insideSphericalPolygon`). To zamyka dwie luki naraz: błąd w samym pomyśle "najbliższy
-    // środek" (ten test w ogóle go nie używa) oraz ewentualną niezgodność między
-    // `Planet.cells[i].corners` a tym, co `buildPlanetGeometry` faktycznie zapisuje do
-    // bufora wierzchołków.
+  it('13. [WŁASNOŚĆ, niezależnie od "najbliższy środek"] prawdziwy punkt trafienia leży w wielokącie zwróconej komórki, liczonym z buforów buildPlanetGeometry', () => {
+    // ZMIERZONE (nie zgadywane — patrz `picking.ts`, docstring, i raport Zadania 1): ta
+    // własność NIE trzyma się dla WSZYSTKICH próbek. `dual.ts` buduje `corners` jako
+    // centroidy trójkątów siatki geodezyjnej, nie jako cyrkumcentry — granica narysowanego
+    // wieloboku jest BLISKĄ, ale nie tożsamą co do bitu, aproksymacją prawdziwego diagramu
+    // Voronoi generatorów `normal`.
     //
-    // ZMIERZONE (nie zgadywane — patrz `picking.ts`, sekcja "Zastrzeżenie", i raport
-    // Zadania 1): ta własność NIE trzyma się dla WSZYSTKICH 2000 próbek. `dual.ts` buduje
-    // `corners` jako centroidy trójkątów siatki geodezyjnej, nie jako cyrkumcentry — więc
-    // granica narysowanego wieloboku jest BLISKĄ, ale nie tożsamą co do bitu aproksymacją
-    // prawdziwego diagramu Voronoi generatorów `normal`. Liczymy więc rozbieżności (wzorem
-    // Testu 9 w `geometry.test.ts`), zamiast fail-fast na pierwszej, i przypinamy DOKŁADNĄ
-    // zmierzoną liczbę — regresja (więcej rozbieżności, większy margines, rozbieżność
-    // wobec NIE-sąsiada) ma to oblać, a nie przejść po cichu.
+    // Runda naprawcza 1 (ocena recenzenta): PRZYPIĘTA liczba (`toBe(25)`) była artefaktem
+    // ziarna próbek, nie własnością planety — ośmiu ziaren dawało 18..27, próba 500..20000
+    // dawała 1,00%..1,52%, i test oblewał RÓWNIEŻ w kierunku poprawy (naprawa `dual.ts`
+    // zgasiłaby niezgodności do zera, a `toBe(N)` zgłosiłoby to jako regresję). Zamiast
+    // równości: STOPA związana górnym ograniczeniem z realnym zapasem (zmierzone maksimum
+    // pod nowym, skośnym próbkowaniem: 2,10% na kilkunastu ziarnach — 0,03 zostawia ~1,4×
+    // zapasu), a KAŻDA rozbieżność nadal scharakteryzowana (musi być wobec bezpośredniego
+    // sąsiada, margines poniżej 1e-3 W SKALI JEDNOSTKOWEJ — stąd `trueHitDir`, nie
+    // `trueHit`, w rankingu niżej: `trueHit` ma promień planety, więc porównanie na jego
+    // skali dawałoby marginesy ×promień za duże) — te dwie własności są niezmienione
+    // względem poprzedniej rundy i dalej niosą ciężar dowodu. Istnienie zjawiska jako
+    // takiego ma WŁASNY, deterministyczny test niżej (nie zależy od tego, czy losowanie
+    // "trafi" na sporną krawędź).
     let checked = 0;
     let mismatches = 0;
-    for (const { n, origin, direction } of samples) {
+    for (const { origin, direction, trueHit, trueHitDir } of samples) {
       const hit = pickCell(planet, origin, direction);
       expect(hit).not.toBeNull();
       const hitId = hit as number;
 
       const corners = cornersFromGeometry(geometry, hitId);
-      if (!insideSphericalPolygon(corners, n)) {
+      if (!insideSphericalPolygon(corners, trueHit)) {
         mismatches++;
-        // Charakteryzacja obowiązkowa, nie tylko licznik: KAŻDA rozbieżność musi być
-        // wobec bezpośredniego sąsiada zwróconej komórki, na włos od granicy — nigdy
-        // wobec odległej, niepowiązanej komórki (co wskazywałoby na prawdziwy błąd
-        // `pickCell`, nie na przybliżenie `dual.ts`).
         let bestId = -1;
         let bestDot = -Infinity;
         let secondId = -1;
         let secondDot = -Infinity;
         for (let i = 0; i < planet.cells.length; i++) {
-          const d = dot(planet.cells[i].normal, n);
+          const d = dot(planet.cells[i].normal, trueHitDir);
           if (d > bestDot) {
             secondDot = bestDot;
             secondId = bestId;
@@ -214,41 +398,39 @@ describe('pickCell — własność Voronoi na 2000 losowych promieniach', () => 
             secondId = i;
           }
         }
-        expect(bestId).toBe(hitId);
+        // Charakteryzacja obowiązkowa: KAŻDA rozbieżność musi być wobec bezpośredniego
+        // sąsiada, na włos od granicy — nigdy wobec odległej, niepowiązanej komórki (co
+        // wskazywałoby na prawdziwy błąd `pickCell`, nie na przybliżenie `dual.ts`). Nie
+        // porównujemy z `hitId` (byłaby to asercja wyjścia `pickCell` z samym sobą — Z7 z
+        // poprzedniej rundy) — porównujemy z NIEZALEŻNIE (w tej samej pętli, ale osobno)
+        // policzonym `bestId`.
         expect(planet.cells[hitId].neighbors).toContain(secondId);
-        expect(bestDot - secondDot).toBeLessThan(1e-3); // margines "na włos", nie przypadek
+        expect(bestDot - secondDot).toBeLessThan(1e-3);
       }
       checked++;
     }
     expect(checked).toBe(SAMPLE_COUNT);
-    // Wartość PRZYPIĘTA dla seed=1 / mulberry32(12345) — patrz komentarz wyżej i raport
-    // Zadania 1 po pełne pochodzenie liczby (1,25% próbek, zawsze na granicy z sąsiadem).
-    expect(mismatches).toBe(25);
+    // Górne ograniczenie STOPY, nie przypięta liczba — patrz komentarz wyżej.
+    expect(mismatches / SAMPLE_COUNT).toBeLessThan(0.03);
   });
 
-  it('6. [DOWÓD NIEZALEŻNOŚCI] gdy corners przestają zgadzać się z normal, test 5 to widzi, test 4 — nie', () => {
+  it('14. [DOWÓD NIEZALEŻNOŚCI] gdy corners przestają zgadzać się z normal, test wielokątem to widzi, druga pętla po .normal — nie', () => {
     // Nie mutacja `picking.ts` — mutacja PLANETY, symulująca hipotetyczny (znacznie
-    // większy niż zmierzony w Teście 5) błąd w `dual.ts`, w którym granica wielokąta
-    // komórki (`corners`) rozjeżdża się z jej środkiem Voronoi (`normal`). `pickCell`
-    // czyta WYŁĄCZNIE `.normal`, więc taki błąd nie zmienia jego odpowiedzi — pytanie
-    // brzmi, KTÓRA z dwóch wyroczni powyżej by go wykryła.
+    // większy niż zmierzony powyżej) błąd w `dual.ts`, w którym granica wielokąta komórki
+    // (`corners`) rozjeżdża się z jej środkiem Voronoi (`normal`). `pickCell` czyta
+    // WYŁĄCZNIE `.normal`, więc taki błąd nie zmienia jego odpowiedzi — pytanie brzmi,
+    // KTÓRA z dwóch wyroczni powyżej by go wykryła.
     const targetId = 500;
     const target = planet.cells[targetId];
 
     // Punkt trafienia CELOWO przesunięty od `target.normal` (mieszanka 90/10 z sąsiadem,
     // znormalizowana) — NIE `target.normal` wprost. Gdyby `n === target.normal`, `n` byłby
     // RÓWNOLEGŁY do `target.center` (ten sam kierunek, inna skala): każda kontrola "ta sama
-    // strona co centrum" wypadałaby zgodnie z definicji, niezależnie od tego, jakie
-    // `corners` by podstawić — degenerat, nie test. Margines 0,1 zweryfikowany (patrz
-    // raport): `pickCell` nadal zwraca 500, punkt nadal głęboko wewnątrz prawdziwego
-    // wieloboku 500.
+    // strona co centroid" wypadałaby zgodnie z definicji, niezależnie od tego, jakie
+    // `corners` by podstawić — degenerat, nie test.
     const neighborNormal = planet.cells[target.neighbors[0]].normal;
     const nudge = 0.1;
-    const n = normalize({
-      x: target.normal.x * (1 - nudge) + neighborNormal.x * nudge,
-      y: target.normal.y * (1 - nudge) + neighborNormal.y * nudge,
-      z: target.normal.z * (1 - nudge) + neighborNormal.z * nudge,
-    });
+    const n = normalize(add(scale(target.normal, 1 - nudge), scale(neighborNormal, nudge)));
     const origin = { x: n.x * planet.radius * 3, y: n.y * planet.radius * 3, z: n.z * planet.radius * 3 };
     const direction = { x: -n.x, y: -n.y, z: -n.z };
 
@@ -280,14 +462,12 @@ describe('pickCell — własność Voronoi na 2000 losowych promieniach', () => 
     };
     const corruptedGeometry = buildPlanetGeometry(corrupted);
 
-    // Wyrocznia z testu 5 (wielokąt z buforów, referencja = centroid WŁASNYCH corners):
-    // ZAUWAŻA. Prawdziwy punkt trafienia nie leży w podstawionym, odległym wielokącie.
+    // Wyrocznia wielokątowa: ZAUWAŻA. Prawdziwy punkt trafienia nie leży w podstawionym,
+    // odległym wielokącie.
     expect(insideSphericalPolygon(cornersFromGeometry(corruptedGeometry, targetId), n)).toBe(false);
 
-    // Wyrocznia z testu 4 (druga pętla po .normal): NIE MA JAK zauważyć — liczy wyłącznie
-    // po `.normal`, którego korupcja nie dotknęła, więc zgadza się z `pickCell` tak samo,
-    // jakby nic się nie stało. To jest granica tamtego testu, nazwana wprost (patrz uwaga
-    // przy Kroku 5 briefu).
+    // Druga pętla po `.normal`: NIE MA JAK zauważyć — liczy wyłącznie po `.normal`, którego
+    // korupcja nie dotknęła, więc zgadza się z `pickCell` tak samo, jakby nic się nie stało.
     let bestDot = -Infinity;
     let bestId = -1;
     for (let i = 0; i < corrupted.cells.length; i++) {
@@ -298,6 +478,35 @@ describe('pickCell — własność Voronoi na 2000 losowych promieniach', () => 
         bestId = i;
       }
     }
-    expect(bestId).toBe(targetId); // ślepe na dokładnie tę korupcję — patrz raport
+    expect(bestId).toBe(targetId); // ślepe na dokładnie tę korupcję
+  });
+
+  it('15. [ISTNIENIE, DETERMINISTYCZNE] dla pewnej pary sąsiadów punkt na granicy ich normal leży poza narysowanym wielokątem bliższego', () => {
+    // Recenzent: "losowanie 'znajdzie jakąś' [sporną krawędź] jest tym samym rodzajem
+    // kruchości co pin, tylko słabszym" — więc istnienie zjawiska z Testu 13 dostaje
+    // WŁASNY test, który go NIE losuje. Przegląd DETERMINISTYCZNY (kolejność `planet.cells`
+    // i `neighbors` jest stała dla danego seeda) wszystkich par sąsiadów: punkt DOKŁADNIE
+    // na granicy "najbliższy środek" między ich `.normal` (średnia znormalizowana — z
+    // definicji równoodległa w sensie iloczynu skalarnego), przesunięty o znikomą wartość
+    // w stronę `a` (rozstrzyga remis na korzyść `a`), sprawdzony przeciw NARYSOWANEMU
+    // wielokątowi `a`. Przerywa na PIERWSZYM znalezisku — nie zależy od tego, KTÓRA para to
+    // jest, tylko że JAKAŚ istnieje.
+    let found: [number, number] | null = null;
+    outer: for (let a = 0; a < planet.cells.length; a++) {
+      for (const b of planet.cells[a].neighbors) {
+        if (b <= a) continue; // każda para nieuporządkowana raz
+        const mid = normalize(add(planet.cells[a].normal, planet.cells[b].normal));
+        const eps = 1e-4;
+        const p = normalize(add(scale(mid, 1 - eps), scale(planet.cells[a].normal, eps)));
+        // sanity: `p` musi faktycznie być (nieznacznie) bliżej `a` niż `b` po `.normal` —
+        // inaczej poniższe "poza wielokątem a" nie dowodziłoby rozbieżności z `pickCell`.
+        if (dot(p, planet.cells[a].normal) <= dot(p, planet.cells[b].normal)) continue;
+        if (!insideSphericalPolygon(cornersFromGeometry(geometry, a), p)) {
+          found = [a, b];
+          break outer;
+        }
+      }
+    }
+    expect(found).not.toBeNull();
   });
 });
