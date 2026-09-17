@@ -69,7 +69,7 @@ liczba, która przeżyje swoje wejście.
 | `freeHexagonNear(s: SimState): number` | indeks **pustego heksagonu** w zasięgu sieci od `startCell` — czyli takiego, na którym `canBuild(s, id, 'BARRICADE').ok === true` |
 | `fourFreeHexagonsNear(s: SimState): number[]` | cztery różne takie indeksy; rzuca, jeśli nie ma czterech |
 | `mulberry32(seed: number): () => number` | prosty PRNG **wyłącznie do testów**, żeby losowe promienie w Zadaniu 1 były powtarzalne. **Nie używaj `Rng` z `packages/sim`** — tamten jest częścią kontraktu determinizmu i wiązanie testu renderu z jego strumieniem byłoby kotwicą na cudzy moduł (ta wada wystąpiła w Fazie 2B trzy razy) |
-| `defeatedStateWithLastDamager(type: EnemyType): SimState` | stan z `phase === 'DEFEAT'` i zapamiętanym typem, który zadał ostatnie obrażenia Core. **Jeśli `SimState` tego nie zapamiętuje — to jest odkrycie Zadania 5, nie luka planu:** pole trzeba wtedy dołożyć, a jego koszt (snapshot Fazy 5) rozstrzygnąć i zapisać |
+| `defeatedStateWithDamager(type: EnemyType): { state: SimState; lastCoreDamager: EnemyType }` | stan z `phase === 'DEFEAT'` plus typ, który zadał ostatnie obrażenia Core. **Sprawdzone w przeglądzie wstępnym: `SimState` tego NIE zapamiętuje.** Rozstrzygnięcie niżej |
 
 ---
 
@@ -203,6 +203,7 @@ git commit -m "Faza 2C/1: wskazanie komorki przez wlasnosc Voronoi, nie raycast 
 **Interfejsy:**
 - Konsumuje: `pickCell` (Zadanie 1), `canBuild`/`Command` z `@heliopolis/sim`, `focusPosition` z `@heliopolis/render`.
 - Produkuje: `screenToRay(camera, canvas, clientX, clientY): {origin, direction}` oraz `intentFromPointer(...)` zwracające `{ kind:'BUILD'|'DEMOLISH', cellId, type? } | null`.
+- Produkuje też **stan wyboru**: `selectedCell: number | null` i `selectedType: BuildingType`, trzymane w kliencie i aktualizowane ruchem kursora oraz wyborem z menu. **Rozstrzygnięcie przeglądu wstępnego:** wybór należy do wejścia, nie do HUD — Zadanie 3 dostaje `cellId` jako argument `buildMenuRows(s, cellId)` i samo niczego nie pamięta. Gdyby wybór mieszkał w HUD, ten sam stan miałby dwóch właścicieli.
 
 **To zadanie zakłada pakiet testowy w `apps/client`.** Dziś go nie ma; dodaj minimalną konfigurację Vitest dla tego workspace'u i **trzymaj logikę wejścia POZA modułami dotykającymi DOM**, żeby dała się testować bez przeglądarki. To jest bezpośrednia reakcja na defekt Fazy 2B, w którym wada zamknięta w kliencie unieważniła cztery z pięciu pomiarów bramki.
 
@@ -443,14 +444,16 @@ it('1. przed evacUnlockTick menu odmawia z EVAC_LOCKED i podaje, ile zostało', 
 
 - [ ] **Krok 5: Trzy fazy mają trzy zakończenia na ekranie**
 
+**Rozstrzygnięcie przeglądu wstępnego — gdzie mieszka „co zniszczyło Core".** Sprawdziłem: `SimState` nie zapamiętuje tego dziś w żadnej postaci. Pole ma powstać **POZA `SimState`**, jako `Sim.lastCoreDamager: EnemyType | null`, dokładnie tak jak `Sim.lastPower` z Zadania 4 — i z tego samego powodu: **nic w logice symulacji tego nie czyta**, więc nie ma prawa wejść do `stateHash` ani obciążyć snapshotu Fazy 5. Raport z ticku nie jest stanem. Gdyby kiedyś któraś mechanika zaczęła to czytać, przeniesienie do stanu będzie świadomą zmianą, a nie skutkiem ubocznym ekranu porażki.
+
 `RUNNING`, `VICTORY`, `DEFEAT`. Przy `DEFEAT` — **powód**, nie sam fakt: run kończy się utratą Core, więc ekran ma powiedzieć **co zniszczyło Core** (ostatni typ wroga, który zadał obrażenia). To jest ta sama zasada co Zadanie 4 i wprost przygotowuje bramkę z Zadania 6.
 
 - [ ] **Krok 6: Test — ekran porażki niesie przyczynę**
 
 ```ts
 it('2. ekran porażki nazywa typ, który zniszczył Core', () => {
-  const s = defeatedStateWithLastDamager('ARMOR');
-  expect(defeatSummary(s)).toContain('ARMOR');
+  const { state, lastCoreDamager } = defeatedStateWithDamager('ARMOR');
+  expect(defeatSummary(state, lastCoreDamager)).toContain('ARMOR');
 });
 ```
 
