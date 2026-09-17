@@ -1127,6 +1127,29 @@ describe('wireClient — spięcie aplikacji, bez rozruchu DOM', () => {
     expect(worldFingerprint(rig.sim.state)).not.toBe(before);
   });
 
+  it('30. [NIEZMIENNIK] samo SPIĘCIE nie rusza świata — odcisk brany PRZED wireClient', () => {
+    // LUKA ZNALEZIONA W RUNDZIE 3, i jest nią MIEJSCE, nie droga: test 28 bierze odcisk
+    // świata PO powrocie z `wireClient`, więc zapis wykonany w czasie spięcia jest już
+    // w linii bazowej. Zmierzone: `(sim.state).ore = 999;` wstawione zaraz po
+    // `deps.makeSim(...)` przechodziło 29/29, choć ta sama linia w pętli klatki oblewa.
+    //
+    // Klient dosypujący sobie rudy przy starcie to dokładnie to oszustwo, przed którym
+    // ograniczenie nadrzędne ma bronić w Fazie 5. Dlatego linia bazowa musi pochodzić
+    // ze świata, który NIGDY nie dotknął spięcia.
+    const SEED = 20260915;
+    const reference = new Sim(createPlanet({ seed: SEED }), DEFAULT_RUN);
+    const before = worldFingerprint(reference.state);
+
+    // Kontrola pozytywna na sam przyrząd: odcisk NAPRAWDĘ rozróżnia światy — bez niej
+    // „dwa odciski są równe" mogłoby znaczyć „odcisk jest stały", a nie „świat nietknięty".
+    expect(worldFingerprint(new Sim(createPlanet({ seed: SEED + 1 }), DEFAULT_RUN).state)).not.toBe(before);
+
+    // `makeClientRig` buduje symulację TĄ SAMĄ fabryką i tym samym seedem, wewnątrz
+    // `wireClient` — i nie wykonuje ani jednej klatki ani zdarzenia.
+    const rig = makeClientRig();
+    expect(worldFingerprint(rig.sim.state)).toBe(before);
+  });
+
   it('29. płótno podane jako źródło klawiatury jest GŁOŚNYM błędem rozruchu, nie cichą utratą sterowania', () => {
     // `keys: canvas` (zmierzone: 631/631 zielone) kasuje CAŁĄ klawiaturę, bo <canvas>
     // bez `tabindex` nigdy nie dostaje ogniskowej. Testem zachowania tego nie widać —
