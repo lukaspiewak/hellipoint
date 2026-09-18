@@ -7,9 +7,11 @@ import {
   createPlanet,
   DEFAULT_RUN,
   Sim,
+  TICK_SECONDS,
   type BuildCheck,
   type BuildingType,
   type BuildRefusalReason,
+  type EnemyType,
   type Planet,
   type PowerReport,
   type SimState,
@@ -34,6 +36,10 @@ import {
   buildMenuRows,
   commandsAccepted,
   createHudView,
+  countdownText,
+  defeatSummary,
+  evacCountdownSeconds,
+  outcomeSummary,
   headlineText,
   MAX_MENU_TYPES,
   menuRowText,
@@ -48,7 +54,6 @@ import {
   shownRateTenths,
   type ElementLike,
   type MenuRow,
-  MIN_WINDOW_HEIGHT_PX,
   MIN_WINDOW_WIDTH_PX,
   HUD_CHAR_WIDTH_PX,
   HUD_FONT_SIZE_PX,
@@ -350,7 +355,7 @@ describe('menu niesie POBÓR ENERGII — brakująca dana łańcucha Q3', () => {
       BUILDINGS.LASER_TURRET.energyDrain = 37; // [STROJENIE] w teście: wartość nie do pomylenia
       expect(row(buildMenuRows(s, cell), 'LASER_TURRET').energyDrain).toBe(37);
       const panel = makePanel();
-      panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+      panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null);
       expect(rowText(panel, 'LASER_TURRET')).toContain(rateText(shownRateTenths(37)));
     } finally {
       BUILDINGS.LASER_TURRET.energyDrain = original;
@@ -359,7 +364,7 @@ describe('menu niesie POBÓR ENERGII — brakująca dana łańcucha Q3', () => {
     // POŁOWA „NA PANELU" przy wartości produkcyjnej — bez niej kolumna mogłaby istnieć
     // w `MenuRow` i nigdy nie dotrzeć na ekran.
     const panel = makePanel();
-    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null);
     expect(rowText(panel, 'LASER_TURRET')).toContain(rateText(shownRateTenths(BUILDINGS.LASER_TURRET.energyDrain)));
     expect(rowText(panel, 'PYLON')).toContain(rateText(shownRateTenths(BUILDINGS.PYLON.energyDrain)));
 
@@ -374,7 +379,7 @@ describe('menu niesie POBÓR ENERGII — brakująca dana łańcucha Q3', () => {
     // BUDOWALNEJ, gdzie zdania nie ma: obie strony dawały `-1`, więc `-1 === -1` przechodziło
     // niezależnie od tego, czy kolumna trzyma szerokość. Znalazł to ponowny przegląd Zadania 4
     // sondą wypisującą oba indeksy.
-    panel.view.update(s, IDLE_POWER, null, 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, null, 'BARRICADE', null);
     const withDrain = allText(panel.rows()[playerBuildableTypes().indexOf('LASER_TURRET')]);
     const without = allText(panel.rows()[playerBuildableTypes().indexOf('BARRICADE')]);
     const at = withDrain.indexOf('wskaż');
@@ -382,7 +387,7 @@ describe('menu niesie POBÓR ENERGII — brakująca dana łańcucha Q3', () => {
     // znów przeszłoby bez związania czegokolwiek.
     expect(at).toBeGreaterThan(0);
     expect(at).toBe(without.indexOf('wskaż'));
-    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null);
 
     // Łapka (jedyny element łapiący wskaźnik) NIE urosła o tę kolumnę — inaczej naprawa
     // trafialności z Zadania 3 zapłaciłaby za tę daną szerokością dziury w sterowaniu.
@@ -494,7 +499,7 @@ describe('reportMessage — meldunek strukturalny staje się zdaniem w JEDNYM mi
     const { s } = richRun();
     const occupied = builtCell(s);
     const panel = makePanel();
-    panel.view.update(s, IDLE_POWER, occupied, 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, occupied, 'BARRICADE', null);
 
     const intent = { kind: 'BUILD', cellId: occupied, type: 'BARRICADE' } as const;
     const reason = refusalReason(s, intent);
@@ -637,7 +642,7 @@ describe('bilans energii — HUD mówi, CZEGO brakuje i CO przez to zgasło', ()
     expect(power.shedTypes, 'kopalnie gasną PIERWSZE').toContain('EXTRACTOR');
 
     const panel = makePanel();
-    expect(panel.view.update(s, power, null, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, power, null, 'BARRICADE', null)).toBe(true);
     const text = panel.text();
 
     // 1. LICZBA, której brakuje — bez niej gracz widzi skutek, nie przyczynę.
@@ -669,13 +674,13 @@ describe('bilans energii — HUD mówi, CZEGO brakuje i CO przez to zgasło', ()
     const { s } = richRun();
     const panel = makePanel();
     const cell = freeHexagonNear(s);
-    expect(panel.view.update(s, powerWith(10, 20, []), cell, 'BARRICADE')).toBe(true);
-    expect(panel.view.update(s, powerWith(10, 20, []), cell, 'BARRICADE')).toBe(false);
+    expect(panel.view.update(s, powerWith(10, 20, []), cell, 'BARRICADE', null)).toBe(true);
+    expect(panel.view.update(s, powerWith(10, 20, []), cell, 'BARRICADE', null)).toBe(false);
 
     // Zmiana PONIŻEJ rozdzielczości wyświetlania nie przemalowuje — bo nie zmienia znaku.
-    expect(panel.view.update(s, powerWith(10.001, 20, []), cell, 'BARRICADE')).toBe(false);
+    expect(panel.view.update(s, powerWith(10.001, 20, []), cell, 'BARRICADE', null)).toBe(false);
     // …a zmiana widoczna na ekranie — przemalowuje. Para przy samej granicy dziesiątej.
-    expect(panel.view.update(s, powerWith(10.06, 20, []), cell, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, powerWith(10.06, 20, []), cell, 'BARRICADE', null)).toBe(true);
 
     // ## DRUGA POŁOWA BRAMKI: sam POPYT, przy nieruchomej podaży (naprawa F5)
     //
@@ -685,20 +690,20 @@ describe('bilans energii — HUD mówi, CZEGO brakuje i CO przez to zgasło', ()
     // a gdy wróg zniszczy jeden laser, `rawDemand` spada 48 → 36 i nic innego w bramce nie
     // drgnie. Panel pokazywałby dalej „z 48,0/s potrzebnych" DOKŁADNIE w chwili, w której
     // ta liczba ma znaczenie.
-    expect(panel.view.update(s, powerWith(10.06, 36, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(true);
-    expect(panel.view.update(s, powerWith(10.06, 36, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(false);
+    expect(panel.view.update(s, powerWith(10.06, 36, ['EXTRACTOR']), cell, 'BARRICADE', null)).toBe(true);
+    expect(panel.view.update(s, powerWith(10.06, 36, ['EXTRACTOR']), cell, 'BARRICADE', null)).toBe(false);
     // Para przy samej granicy dziesiątej, tak jak dla podaży wyżej.
-    expect(panel.view.update(s, powerWith(10.06, 36.001, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(false);
-    expect(panel.view.update(s, powerWith(10.06, 36.06, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, powerWith(10.06, 36.001, ['EXTRACTOR']), cell, 'BARRICADE', null)).toBe(false);
+    expect(panel.view.update(s, powerWith(10.06, 36.06, ['EXTRACTOR']), cell, 'BARRICADE', null)).toBe(true);
     // …i pokazana liczba NAPRAWDĘ poszła za popytem, a nie tylko bramka drgnęła.
     expect(panel.text()).toContain(rateText(shownRateTenths(36.06)));
 
     // Sama LISTA zgaszonych typów jest osobnym kanałem: te same liczby, inny skutek.
-    expect(panel.view.update(s, powerWith(10.06, 20, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(true);
-    expect(panel.view.update(s, powerWith(10.06, 20, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(false);
+    expect(panel.view.update(s, powerWith(10.06, 20, ['EXTRACTOR']), cell, 'BARRICADE', null)).toBe(true);
+    expect(panel.view.update(s, powerWith(10.06, 20, ['EXTRACTOR']), cell, 'BARRICADE', null)).toBe(false);
     // …łącznie z KOLEJNOŚCIĄ, której maska bitowa by nie uniosła.
     expect(
-      panel.view.update(s, powerWith(10.06, 20, ['KINETIC_TURRET', 'EXTRACTOR']), cell, 'BARRICADE'),
+      panel.view.update(s, powerWith(10.06, 20, ['KINETIC_TURRET', 'EXTRACTOR']), cell, 'BARRICADE', null),
     ).toBe(true);
     expect(panel.text()).toContain('KINETIC_TURRET, EXTRACTOR');
   });
@@ -815,7 +820,7 @@ describe('HudView — panel zasobów i budowy', () => {
   it('12. panel niesie POLSKI powód, a surowy identyfikator na ekran NIE trafia', () => {
     const { s } = richRun();
     const panel = makePanel();
-    expect(panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE', null)).toBe(true);
 
     const geothermal = rowText(panel, 'GEOTHERMAL_CAP');
     expect(geothermal).toContain(refusalMessage('WRONG_CELL_TYPE'));
@@ -842,13 +847,13 @@ describe('HudView — panel zasobów i budowy', () => {
     if (building === null) throw new Error('fixture: komórka miała być zabudowana');
 
     const panel = makePanel();
-    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null)).toBe(true);
     const before = panel.dump();
 
     building.hp = Math.floor(building.hp / 3);
     building.powered = !building.powered;
     // POŁOWA PIERWSZA: nic z tego nie każe panelowi się przemalować.
-    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(false);
+    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null)).toBe(false);
 
     // POŁOWA DRUGA, i to ona niesie tu ciężar: ŚWIEŻY panel, malowany od zera na stanie
     // z innym `hp` i innym `powered`, ma dać wyjście identyczne CO DO ZNAKU.
@@ -861,14 +866,14 @@ describe('HudView — panel zasobów i budowy', () => {
     // Zrzut obejmuje klasę, treść i kontrakt wskaźnika na KAŻDEJ głębokości, więc obie
     // drogi przemytu wpadają pod jednego strażnika zamiast pod dwie łatki.
     const fresh = makePanel();
-    expect(fresh.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(true);
+    expect(fresh.view.update(s, IDLE_POWER, cell, 'BARRICADE', null)).toBe(true);
     expect(fresh.dump()).toBe(before);
 
     // Kontrola pozytywna na przyrząd: panel NAPRAWDĘ reaguje na to, co MA nieść — bez niej
     // „dwa zrzuty są równe" mogłoby znaczyć „zrzut jest stały", a nie „hp nie przecieka".
     s.ore -= 1;
     const moved = makePanel();
-    expect(moved.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(true);
+    expect(moved.view.update(s, IDLE_POWER, cell, 'BARRICADE', null)).toBe(true);
     expect(moved.dump()).not.toBe(before);
   });
 
@@ -882,10 +887,10 @@ describe('HudView — panel zasobów i budowy', () => {
 
     s.ore = 1000;
     const bogaty = makePanel();
-    bogaty.view.update(s, IDLE_POWER, occupied, 'BARRICADE');
+    bogaty.view.update(s, IDLE_POWER, occupied, 'BARRICADE', null);
     s.ore = 0;
     const biedny = makePanel();
-    biedny.view.update(s, IDLE_POWER, occupied, 'BARRICADE');
+    biedny.view.update(s, IDLE_POWER, occupied, 'BARRICADE', null);
 
     // TREŚĆ wierszy menu jest identyczna — i to jest cała trudność tego przypadku. (Wiersz
     // zasobów oczywiście się różni; on nie mówi, KTÓREJ pozycji brakuje na koncie.)
@@ -906,7 +911,7 @@ describe('HudView — panel zasobów i budowy', () => {
     // deklaruje się jako łapiące wskaźnik. Bez tego naprawa nie miałaby strażnika w ogóle.
     const { s } = richRun();
     const panel = makePanel();
-    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE', null);
 
     const wszystkie: FakeElement[] = [];
     const zbierz = (e: FakeElement): void => {
@@ -944,7 +949,7 @@ describe('HudView — panel zasobów i budowy', () => {
     // elementem, który łapie wskaźnik) gracz dostałby natywne menu przeglądarki.
     const { s } = richRun();
     const panel = makePanel();
-    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE', null);
     let prevented = 0;
     // Zdarzenie z „łapki" bąbelkuje do korzenia — `pointer-events` rozstrzyga TRAFIANIE,
     // nie propagację — więc nasłuch na korzeniu je łapie.
@@ -958,8 +963,8 @@ describe('HudView — panel zasobów i budowy', () => {
     const cell = freeHexagonNear(s);
     const other = planet.cells[cell].neighbors[0];
 
-    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(true); // pierwsze malowanie
-    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE')).toBe(false); // nic się nie ruszyło
+    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null)).toBe(true); // pierwsze malowanie
+    expect(panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null)).toBe(false); // nic się nie ruszyło
 
     // Każdy kanał z osobna, i każdy w parze „zmiana → true, powtórka → false". Kanał, który
     // przestanie wchodzić do bramki, zostawia panel NIEAKTUALNY — a to wada widoczna dopiero
@@ -972,17 +977,17 @@ describe('HudView — panel zasobów i budowy', () => {
       ['faza', () => { s.phase = 'DEFEAT'; }],
       ['tick odblokowania Evac', () => { s.tick = s.evacUnlockTick; }],
     ];
-    expect(panel.view.update(s, IDLE_POWER, other, 'BARRICADE')).toBe(true); // wskazana komórka
-    expect(panel.view.update(s, IDLE_POWER, other, 'BARRICADE')).toBe(false);
-    expect(panel.view.update(s, IDLE_POWER, other, 'PYLON')).toBe(true); // wybrany typ
-    expect(panel.view.update(s, IDLE_POWER, other, 'PYLON')).toBe(false);
+    expect(panel.view.update(s, IDLE_POWER, other, 'BARRICADE', null)).toBe(true); // wskazana komórka
+    expect(panel.view.update(s, IDLE_POWER, other, 'BARRICADE', null)).toBe(false);
+    expect(panel.view.update(s, IDLE_POWER, other, 'PYLON', null)).toBe(true); // wybrany typ
+    expect(panel.view.update(s, IDLE_POWER, other, 'PYLON', null)).toBe(false);
     for (const [nazwa, zmien] of kanaly.slice(2)) {
       zmien();
-      expect({ nazwa, przemalowane: panel.view.update(s, IDLE_POWER, other, 'PYLON') }).toEqual({
+      expect({ nazwa, przemalowane: panel.view.update(s, IDLE_POWER, other, 'PYLON', null) }).toEqual({
         nazwa,
         przemalowane: true,
       });
-      expect({ nazwa, przemalowane: panel.view.update(s, IDLE_POWER, other, 'PYLON') }).toEqual({
+      expect({ nazwa, przemalowane: panel.view.update(s, IDLE_POWER, other, 'PYLON', null) }).toEqual({
         nazwa,
         przemalowane: false,
       });
@@ -991,7 +996,7 @@ describe('HudView — panel zasobów i budowy', () => {
     // Zabudowanie wskazanej komórki też jest zmianą — bez tego menu dalej pokazywałoby
     // „można budować" na komórce, na której właśnie coś stanęło.
     s.buildings[other] = { cellId: other, type: 'BARRICADE', hp: 1, powered: false };
-    expect(panel.view.update(s, IDLE_POWER, other, 'PYLON')).toBe(true);
+    expect(panel.view.update(s, IDLE_POWER, other, 'PYLON', null)).toBe(true);
   });
 
   it('14b. [BRAMKA] wyczerpanie złoża pod kursorem przemalowuje menu', () => {
@@ -1002,12 +1007,12 @@ describe('HudView — panel zasobów i budowy', () => {
     const panel = makePanel();
     const deposit = buildableNear(s, 'EXTRACTOR');
     expect(s.oreRemaining[deposit]).toBeGreaterThan(0);
-    expect(panel.view.update(s, IDLE_POWER, deposit, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, IDLE_POWER, deposit, 'BARRICADE', null)).toBe(true);
     const before = rowText(panel, 'EXTRACTOR');
     expect(before).not.toContain(refusalMessage('WRONG_CELL_TYPE'));
 
     s.oreRemaining[deposit] = 0;
-    expect(panel.view.update(s, IDLE_POWER, deposit, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, IDLE_POWER, deposit, 'BARRICADE', null)).toBe(true);
     expect(rowText(panel, 'EXTRACTOR')).toContain(refusalMessage('WRONG_CELL_TYPE'));
   });
 
@@ -1023,7 +1028,7 @@ describe('HudView — panel zasobów i budowy', () => {
     try {
       BUILDINGS.BARRICADE.costOre = 7.5; // [STROJENIE] w teście: koszt ułamkowy
       s.ore = 7.2;
-      expect(panel.view.update(s, IDLE_POWER, cell, 'PYLON')).toBe(true);
+      expect(panel.view.update(s, IDLE_POWER, cell, 'PYLON', null)).toBe(true);
       expect(row(buildMenuRows(s, cell), 'BARRICADE').affordable).toBe(false);
 
       // Ta sama PODŁOGA rudy (7), a dostępność się zmieniła. Jedynym kanałem, który to widzi,
@@ -1031,7 +1036,7 @@ describe('HudView — panel zasobów i budowy', () => {
       s.ore = 7.7;
       expect(shownAmount(7.2)).toBe(shownAmount(7.7));
       expect(row(buildMenuRows(s, cell), 'BARRICADE').affordable).toBe(true);
-      expect(panel.view.update(s, IDLE_POWER, cell, 'PYLON')).toBe(true);
+      expect(panel.view.update(s, IDLE_POWER, cell, 'PYLON', null)).toBe(true);
     } finally {
       BUILDINGS.BARRICADE.costOre = original;
     }
@@ -1042,10 +1047,10 @@ describe('HudView — panel zasobów i budowy', () => {
     const { s } = richRun();
     const panel = makePanel();
     const cell = freeHexagonNear(s);
-    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null);
     expect(panel.text()).not.toContain('nie są przyjmowane');
     s.phase = 'DEFEAT';
-    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null);
     expect(panel.text()).toContain('nie są przyjmowane');
     expect(panel.text()).toContain('DEFEAT');
     // …a numer wskazanej komórki NIE znika razem z runem. Zmierzone na ekranie: pierwsza
@@ -1057,7 +1062,7 @@ describe('HudView — panel zasobów i budowy', () => {
   it('16. kliknięcie w pozycję menu wybiera JEJ typ — każdą pozycję z osobna', () => {
     const { s } = richRun();
     const panel = makePanel();
-    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE', null);
     const types = playerBuildableTypes();
     const picks = panel.picks();
     expect(picks.length).toBe(types.length);
@@ -1096,7 +1101,7 @@ describe('HudView — panel zasobów i budowy', () => {
       fireOn(keys, 'keydown', {
         code: `Digit${n}`, key: '', shiftKey: false, preventDefault: () => {},
       });
-      panel.view.update(s, IDLE_POWER, cell, selection.selectedType);
+      panel.view.update(s, IDLE_POWER, cell, selection.selectedType, null);
       // Pozycja, którą panel oznaczył jako wybraną, ma być tą, której napis zaczyna się od
       // wciśniętej cyfry.
       const wybrany = panel.rows().filter((r) => r.className.includes('hud-row--selected'));
@@ -1246,7 +1251,7 @@ describe('wireClient — panel na ekranie gracza', () => {
     const before = worldFingerprint(rig.sim.state);
     const buildingsBefore = rig.sim.state.buildings.map((b) => b?.type ?? null).join(',');
     const paths: [string, () => void][] = [
-      ['hud.update', () => void rig.client.hud.update(rig.sim.state, rig.sim.lastPower, cell, 'PYLON')],
+      ['hud.update', () => void rig.client.hud.update(rig.sim.state, rig.sim.lastPower, cell, 'PYLON', null)],
       ['klik w pozycję menu', () => void fireOn(rig.picks()[3], 'click', {})],
       ['klik w pozycję już wybraną', () => void fireOn(rig.picks()[3], 'click', {})],
     ];
@@ -1398,7 +1403,7 @@ describe('wireClient — panel na ekranie gracza', () => {
       // na próbkę mierzyłaby wyłącznie gałąź „zmieniło się".
       if (i % 2 === 0) aimAt(camera, Math.floor(rand() * planet.cells.length));
       const moved = handle.refreshPointedCell();
-      const repainted = panel.view.update(sim.state, IDLE_POWER, selection.selectedCell, selection.selectedType);
+      const repainted = panel.view.update(sim.state, IDLE_POWER, selection.selectedCell, selection.selectedType, null);
       if (moved) {
         changes++;
         expect({ i, moved, repainted }).toEqual({ i, moved: true, repainted: true });
@@ -1409,7 +1414,7 @@ describe('wireClient — panel na ekranie gracza', () => {
       expect({ i, ponownie: handle.refreshPointedCell() }).toEqual({ i, ponownie: false });
       expect({
         i,
-        ponownie: panel.view.update(sim.state, IDLE_POWER, selection.selectedCell, selection.selectedType),
+        ponownie: panel.view.update(sim.state, IDLE_POWER, selection.selectedCell, selection.selectedType, null),
       }).toEqual({ i, ponownie: false });
       if (!moved) stills++;
     }
@@ -1429,7 +1434,7 @@ describe('wireClient — panel na ekranie gracza', () => {
       const { s } = richRun();
       const panel = makePanel();
       const cell = freeHexagonNear(s);
-      panel.view.update(s, IDLE_POWER, cell, 'BARRICADE'); // pierwsze malowanie poza pomiarem
+      panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null); // pierwsze malowanie poza pomiarem
       // Sto tysięcy, nie cztery: przy 4000 iteracjach KONTROLA (czyli wersja bez bramki,
       // alokująca dziesięć obiektów na klatkę) wypadała 0/0/0 — 40 tys. drobnych obiektów
       // nie wypełnia młodej generacji, więc `GCProfiler` nie miał czego policzyć i asercja
@@ -1444,7 +1449,7 @@ describe('wireClient — panel na ekranie gracza', () => {
         },
         measured: () => {
           for (let i = 0; i < ITERATIONS; i++) {
-            sink += panel.view.update(s, IDLE_POWER, cell, 'BARRICADE') ? 1 : 0;
+            sink += panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null) ? 1 : 0;
           }
         },
         // Kontrolą jest DOKŁADNIE ten defekt, przed którym broni bramka: ta sama praca plus
@@ -1452,7 +1457,7 @@ describe('wireClient — panel na ekranie gracza', () => {
         // sztuczna alokacja dobrana pod przyrząd, tylko wersja bez bramki.
         control: () => {
           for (let i = 0; i < ITERATIONS; i++) {
-            sink += panel.view.update(s, IDLE_POWER, cell, 'BARRICADE') ? 1 : 0;
+            sink += panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null) ? 1 : 0;
             sink += buildMenuRows(s, cell).length;
           }
         },
@@ -1496,6 +1501,10 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
    */
   const AMOUNT_CAP = 99_999; // [STROJENIE w teście] pięć cyfr; szczyt zmierzony w Fazie 1C to 2345
   const RATE_TENTHS_CAP = 99_999; // → „9999,9/s"; szczyt realny to ok. 310/s (12 capów + CORE)
+  // [STROJENIE w teście] Najdłuższe możliwe odliczanie do ewakuacji: „99:59". Realne przy
+  // `DEFAULT_RUN` to 1080 s, czyli „18:00" — cap bierze pięcioznakowy najgorszy przypadek,
+  // żeby budżet nie zależał od dzisiejszej długości runu.
+  const EVAC_SECONDS_CAP = 5_999;
 
   /**
    * Powody, które może nieść WIERSZ MENU — czyli wyłącznie te z `canBuild`.
@@ -1543,14 +1552,24 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
       if (type.length >= worstType.length) worstType = type as BuildingType;
       if (def.costOre > worstCost) worstCost = def.costOre;
     }
-    const row: MenuRow = {
-      type: worstType,
-      costOre: worstCost,
-      energyDrain: RATE_TENTHS_CAP / 10,
-      affordable: false,
-      check: { ok: false, reason: longestRefusalReason() },
-    };
-    return menuRowText(MAX_MENU_TYPES - 1, row);
+    // Najgorszy wiersz szukany po WSZYSTKICH powodach budowy, a nie po najdłuższym
+    // KOMUNIKACIE: od Zadania 5 `EVAC_LOCKED` dostaje doklejone odliczanie, więc powód
+    // z krótszym zdaniem może dać dłuższy wiersz. Wybieranie po komunikacie było prawdą
+    // do tej zmiany i przestałoby nią być po cichu — dokładnie ta klasa, którą zamknęła
+    // runda naprawcza 2 (N9).
+    let worst = '';
+    for (const reason of Object.keys(BUILD_REASONS) as BuildRefusalReason[]) {
+      const row: MenuRow = {
+        type: worstType,
+        costOre: worstCost,
+        energyDrain: RATE_TENTHS_CAP / 10,
+        affordable: false,
+        check: { ok: false, reason },
+      };
+      const text = menuRowText(MAX_MENU_TYPES - 1, row, EVAC_SECONDS_CAP);
+      if (text.length > worst.length) worst = text;
+    }
+    return worst;
   }
 
   /**
@@ -1616,6 +1635,26 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
     expect(line.length).toBeLessThanOrEqual(MAX_HUD_LINE_CHARS);
   });
 
+  /**
+   * Zakończenie runu jest OSOBNYM wierszem (Zadanie 5), więc ma własny budżet. Najgorszy
+   * przypadek szukany po WSZYSTKICH zakończeniach, jakie ta funkcja umie wypisać —
+   * z najdłuższą nazwą typu wroga, nie z dzisiaj wybraną.
+   */
+  it('31e. najdłuższe możliwe zdanie o zakończeniu runu mieści się w budżecie', () => {
+    const { s } = richRun();
+    let worst = '';
+    for (const phase of ['VICTORY', 'DEFEAT'] as const) {
+      s.phase = phase;
+      for (const damager of [null, 'SWARM', 'ARMOR', 'DISRUPTOR'] as const) {
+        const line = outcomeSummary(s, damager);
+        if (line.length > worst.length) worst = line;
+      }
+    }
+    // Kontrola na fiksturę: pusty najgorszy przypadek mieściłby się zawsze.
+    expect(worst.length).toBeGreaterThan(0);
+    expect(worst.length).toBeLessThanOrEqual(MAX_HUD_LINE_CHARS);
+  });
+
   it('31d. najdłuższa możliwa linia zasobów mieści się w budżecie', () => {
     const line = worstResourceLine();
     // eslint-disable-next-line no-console
@@ -1651,7 +1690,7 @@ describe('32. [SEPARATOR] segmenty składane w jeden wiersz są rozdzielone', ()
   it('32a. bilans i zdanie o skutku nie zlewają się w jeden ciąg', () => {
     const { s } = richRun();
     const panel = makePanel();
-    panel.view.update(s, SHED_POWER, freeHexagonNear(s), 'BARRICADE');
+    panel.view.update(s, SHED_POWER, freeHexagonNear(s), 'BARRICADE', null);
 
     const glued = powerLine(SHED_POWER) + shortfallLine(SHED_POWER);
     // Kontrola na fiksturę: oba segmenty MUSZĄ być niepuste, inaczej test nic nie mierzy.
@@ -1667,7 +1706,7 @@ describe('32. [SEPARATOR] segmenty składane w jeden wiersz są rozdzielone', ()
     const { s } = richRun();
     const panel = makePanel();
     const cell = freeHexagonNear(s);
-    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null);
 
     expect(panel.text()).not.toContain(`${resourceLine(s)}komórka:`);
     expect(panel.text()).toContain(resourceLine(s));
@@ -1698,7 +1737,7 @@ describe('32. [SEPARATOR] segmenty składane w jeden wiersz są rozdzielone', ()
     expect(tail).not.toMatch(/^\S/);
 
     const panel = makePanel();
-    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null);
     expect(panel.text()).toContain(finished);
   });
 });
@@ -1741,17 +1780,18 @@ describe('33. [UKŁAD] liczby układu w kodzie zgadzają się z arkuszem', () =>
     expect(numberFrom(/font:\s*(\d+(?:\.\d+)?)px\//, 'font')).toBe(HUD_FONT_SIZE_PX);
   });
 
-  it('33b. arkusz EGZEKWUJE minimalną szerokość okna, a nie tylko ją deklarujemy', () => {
-    expect(numberFrom(/max-width:\s*calc\(max\(100vw,\s*(\d+)px\)/, 'max-width')).toBe(
-      MIN_WINDOW_WIDTH_PX,
-    );
-  });
-
-  it('33c. arkusz EGZEKWUJE minimalną wysokość okna', () => {
-    expect(numberFrom(/max-height:\s*calc\(max\(100vh,\s*(\d+)px\)/, 'max-height')).toBe(
-      MIN_WINDOW_HEIGHT_PX,
-    );
-  });
+  /**
+   * **Czego tu NIE ma i dlaczego.** Runda naprawcza 2 miała tu dwa testy czytające
+   * `max-width: calc(max(100vw, 840px) - 16px)` i orzekające, że arkusz „EGZEKWUJE"
+   * minimalne okno. Pomiar w przeglądarce pokazał, że nie egzekwuje niczego: `max-width`
+   * jest sufitem, panel jest shrink-to-fit ograniczonym DOSTĘPNYM miejscem, a przy oknie
+   * 840×600 szerokość i zawijanie są identyczne z tą regułą i bez niej (666 px, zero
+   * zawinięć). Testy zniknęły razem z regułą — test pilnujący zapisu, który nic nie robi,
+   * jest gorszy niż brak testu, bo obiecuje gwarancję.
+   *
+   * `MIN_WINDOW_WIDTH_PX` został WARUNKIEM WSTĘPNYM budżetu i tak jest opisany w `hud.ts`.
+   * Sprawdzenie go wymaga silnika układu; tutaj wiązane jest to, co bez układu wiązać można.
+   */
 
   /**
    * Krój MONOSPACE'OWY jest przesłanką całej metody: gdyby panel dostał font proporcjonalny,
@@ -1773,8 +1813,139 @@ describe('33. [UKŁAD] liczby układu w kodzie zgadzają się z arkuszem', () =>
   it('33d. obramowanie poziome w arkuszu zgadza się z HUD_HORIZONTAL_CHROME_PX', () => {
     // Budżet znaków liczy SZEROKOŚĆ TREŚCI: okno minus marginesy (odjęte w `calc`) minus
     // wyściółka (`padding`, po obu stronach). Suma obu musi być tym, co odejmuje `hud.ts`.
-    const margins = numberFrom(/max-width:\s*calc\(max\(100vw,\s*\d+px\)\s*-\s*(\d+)px\)/, 'margines');
+    const margins = numberFrom(/max-width:\s*calc\(100vw\s*-\s*(\d+)px\)/, 'margines');
     const padding = numberFrom(/padding:\s*\d+px\s+(\d+)px/, 'padding');
     expect(margins + padding * 2).toBe(HUD_HORIZONTAL_CHROME_PX);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// 34. Ewakuacja: odliczanie do odblokowania
+// ---------------------------------------------------------------------------------------
+describe('34. [EWAKUACJA] do odblokowania Modułu widać, ile zostało', () => {
+  it('34a. przed evacUnlockTick menu odmawia z EVAC_LOCKED i podaje, ile zostało', () => {
+    const { s } = richRun();
+    const rows = buildMenuRows(s, freeHexagonNear(s));
+    expect(row(rows, 'EVACUATION_MODULE').check).toEqual({ ok: false, reason: 'EVAC_LOCKED' });
+    expect(evacCountdownSeconds(s)).toBeGreaterThan(0);
+  });
+
+  /**
+   * **Para wiążąca odliczanie z TĄ SAMĄ bramką, którą egzekwuje `canBuild`.**
+   *
+   * Sam test 34a przechodzi przy dowolnym dodatnim odliczaniu — także przy takim, które
+   * dobija do zera w innym ticku niż odblokowanie. Wtedy ekran mówiłby „odblokowane"
+   * przy menu dalej odmawiającym, albo odwrotnie: dokładnie ten rozjazd, przed którym
+   * broni czytanie `evacUnlockTick` zamiast `RunConfig`. Para wiąże go po OBU stronach
+   * przejścia, o jeden tick.
+   */
+  it('34b. [PARA] tick przed odblokowaniem odlicza i odmawia, tick odblokowania — zeruje i przyjmuje', () => {
+    const { s } = richRun();
+    const cell = freeHexagonNear(s);
+
+    s.tick = s.evacUnlockTick - 1;
+    expect(evacCountdownSeconds(s)).toBeGreaterThan(0);
+    expect(row(buildMenuRows(s, cell), 'EVACUATION_MODULE').check).toEqual({
+      ok: false,
+      reason: 'EVAC_LOCKED',
+    });
+
+    s.tick = s.evacUnlockTick;
+    expect(evacCountdownSeconds(s)).toBe(0);
+    expect(row(buildMenuRows(s, cell), 'EVACUATION_MODULE').check).toEqual({ ok: true });
+  });
+
+  it('34c. po odblokowaniu odliczanie zostaje na zerze, nie schodzi poniżej', () => {
+    const { s } = richRun();
+    s.tick = s.evacUnlockTick + 10_000;
+    expect(evacCountdownSeconds(s)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// 35. Trzy fazy mają trzy zakończenia, a przegrana ma PRZYCZYNĘ
+// ---------------------------------------------------------------------------------------
+describe('35. [KONIEC RUNU] ekran mówi, jak run się skończył i dlaczego', () => {
+  /**
+   * **Dlaczego surowy `ARMOR` WOLNO tu pokazać**, choć Zadanie 3 zabroniło surowych
+   * identyfikatorów na ekranie (test 12): tamten zakaz dotyczy **kodów powodów**
+   * (`CELL_OCCUPIED` → „komórka zajęta"), a nie NAZW BYTÓW. Nazwy budynków stoją w menu
+   * surowe od Zadania 3 (`BARRICADE`, `LASER_TURRET`) i typ wroga jest tym samym rodzajem
+   * napisu. Rozróżnienie, nie wyjątek: kod powodu opisuje REGUŁĘ, której gracz nie widzi,
+   * a nazwa bytu wskazuje rzecz, którą widzi na planecie.
+   */
+  function panelInPhase(phase: SimState['phase'], damager: EnemyType | null) {
+    const { s } = richRun();
+    s.phase = phase;
+    const panel = makePanel();
+    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE', damager);
+    return panel;
+  }
+
+  it('35a. w trakcie runu panel NIE niesie zdania o zakończeniu', () => {
+    const { s } = richRun();
+    expect(outcomeSummary(s, null)).toBe('');
+    expect(outcomeSummary(s, 'ARMOR')).toBe('');
+  });
+
+  it('35b. ekran porażki nazywa typ, który zniszczył Core', () => {
+    expect(defeatSummary('ARMOR')).toContain('ARMOR');
+    expect(panelInPhase('DEFEAT', 'ARMOR').text()).toContain('ARMOR');
+  });
+
+  it('35c. [PARA] każdy typ wroga dojeżdża na ekran — nie tylko ten z testu', () => {
+    // Bez tego „zawiera ARMOR" spełniałaby też funkcja zwracająca stałe zdanie o ARMOR-ze.
+    for (const type of ['SWARM', 'ARMOR', 'DISRUPTOR'] as const) {
+      expect(panelInPhase('DEFEAT', type).text()).toContain(type);
+    }
+  });
+
+  it('35d. przegrana bez znanego sprawcy NIE zgaduje typu', () => {
+    const text = panelInPhase('DEFEAT', null).text();
+    for (const type of ['SWARM', 'ARMOR', 'DISRUPTOR'] as const) {
+      expect(text).not.toContain(type);
+    }
+    // …ale sam fakt przegranej pada — milczenie byłoby gorsze niż „nie wiadomo".
+    // Niepustość osobno, z tego samego powodu co w 35e: `toContain('')` nic nie mierzy.
+    expect(defeatSummary(null).length).toBeGreaterThan(0);
+    expect(text).toContain(defeatSummary(null));
+  });
+
+  /**
+   * `toContain(x)` jest **zawsze prawdziwe dla pustego `x`**, więc pierwsza wersja tego
+   * testu przechodziła przy `outcomeSummary` zwracającym `''` dla `VICTORY` — zmierzone
+   * mutacją: 59/59 zielonych przy zwycięstwie bez ani jednego znaku na ekranie. Niepustość
+   * jest tu asercją OSOBNĄ i stoi PRZED porównaniem, nie założeniem.
+   */
+  it('35e. zwycięstwo ma własne, NIEPUSTE zdanie, różne od przegranej', () => {
+    const { s } = richRun();
+    s.phase = 'VICTORY';
+    const line = outcomeSummary(s, null);
+    expect(line.length, 'zwycięstwo bez zdania to ekran, który milczy').toBeGreaterThan(0);
+    expect(line).not.toBe(defeatSummary(null));
+    expect(panelInPhase('VICTORY', null).text()).toContain(line);
+  });
+
+  it('35f. odliczanie do ewakuacji stoi PRZY powodzie odmowy, nie osobno', () => {
+    const { s } = richRun();
+    const panel = makePanel();
+    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE', null);
+    const evacRow = rowText(panel, 'EVACUATION_MODULE');
+    expect(evacRow).toContain(refusalMessage('EVAC_LOCKED'));
+    expect(evacRow).toContain(countdownText(evacCountdownSeconds(s)));
+  });
+
+  it('35g. [PARA] odliczanie na ekranie idzie za stanem, a nie stoi', () => {
+    const { s } = richRun();
+    const panel = makePanel();
+    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE', null);
+    const before = rowText(panel, 'EVACUATION_MODULE');
+
+    s.tick += 60 / TICK_SECONDS; // minuta symulacji
+    panel.view.update(s, IDLE_POWER, freeHexagonNear(s), 'BARRICADE', null);
+    const after = rowText(panel, 'EVACUATION_MODULE');
+
+    expect(after).not.toBe(before);
+    expect(after).toContain(countdownText(evacCountdownSeconds(s)));
   });
 });

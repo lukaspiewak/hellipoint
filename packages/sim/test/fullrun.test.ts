@@ -214,6 +214,61 @@ describe('próg ewakuacji wyliczany przez Sim', () => {
  * (tick postawienia ekstraktora; jednostka gasnąca dokładnie w tym ticku). Dlatego
  * poniższe testy budują sytuację wprost, zamiast szukać jej w długim przebiegu.
  */
+/**
+ * Sprawca utraty Core — **raport z ticku, nie stan**.
+ *
+ * Wartość mieszka na `Sim`, nie w `SimState`, więc migawka Fazy 5 jej nie niesie
+ * i `stateHash` jej nie pilnuje. To jest przesłanka ekranu przegranej (§5.6: run kończy się
+ * utratą Core, więc ekran ma powiedzieć CO ją zniszczyło), a nie wielkość, od której
+ * zależy przebieg runu.
+ */
+describe('sprawca utraty Core', () => {
+  const planet = createPlanet({ seed: 61 });
+
+  /** CORE zbity tak, żeby padł DOKŁADNIE w drugim ticku — pierwszy ma go tylko uszkodzić. */
+  function coreUnderAttack(type: 'ARMOR' | 'SWARM') {
+    const sim = new Sim(planet, DEFAULT_RUN);
+    const s = sim.state;
+    const adjacent = planet.cells[planet.startCell].neighbors[0];
+    spawnUnit(s, type, adjacent);
+    s.buildings[planet.startCell]!.hp = ENEMIES[type].dps * TICK_SECONDS * 1.5;
+    return { sim, s };
+  }
+
+  it('do pierwszego trafienia jest null', () => {
+    expect(new Sim(planet, DEFAULT_RUN).lastCoreDamager).toBeNull();
+  });
+
+  it('niesie typ, który uszkodził Core, i jest nim JESZCZE w chwili przegranej', () => {
+    const { sim, s } = coreUnderAttack('ARMOR');
+
+    sim.step();
+    expect(s.phase, 'po pierwszym ticku run jeszcze biegnie').toBe('RUNNING');
+    expect(sim.lastCoreDamager).toBe('ARMOR');
+
+    sim.step();
+    expect(s.phase).toBe('DEFEAT');
+    // Sedno: CORE ginie w `removeDeadBuildings`, gdzie nie wiadomo już, kto go dobił.
+    // Gdyby wartość powstawała przy ZNISZCZENIU, a nie przy zadaniu obrażeń, tutaj
+    // byłby `null` — czyli ekran przegranej bez przyczyny, dokładnie w chwili, gdy
+    // gracz jej szuka.
+    expect(sim.lastCoreDamager).toBe('ARMOR');
+  });
+
+  it('[PARA] spokojny tick NIE kasuje ostatniego sprawcy', () => {
+    const { sim, s } = coreUnderAttack('SWARM');
+    sim.step();
+    expect(sim.lastCoreDamager).toBe('SWARM');
+
+    // Wszyscy napastnicy znikają — kolejny tick nie ma kogo policzyć.
+    s.units.length = 0;
+    s.buildings[planet.startCell]!.hp = BUILDINGS.CORE.hp;
+    sim.step();
+    expect(s.phase, 'kontrola na fiksturę: run musi dalej biec').toBe('RUNNING');
+    expect(sim.lastCoreDamager, 'sprawca z poprzedniego ticku zostaje').toBe('SWARM');
+  });
+});
+
 describe('kolejność systemów w step()', () => {
   /**
    * Ogniwo energia → ekonomia. `updateEconomy` czyta flagę `powered`, którą ustawia

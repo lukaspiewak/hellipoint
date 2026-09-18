@@ -113,6 +113,43 @@ describe('walka: jednostki kontra budynki', () => {
   });
 });
 
+/**
+ * Kto uszkodził CORE — przesłanka ekranu przegranej z Zadania 5.
+ *
+ * Wartość WYCHODZI Z FUNKCJI, a nie ląduje w `SimState`, i to jest rozstrzygnięcie:
+ * nic w logice symulacji tego nie czyta, więc w stanie byłaby wielkością, którą migawka
+ * Fazy 5 musiałaby serializować, a `stateHash` — pilnować. Ten sam precedens co
+ * `Sim.lastPower`. Raport z ticku nie jest stanem.
+ */
+describe('walka: kto uszkodził CORE', () => {
+  it('updateCombat zwraca typ, który w tym ticku uderzył w CORE', () => {
+    const s = withCore();
+    const outside = planet.cells[planet.startCell].neighbors.find((n) => s.buildings[n] === null)!;
+    spawnUnit(s, 'ARMOR', outside);
+    expect(updateCombat(s, buildAllFlowFields(s))).toBe('ARMOR');
+  });
+
+  it('zwraca null, gdy oberwał INNY budynek niż CORE', () => {
+    // Ta sama fikstura, co „jednostka stojąca przed budynkiem zadaje mu ciągły DPS":
+    // cel jest tam zmierzony jako barykada, więc tutaj wiadomo, że CORE nie obrywa.
+    const s = withCore();
+    const wall = planet.cells[planet.startCell].neighbors[0];
+    applyCommand(s, { kind: 'BUILD', cellId: wall, type: 'BARRICADE' });
+    const outside = planet.cells[wall].neighbors.find((n) => s.buildings[n] === null)!;
+    spawnUnit(s, 'SWARM', outside);
+
+    const before = s.buildings[wall]!.hp;
+    expect(updateCombat(s, buildAllFlowFields(s))).toBeNull();
+    // Kontrola na fiksturę: bez TEGO „null" znaczyłoby „nikt nie atakował", a nie
+    // „atakował kogoś innego" — czyli test przechodziłby najgłośniej, gdy nic nie mierzy.
+    expect(s.buildings[wall]!.hp).toBeLessThan(before);
+  });
+
+  it('zwraca null, gdy na planszy nie ma jednostek', () => {
+    expect(updateCombat(withCore(), buildAllFlowFields(withCore()))).toBeNull();
+  });
+});
+
 describe('walka: wieże kontra jednostki', () => {
   function turretAndUnit(type: 'KINETIC_TURRET' | 'LASER_TURRET', unitSteps: number) {
     const s = withCore();

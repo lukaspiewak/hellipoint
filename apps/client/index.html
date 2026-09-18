@@ -39,15 +39,22 @@
         bottom: 8px;
         z-index: 10;
         /*
-          MINIMUM OKNA WYEGZEKWOWANE, nie tylko zadeklarowane (`MIN_WINDOW_WIDTH_PX` /
-          `MIN_WINDOW_HEIGHT_PX` w `hud.ts`, wiązane testem 33). Do rundy naprawczej 2 stało
-          tu samo `100vw` i panel kurczył się bez dna — deklaracja minimalnego okna nie miała
-          ANI JEDNEGO konsumenta, a budżet znaków, który z niej wypada, opierał się na
-          szerokości, której nic nie broniło. Poniżej minimum panel trzyma swoją szerokość
-          i pojawia się przewijanie, zamiast zawijać wiersze policzone na 111 znaków.
+          `max-width` to SUFIT, nie podłoga — i dlatego nie da się nim wymusić minimalnego
+          okna. Runda naprawcza 2 wpisała tu `calc(max(100vw, 840px) - 16px)` w przekonaniu,
+          że to egzekwuje `MIN_WINDOW_WIDTH_PX`. ZMIERZONE W PRZEGLĄDARCE i nieprawda: panel
+          jest `position: fixed` bez `right`, więc jego szerokość to shrink-to-fit ograniczony
+          DOSTĘPNYM miejscem (`100vw − left`), a sufit większy od okna nie ma na co działać.
+          Przy oknie 840×600 panel ma 666 px i ZERO zawiniętych wierszy — identycznie z tą
+          regułą i z `calc(100vw - 16px)`. Sufit wyższy od okna nie zmieniał ani piksela.
+
+          Co naprawdę obowiązuje: przy oknie ≥ 840 px treść ma 816 px, a najdłuższy możliwy
+          wiersz (111 znaków) 802 px — więc nic się nie zawija. To jest WARUNEK WSTĘPNY
+          budżetu znaków, nie coś, co arkusz wymusza. Poniżej tej szerokości `pre-wrap`
+          zawija zamiast ucinać, więc nic nie znika (przewijanie poziome byłoby gorsze —
+          Zadanie 3 zmierzyło powód odmowy schowany za paskiem).
         */
-        max-width: calc(max(100vw, 840px) - 16px);
-        max-height: calc(max(100vh, 480px) - 16px);
+        max-width: calc(100vw - 16px);
+        max-height: calc(100vh - 16px);
         overflow: auto;
         padding: 6px 8px;
         border-radius: 4px;
@@ -71,6 +78,24 @@
         */
         white-space: pre-wrap;
         user-select: none;
+      }
+      /*
+        ZAKOŃCZENIE RUNU (Faza 2C, Zadanie 5). Pusty, dopóki run biegnie — pusty `div` bez
+        treści nie tworzy pudełka liniowego, więc w czasie gry nie kosztuje ani piksela
+        wysokości panelu i prześwit nad Core zmierzony w Zadaniu 4 zostaje.
+
+        Jedna klasa na oba zakończenia, nie dwie: różnicę niesie ZDANIE („ZWYCIĘSTWO"
+        kontra „PRZEGRANA"), a osobny kolor dla każdej fazy byłby trzecim kanałem na tę
+        samą informację. Wyróżnienie jest potrzebne wobec RESZTY PANELU, nie wobec drugiego
+        zakończenia — run kończy się raz i gracz ma to zauważyć.
+      */
+      #hud .hud-outcome:not(:empty) {
+        margin: 0 0 4px 0;
+        padding: 2px 6px;
+        border-radius: 3px;
+        background: rgba(232, 240, 255, 0.12);
+        font-weight: 700;
+        letter-spacing: 0.04em;
       }
       #hud .hud-resources {
         font-weight: 700;

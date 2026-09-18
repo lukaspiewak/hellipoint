@@ -11,6 +11,7 @@ import {
   sunDirection,
   TICK_SECONDS,
   type Building,
+  type EnemyType,
   type Planet,
   type PowerReport,
   type RunConfig,
@@ -69,6 +70,11 @@ export interface ClientSim extends CommandQueue {
    * migawka Fazy 5 musiałaby serializować, a `stateHash` pilnować.
    */
   readonly lastPower: Readonly<PowerReport>;
+  /**
+   * Typ wroga, który ostatni uszkodził Core (Faza 2C, Zadanie 5) — przesłanka ekranu
+   * przegranej. Też pole `Sim`, nie `SimState`, i z tego samego powodu co `lastPower`.
+   */
+  readonly lastCoreDamager: EnemyType | null;
 }
 
 /** Tyle z `PlanetScene`, ile widzi spięcie. */
@@ -309,7 +315,16 @@ export function wireClient(deps: ClientDeps): Client {
       // Bilans energii wchodzi tu WARTOŚCIĄ, prosto z `Sim` — panel go nie pamięta i nie
       // liczy, tak samo jak nie pamięta wskazania ani typu.
       const power = sim.lastPower;
-      hud.update(sim.state, power, selection.selectedCell, selection.selectedType);
+      // Sprawca utraty Core wchodzi tu tak samo jak bilans: WARTOŚCIĄ, prosto z `Sim`.
+      // Panel go nie pamięta — po `DEFEAT` `step()` wychodzi wcześnie, więc `Sim` trzyma
+      // wartość z ostatniego ticku, w którym ktoś w Core uderzył.
+      hud.update(
+        sim.state,
+        power,
+        selection.selectedCell,
+        selection.selectedType,
+        sim.lastCoreDamager,
+      );
 
       // Render CZYTA stan symulacji i nigdy go nie zapisuje (`global-constraints.md`).
       // `power.outage` niesie PRZYCZYNĘ braku prądu per komórka — bez niej obręcz alarmu

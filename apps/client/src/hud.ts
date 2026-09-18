@@ -2,7 +2,9 @@ import {
   BROWNOUT_ORDER,
   BUILDINGS,
   canBuild,
+  TICK_SECONDS,
   type BuildCheck,
+  type EnemyType,
   type BuildingType,
   type PowerReport,
   type SimState,
@@ -255,6 +257,68 @@ export function commandsAccepted(s: SimState): boolean {
 }
 
 /**
+ * Ile sekund zostało do odblokowania Modułu Ewakuacyjnego (§5.6: „odblokowany w ostatniej
+ * tercji runu"). Zero, gdy już odblokowany.
+ *
+ * ## Po co gracz ma to widzieć
+ *
+ * `EVAC_LOCKED` mówi, że teraz nie wolno — i nic więcej. Bez odliczania jedyną drogą do
+ * odpowiedzi „to kiedy?" jest próbowanie co jakiś czas, czyli ta sama nieczytelność
+ * przyczynowa, którą całe to zadanie usuwa: gracz widzi SKUTEK odmowy, nie jej KONIEC.
+ * Przy `DEFAULT_RUN` mowa o 1080 sekundach (18 minut z 30), więc różnica między „nie wiem"
+ * a „za osiemnaście minut" rozstrzyga, czy gracz planuje ekonomię pod ewakuację, czy czeka.
+ *
+ * Liczone z `evacUnlockTick`, czyli z TEJ SAMEJ liczby, którą egzekwuje `canBuild` —
+ * nie z `RunConfig`, którego HUD nie widzi, i nie z `evacUnlocked(cycle, cfg)`. Dwa źródła
+ * dałyby ekran mówiący „odblokowane za 0 s" przy menu dalej odmawiającym.
+ *
+ * Przycięte do zera od dołu: po odblokowaniu wartość rośnie ujemnie w nieskończoność,
+ * a „−432,0 s" na ekranie jest gorsze niż brak liczby.
+ */
+export function evacCountdownSeconds(s: SimState): number {
+  return Math.max(0, (s.evacUnlockTick - s.tick) * TICK_SECONDS);
+}
+
+/**
+ * Sekundy jako `m:ss`. **Sufit, nie podłoga** — z tego samego powodu, dla którego ruda ma
+ * podłogę: liczba ma nie obiecywać więcej, niż stan niesie. Przy 0,4 s podłoga pokazałaby
+ * „0:00" obok menu, które wciąż odmawia.
+ */
+export function countdownText(seconds: number): string {
+  const total = Math.ceil(seconds);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Zdanie kończące run — puste, dopóki run biegnie.
+ *
+ * Trzy fazy, trzy zakończenia (§5.6). Przy `DEFEAT` niesie **przyczynę, nie sam fakt**:
+ * run kończy się utratą Core, więc ekran mówi, CO ją zniszczyło. To ta sama zasada, co
+ * bilans energii z Zadania 4 — skutek bez sprawcy jest komunikatem, nie wyjaśnieniem.
+ */
+export function outcomeSummary(s: SimState, coreDamager: EnemyType | null): string {
+  if (s.phase === 'VICTORY') return 'ZWYCIĘSTWO — ewakuacja zakończona';
+  if (s.phase === 'DEFEAT') return defeatSummary(coreDamager);
+  return '';
+}
+
+/**
+ * Zdanie przegranej. Bierze SAMEGO sprawcę, nie cały stan — w planie zadania stała
+ * sygnatura `defeatSummary(state, lastCoreDamager)`, ale `state` nie miałby tu ani jednego
+ * użycia, a nieużywany parametr to obietnica zależności, której nie ma. Fazę sprawdza
+ * `outcomeSummary`, czyli jedyny wołający.
+ *
+ * `null` nie jest udawane opisem: przy dzisiejszych regułach (§5.6) Core ginie wyłącznie
+ * od wroga i rozebrać go nie można (`CORE_INDESTRUCTIBLE`), więc brak sprawcy oznacza
+ * drogę, o której nie wiemy — i tak ma być napisane, zamiast zgadywać typ.
+ */
+export function defeatSummary(coreDamager: EnemyType | null): string {
+  return coreDamager === null
+    ? 'PRZEGRANA — Core zniszczony, przyczyna nieznana'
+    : `PRZEGRANA — Core zniszczony przez ${coreDamager}`;
+}
+
+/**
  * Zasób tak, jak go widzi gracz. **Podłoga, nie zaokrąglenie** — i to jest jedyny powód,
  * dla którego ta jedna linia jest osobną funkcją.
  *
@@ -425,6 +489,7 @@ export interface HudView {
     power: PowerReport,
     cellId: number | null,
     selectedType: BuildingType,
+    coreDamager: EnemyType | null,
   ): boolean;
   detach(): void;
 }
@@ -452,9 +517,26 @@ export interface HudView {
  *
  * Poniżej tej szerokości gra nadal się uruchomi — `pre-wrap` zawinie zamiast uciąć, więc nic
  * nie zniknie. Przestaje natomiast obowiązywać prześwit nad Core i wszystko, co z niego wynika.
+ *
+ * ## To jest WARUNEK WSTĘPNY, nie rzecz wymuszana arkuszem
+ *
+ * Runda naprawcza 2 próbowała wymusić tę szerokość przez `max-width: calc(max(100vw, 840px)
+ * - 16px)` i **to nie działało**. `max-width` jest SUFITEM: panel stoi `position: fixed` bez
+ * `right`, więc jego szerokość to shrink-to-fit ograniczony DOSTĘPNYM miejscem, a sufit
+ * większy od okna nie ma na co działać. Zmierzone w przeglądarce przy oknie 840×600:
+ * panel 666 px i zero zawiniętych wierszy — **identycznie z tą regułą i bez niej**.
+ *
+ * Co obowiązuje naprawdę, i to też jest zmierzone: przy oknie ≥ 840 px treść panelu dostaje
+ * 816 px, a najdłuższy możliwy wiersz (111 znaków) zajmuje 802 px — więc nic się nie zawija.
+ * Weryfikacja tego warunku wymaga silnika układu, czyli przeglądarki; pakiet testowy wiąże
+ * to, co da się związać bez układu (rozmiar czcionki, krój monospace, liczbę znaków).
+ *
+ * Wysokość minimalna (480 px) **nie jest osobną stałą**, bo nie miałaby ani jednego
+ * konsumenta: budżet znaków zależy wyłącznie od szerokości, a wysokość rozstrzyga o prześwicie
+ * nad Core, który mierzy się w przeglądarce, nie w tym pakiecie. Liczba zostaje tutaj,
+ * w prozie, zamiast udawać wielkość, od której coś zależy.
  */
 export const MIN_WINDOW_WIDTH_PX = 840; // [WYGLĄD]
-export const MIN_WINDOW_HEIGHT_PX = 480; // [WYGLĄD]
 
 /**
  * `[WYGLĄD]` Rozmiar czcionki panelu — **odbicie `font:` z `apps/client/index.html`**.
@@ -626,9 +708,20 @@ export function menuDrainText(row: MenuRow): string {
     : ' '.repeat(DRAIN_WIDTH);
 }
 
-/** Zdanie odmowy przy pozycji menu; pusty napis, gdy pozycja jest do zbudowania. */
-export function menuWhyText(row: MenuRow): string {
-  return row.check.ok ? '' : `  ${refusalMessage(row.check.reason)}`;
+/**
+ * Zdanie odmowy przy pozycji menu; pusty napis, gdy pozycja jest do zbudowania.
+ *
+ * `EVAC_LOCKED` dostaje ODLICZANIE, i to jest miejsce, w którym ono należy: przyczyna
+ * i jej koniec stoją w tym samym zdaniu, zamiast w dwóch różnych miejscach ekranu.
+ * Sam `EVAC_LOCKED` mówi „teraz nie wolno" i nic więcej — a jedyną drogą do „to kiedy?"
+ * byłoby próbowanie co jakiś czas.
+ */
+export function menuWhyText(row: MenuRow, evacSeconds: number): string {
+  if (row.check.ok) return '';
+  const why = refusalMessage(row.check.reason);
+  return row.check.reason === 'EVAC_LOCKED'
+    ? `  ${why} (za ${countdownText(evacSeconds)})`
+    : `  ${why}`;
 }
 
 /**
@@ -638,8 +731,8 @@ export function menuWhyText(row: MenuRow): string {
  * Panel rozdziela je na trzy elementy, bo **tylko lewa część łapie wskaźnik** (patrz
  * `createHudView`); gracz czyta je jako jedną linię i tak liczy się budżet znaków.
  */
-export function menuRowText(index: number, row: MenuRow): string {
-  return menuPickText(index, row) + menuDrainText(row) + menuWhyText(row);
+export function menuRowText(index: number, row: MenuRow, evacSeconds: number): string {
+  return menuPickText(index, row) + menuDrainText(row) + menuWhyText(row, evacSeconds);
 }
 
 /**
@@ -702,6 +795,15 @@ export function createHudView(
    * trzyma `textContent` jako zwykłe pole i tego nie odtwarza, więc żaden test by tego nie
    * złapał. Tekst ustawiany jest wyłącznie na LIŚCIACH.
    */
+  // Zakończenie runu stoi NA GÓRZE panelu i jest PUSTE, dopóki run biegnie. Pusty `div`
+  // bez treści nie tworzy ani jednego pudełka liniowego, więc nie kosztuje ani piksela
+  // wysokości — ta sama zasada, co zdanie o skutku brownoutu, tyle że tam oszczędność
+  // brała się ze wspólnego wiersza, a tu z pustki. Wysokość panelu w czasie gry zostaje
+  // więc taka, jaką zmierzyło Zadanie 4 (prześwit nad Core).
+  const outcome = doc.createElement('div');
+  outcome.className = 'hud-outcome';
+  root.appendChild(outcome);
+
   const resourceRow = doc.createElement('div');
   resourceRow.className = 'hud-line';
   root.appendChild(resourceRow);
@@ -789,6 +891,11 @@ export function createHudView(
   let lastSupplyTenths = NaN;
   let lastDemandTenths = NaN;
   let lastShedKey = -1;
+  // Sentinele MUSZĄ być poza dziedziną wartości, inaczej pierwsze wywołanie mogłoby uznać
+  // panel za świeży i nie namalować nic. `undefined` jest tu poza `EnemyType | null`,
+  // a `-1` poza odliczaniem (zawsze >= 0).
+  let lastCoreDamager: EnemyType | null | undefined = undefined;
+  let lastEvacCountdown = -1;
 
   return {
     update(
@@ -796,6 +903,7 @@ export function createHudView(
       report: PowerReport,
       cellId: number | null,
       selectedType: BuildingType,
+      coreDamager: EnemyType | null,
     ): boolean {
       // Wszystko, od czego zależy CHOĆ JEDEN znak na panelu — i nic ponadto.
       const ore = shownAmount(s.ore);
@@ -824,6 +932,10 @@ export function createHudView(
       }
       const occupant = cellId === null ? null : s.buildings[cellId];
       const evacLocked = s.tick < s.evacUnlockTick;
+      // Po CAŁYCH sekundach, nie po ticku: odliczanie zmienia się na ekranie 20 razy
+      // rzadziej, niż biegnie symulacja, a bramka ma się ruszać wtedy i tylko wtedy,
+      // gdy zmienia się ZNAK NA EKRANIE — ta sama zasada, co `shownRateTenths`.
+      const evacCountdown = Math.ceil(evacCountdownSeconds(s));
       const oreLeft = cellId === null ? false : s.oreRemaining[cellId] > 0;
 
       if (
@@ -831,10 +943,13 @@ export function createHudView(
         occupant === lastOccupant && ore === lastOre && energy === lastEnergy &&
         affordMask === lastAffordMask && evacLocked === lastEvacLocked && oreLeft === lastOreLeft &&
         supplyTenths === lastSupplyTenths && demandTenths === lastDemandTenths &&
-        shedKey === lastShedKey
+        shedKey === lastShedKey && coreDamager === lastCoreDamager &&
+        evacCountdown === lastEvacCountdown
       ) {
         return false;
       }
+      lastCoreDamager = coreDamager;
+      lastEvacCountdown = evacCountdown;
       lastSupplyTenths = supplyTenths;
       lastDemandTenths = demandTenths;
       lastShedKey = shedKey;
@@ -848,6 +963,7 @@ export function createHudView(
       lastEvacLocked = evacLocked;
       lastOreLeft = oreLeft;
 
+      outcome.textContent = outcomeSummary(s, coreDamager);
       resources.textContent = resourceLine(s);
       power.textContent = powerLine(report);
       // Zdanie o skutku pojawia się WYŁĄCZNIE wtedy, gdy jest skutek — a że stoi w TYM SAMYM
@@ -871,7 +987,7 @@ export function createHudView(
         // co zawołać zamiast przepisywać sklejkę (N9).
         pickElements[i].textContent = menuPickText(i, row);
         drainElements[i].textContent = menuDrainText(row);
-        whyElements[i].textContent = menuWhyText(row);
+        whyElements[i].textContent = menuWhyText(row, evacCountdown);
         // Klasy, nie style w linii: liczby wyglądu mieszkają w `index.html`, gdzie da się
         // je oglądać razem z resztą układu panelu. Wyjątkiem jest `pointerEvents`, ustawiany
         // przy budowie — patrz doc-comment `createHudView`.

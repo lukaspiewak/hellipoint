@@ -17,7 +17,13 @@ import {
 import { OUTAGE_NONE, updatePower, type PowerReport } from './power.js';
 import { currentCycle, updateRules, type RunConfig } from './rules.js';
 import { updateSpawning } from './spawning.js';
-import { createState, TICK_SECONDS, waveRngStateFor, type SimState } from './state.js';
+import {
+  createState,
+  TICK_SECONDS,
+  waveRngStateFor,
+  type EnemyType,
+  type SimState,
+} from './state.js';
 
 /** [STROJENIE] Co ile ticków przeliczane są pola przepływu. 4 ticki = 5 Hz (§4.5). */
 export const FLOWFIELD_INTERVAL_TICKS = 4;
@@ -137,6 +143,20 @@ export class Sim {
    * Ten sam precedens co `Sim.lastCoreDamager` w Zadaniu 5.
    */
   private power: PowerReport;
+  /**
+   * Typ wroga, który OSTATNI uszkodził CORE — przesłanka ekranu przegranej (§5.6: run kończy
+   * się utratą Core, więc ekran ma powiedzieć CO ją zniszczyło, a nie sam fakt).
+   *
+   * Pole `Sim`, nie pole `SimState`, z tego samego powodu co `power` wyżej: nic w logice
+   * symulacji tego nie czyta, więc w stanie byłoby wielkością, którą migawka Fazy 5 musiałaby
+   * serializować, a `stateHash` — pilnować, choć na przebieg runu nie wpływa.
+   *
+   * TRWA między tickami: CORE ginie w ticku, w którym jego `hp` schodzi do zera, a ekran
+   * przegranej pojawia się dopiero po `updateRules`. Wartość z ostatniego ticku, w którym
+   * ktokolwiek w CORE uderzył, jest więc dokładnie tym, czego szuka gracz. `null` do
+   * pierwszego trafienia — i `null` zostaje, gdy Core zniknął z innego powodu niż wróg.
+   */
+  private coreDamager: EnemyType | null = null;
   /**
    * Bufor przyczyn braku prądu, zaalokowany RAZ. Bez niego każdy tick alokowałby 1442 bajty
    * — niewiele, ale w pętli, która ma ich 20 na sekundę i której budżet Faza 3 będzie
@@ -383,6 +403,11 @@ export class Sim {
    * końca: pokazuje stan sieci w chwili przegranej, a nie wyzerowany.
    */
   get lastPower(): Readonly<PowerReport> { return this.power; }
+  /**
+   * Typ wroga, który ostatni uszkodził CORE, albo `null`, jeśli CORE jeszcze nie oberwał.
+   * Patrz doc-comment pola `coreDamager` — w szczególności: to NIE jest część stanu.
+   */
+  get lastCoreDamager(): EnemyType | null { return this.coreDamager; }
   get elapsedSeconds(): number { return this.s.tick * TICK_SECONDS; }
   get cycle(): number { return currentCycle(this.elapsedSeconds, this.config.rotationPeriod); }
 
@@ -460,7 +485,11 @@ export class Sim {
     updateMovement(this.s, fields, light, sun, this.motion);
 
     // 7. Walka — po ruchu, bo jednostka atakuje z komórki, do której właśnie weszła.
-    updateCombat(this.s, fields);
+    // Sprawca zapamiętywany tylko wtedy, gdy w TYM ticku ktoś w CORE uderzył — inaczej
+    // ostatni znany sprawca byłby kasowany przez każdy spokojny tick, a ekran przegranej
+    // pokazywałby `null` zawsze, gdy Core pada od obrażeń zadanych tick wcześniej.
+    const coreDamager = updateCombat(this.s, fields);
+    if (coreDamager !== null) this.coreDamager = coreDamager;
 
     // 8. Spalanie — po walce, bo `updateBurning` nalicza rudę wyłącznie za własne ofiary
     //    i polega na tym, że walka zabrała swoich zabitych wcześniej (patrz burning.ts).

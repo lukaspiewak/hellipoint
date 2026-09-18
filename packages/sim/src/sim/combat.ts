@@ -27,11 +27,27 @@ export function cellsWithinSteps(s: SimState, origin: number, steps: number): nu
   return [...seen].sort((a, b) => a - b);
 }
 
-export function updateCombat(s: SimState, fields: Record<EnemyType, FlowField>): void {
-  unitsAttackBuildings(s, fields);
+/**
+ * Jeden tick walki. Zwraca **typ wroga, który w tym ticku uderzył w CORE** (ostatni
+ * w kolejności iteracji), albo `null`, gdy CORE nie oberwał.
+ *
+ * ## Dlaczego to WYCHODZI Z FUNKCJI, a nie ląduje w `SimState`
+ *
+ * Bo nic w logice symulacji tego nie czyta — służy wyłącznie ekranowi przegranej
+ * (Zadanie 5: „run kończy się utratą Core, więc ekran ma powiedzieć CO ją zniszczyło").
+ * W `SimState` byłaby to wielkość, którą migawka Fazy 5 musiałaby serializować,
+ * a `stateHash` — pilnować, choć na przebieg runu nie wpływa. Ten sam precedens i to samo
+ * uzasadnienie, co `Sim.lastPower` z Zadania 4: **raport z ticku nie jest stanem.**
+ *
+ * Gdyby kiedyś któraś mechanika zaczęła to czytać, przeniesienie do stanu będzie świadomą
+ * zmianą, a nie skutkiem ubocznym ekranu.
+ */
+export function updateCombat(s: SimState, fields: Record<EnemyType, FlowField>): EnemyType | null {
+  const coreDamager = unitsAttackBuildings(s, fields);
   turretsAttackUnits(s);
   removeDeadUnits(s);
   removeDeadBuildings(s);
+  return coreDamager;
 }
 
 /**
@@ -39,7 +55,11 @@ export function updateCombat(s: SimState, fields: Record<EnemyType, FlowField>):
  * Jednostka atakuje budynek w swojej komórce, a jeśli go nie ma — ten,
  * który blokuje jej następny krok.
  */
-function unitsAttackBuildings(s: SimState, fields: Record<EnemyType, FlowField>): void {
+function unitsAttackBuildings(
+  s: SimState,
+  fields: Record<EnemyType, FlowField>,
+): EnemyType | null {
+  let coreDamager: EnemyType | null = null;
   for (const u of s.units) {
     if (u.hp <= 0) continue;
 
@@ -50,6 +70,10 @@ function unitsAttackBuildings(s: SimState, fields: Record<EnemyType, FlowField>)
     if (target === null) continue;
 
     target.hp -= ENEMIES[u.type].dps * TICK_SECONDS;
+    // Zapisywane przy ZADANIU OBRAŻEŃ, nie przy zniszczeniu: CORE ginie w `removeDeadBuildings`,
+    // gdzie nie wiadomo już, kto go dobił. Ostatni w kolejności iteracji wygrywa — przy
+    // jednoczesnym uderzeniu kilku typów ekran nazwie jeden, a nie zgadnie średnią.
+    if (target.type === 'CORE') coreDamager = u.type;
 
     // Q4: EMP wyłącza budynki w promieniu, zamiast drenować magazyn.
     // Wyłączenie jest dla gracza widoczne — robi dziurę w obronie, którą fala wykorzystuje.
@@ -60,6 +84,7 @@ function unitsAttackBuildings(s: SimState, fields: Record<EnemyType, FlowField>)
       }
     }
   }
+  return coreDamager;
 }
 
 function turretsAttackUnits(s: SimState): void {
