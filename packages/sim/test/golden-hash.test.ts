@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createPlanet, type Planet } from '../src/world/planet.js';
 import { Sim } from '../src/sim/loop.js';
-import { DEFAULT_RUN } from '../src/sim/rules.js';
+import { type RunConfig } from '../src/sim/rules.js';
 import { stateHash } from '../src/sim/hash.js';
-import { BUILDINGS } from '../src/sim/defs.js';
+import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
 import type { BuildingType } from '../src/sim/state.js';
 
 /**
@@ -138,8 +138,66 @@ describe('złoty hasz determinizmu', () => {
  * Podmiana tej liczby, żeby „testy przeszły", kasuje jedyny strażnik, jaki ta własność ma.
  */
 const GOLDEN_RUN_TICKS = 1200;
-const GOLDEN_RUN_SAMPLE_EVERY = 100;
-const GOLDEN_RUN_SHA256 = '645f024019888221255e1a8a115f37da7273360986630bff473d681274729513';
+const GOLDEN_RUN_SHA256 = 'b6a638a0f3df21e66122cdc645855b7963437bc297836313ee1ae980a02da22c';
+
+/**
+ * Konfiguracja przebiegu — **ZAMROŻONY LITERAŁ, nie `DEFAULT_RUN`**.
+ *
+ * Wartości są dziś takie same jak w `DEFAULT_RUN` i to jest przypadek, nie zależność.
+ * `DEFAULT_RUN` jest nastawą GRY i Faza 3 ma ją przestroić — gdyby ten przebieg z niej
+ * korzystał, strażnik oblewałby przy **każdej zamierzonej zmianie balansu**, a wtedy ktoś
+ * zacząłby odruchowo przepisywać w nim hasz i strażnik przestałby cokolwiek znaczyć.
+ * Kopia jest tu celowa: ta konfiguracja ma NIE iść za grą.
+ */
+const GOLDEN_RUN_CONFIG: RunConfig = {
+  rotationPeriod: 180,
+  startingOre: 100_000,
+  cyclesPerRun: 10,
+  evacUnlockFraction: 0.67,
+  evacEnergyRequired: 1000,
+  evacChargeRate: 25,
+  evacAlarmSeconds: 60,
+  spawn: {
+    baseRatePerPentagon: 0.25,
+    growthPerCycle: 1.35,
+    eruptionInterval: 20,
+    eruptionBurstBase: 4,
+    eruptionScalePerCap: 0.6,
+    disruptorFromCycle: 3,
+    armorFromCycle: 5,
+  },
+};
+
+/**
+ * Odcisk palca TABEL BALANSU: `BUILDINGS`, `ENEMIES` i zamrożona konfiguracja.
+ *
+ * ## Po co, skoro konfiguracja jest już zamrożona
+ *
+ * Bo zamrozić da się tylko ją. `BUILDINGS` i `ENEMIES` są importowane wprost w ośmiu
+ * modułach symulacji, bez szwu do wstrzyknięcia, a `defs.ts` mówi wprost: „wszystkie liczby
+ * poniżej wyznaczy headless runner w Fazie 3". Trajektoria **zostaje więc sprzężona
+ * z tabelami balansu** i nic tego dziś nie rozetnie (rozcięcie to decyzja architektoniczna
+ * Fazy 3, nie poprawka przy okazji).
+ *
+ * Skoro sprzężenia nie da się usunąć, ma być **WIDOCZNE**: obie liczby są przypięte obok
+ * siebie, a która oblała, mówi CO się stało.
+ *
+ * | co oblało | co to znaczy |
+ * |---|---|
+ * | odcisk balansu | ktoś zmienił `BUILDINGS`/`ENEMIES` — **oczekiwane w Fazie 3**; przepnij OBIE liczby w jednym commicie i napisz w nim, że zmiana balansu jest zamierzona |
+ * | sama trajektoria, przy nietkniętym odcisku | **REGRESJA SILNIKA**: przebieg się zmienił, choć żadna liczba balansu nie drgnęła. Nie przepinaj — szukaj przyczyny |
+ *
+ * Odcisk liczy się z `JSON.stringify`, więc zależy też od KOLEJNOŚCI pól w `defs.ts`.
+ * Przestawienie pól bez zmiany wartości zgłosi „balans się zmienił" — kierunek zachowawczy
+ * (każe spojrzeć), nie przeoczenie.
+ */
+const GOLDEN_BALANCE_SHA256 = '1f9b4bbb941c2f5d4c4b11dbd2145969efb3a1a9f9d6ff1948fee2b2088e9998';
+
+function balanceFingerprint(): string {
+  return createHash('sha256')
+    .update(JSON.stringify([BUILDINGS, ENEMIES, GOLDEN_RUN_CONFIG]))
+    .digest('hex');
+}
 
 /**
  * Skrypt budowy — stały, nie losowy, i dobrany tak, żeby przebieg **dotykał wszystkich
@@ -156,9 +214,24 @@ const GOLDEN_RUN_SCRIPT: readonly (readonly [number, BuildingType])[] = [
   [6, 'LASER_TURRET'],
 ];
 
+/**
+ * Hasz stanu z **KAŻDEGO** ticku, zwinięty w jeden ciąg.
+ *
+ * Pierwsza wersja próbkowała co 100 ticków i **przepuszczała różnice jednotickowe**.
+ * Zmierzone: przestawienie `removeDeadUnits` przed `turretsAttackUnits` zostawia zabite
+ * jednostki w `s.units` przez JEDEN tick i o tyle samo opóźnia `killsByTurret` — czyli
+ * zmienia stan tylko w ticku zabójstwa. Przy dwunastu próbkach na 1200 ticków i 67
+ * zabójstwach szansa, że którekolwiek trafi w próbkę, to około pół. **Mutacja przeszła
+ * 4/4**, a strażnik wyglądał na działający, bo łapał wcześniejszą mutację arytmetyczną
+ * (mnożnik obrażeń), której skutek KUMULUJE się przez cały przebieg.
+ *
+ * Różnica między tymi dwiema mutacjami jest tu sednem: **próbkowanie łapie tylko to, co
+ * trwa dłużej niż odstęp między próbkami.** Każdy tick kosztuje 1200 wywołań `stateHash`
+ * zamiast dwunastu — ułamek sekundy, i to jest cała cena za zdjęcie tego założenia.
+ */
 function goldenRunHashes(): string[] {
   const planet = createPlanet({ seed: GOLDEN_SEED });
-  const sim = new Sim(planet, { ...DEFAULT_RUN, startingOre: 100_000 });
+  const sim = new Sim(planet, GOLDEN_RUN_CONFIG);
   const free = planet.cells[planet.startCell].neighbors.filter(
     (c) => planet.cells[c].cellType === 'HEXAGON',
   );
@@ -171,7 +244,7 @@ function goldenRunHashes(): string[] {
   const hashes: string[] = [];
   for (let t = 0; t < GOLDEN_RUN_TICKS; t++) {
     sim.step();
-    if ((t + 1) % GOLDEN_RUN_SAMPLE_EVERY === 0) hashes.push(stateHash(sim.state));
+    hashes.push(stateHash(sim.state));
   }
   return hashes;
 }
@@ -180,8 +253,14 @@ describe('złoty hasz TRAJEKTORII', () => {
   it('scenariusz 1200 ticków haszuje się do przypiętej wartości', () => {
     const digest = createHash('sha256').update(goldenRunHashes().join('|')).digest('hex');
     // eslint-disable-next-line no-console
-    console.log(`[ZŁOTY PRZEBIEG] ${digest}`);
-    expect(digest).toBe(GOLDEN_RUN_SHA256);
+    console.log(`[ZŁOTY PRZEBIEG] trajektoria=${digest} balans=${balanceFingerprint()}`);
+    // KOLEJNOŚĆ MA ZNACZENIE: odcisk balansu PRZED trajektorią. Gdy zmieniono liczby,
+    // pierwsza asercja oblewa i od razu nazywa powód; gdyby stała druga, komunikat mówiłby
+    // „przebieg się rozjechał" i wyglądał jak regresja silnika.
+    expect(balanceFingerprint(), 'odcisk tabel balansu (BUILDINGS/ENEMIES/konfiguracja)').toBe(
+      GOLDEN_BALANCE_SHA256,
+    );
+    expect(digest, 'hasz trajektorii przy NIEZMIENIONYM balansie').toBe(GOLDEN_RUN_SHA256);
   });
 
   /**
@@ -189,9 +268,30 @@ describe('złoty hasz TRAJEKTORII', () => {
    * że nic się nie dzieje, a test przypinałby stan spoczynku — przechodziłby wtedy także
    * po wyłączeniu połowy systemów.
    */
-  it('przebieg naprawdę się zmienia — hasze z kolejnych próbek są różne', () => {
+  /**
+   * Kontrola na fiksturę: przebieg musi być BOGATY. Ciąg identycznych haszów znaczyłby,
+   * że nic się nie dzieje, a test przypinałby stan spoczynku.
+   *
+   * Sprawdzana jest też WALKA, a nie sama ekonomia: hasz zmienia się co tick choćby od
+   * narastającej rudy, więc „wszystkie hasze różne" przeszłoby także na pustej planecie.
+   * Zmierzone w tym scenariuszu: 84 zrodzone jednostki, szczyt 29 żywych naraz,
+   * **67 ubitych przez wieże**.
+   */
+  it('przebieg naprawdę się zmienia — i naprawdę jest w nim walka', () => {
     const hashes = goldenRunHashes();
-    expect(hashes).toHaveLength(GOLDEN_RUN_TICKS / GOLDEN_RUN_SAMPLE_EVERY);
+    expect(hashes).toHaveLength(GOLDEN_RUN_TICKS);
     expect(new Set(hashes).size).toBe(hashes.length);
+
+    const planet = createPlanet({ seed: GOLDEN_SEED });
+    const sim = new Sim(planet, GOLDEN_RUN_CONFIG);
+    const free = planet.cells[planet.startCell].neighbors.filter(
+      (c) => planet.cells[c].cellType === 'HEXAGON',
+    );
+    for (const [slot, type] of GOLDEN_RUN_SCRIPT) {
+      sim.enqueue({ kind: 'BUILD', cellId: free[slot % free.length], type });
+    }
+    for (let t = 0; t < GOLDEN_RUN_TICKS; t++) sim.step();
+    expect(sim.state.killsByTurret, 'wieże muszą realnie strzelać').toBeGreaterThan(20);
+    expect(sim.state.nextUnitId - 1, 'fale muszą realnie spawnować').toBeGreaterThan(50);
   });
 });
