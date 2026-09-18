@@ -414,15 +414,70 @@ export interface HudView {
   detach(): void;
 }
 
+/**
+ * `[WYGLĄD]` **Najmniejsze okno, w którym panel obowiązuje się nie zawijać.**
+ *
+ * Deklaracja, nie pomiar dzisiejszego stanu — i powstała po trzecim z rzędu znalezisku tej
+ * samej rodziny. Wysokość panelu zależy od szerokości okna PRZEZ ZAWIJANIE, a każdy pomiar
+ * „panel nie zasłania Core" zakładał milcząco, że nic się nie zawija. Zmierzone progi
+ * zawijania były trzy i różne (menu z kolumną poboru **553 px**, wiersz zasobów po końcu runu
+ * **688 px**, bilans z trzema zgaszonymi typami **753 px**), a każdy nowy wiersz dokładał
+ * czwarty. Ściganie ich po kolei jest przegraną gonitwą; zamiast tego **jedna liczba i jeden
+ * test, który mówi, kiedy została wydana**.
+ *
+ * **Skąd 840, a nie okrągłe 800.** Najdłuższy możliwy wiersz to linia bilansu z kompletem
+ * `BROWNOUT_ORDER` i czterocyfrowymi natężeniami: **108 znaków** (test 31c liczy to z kodu,
+ * nie z ekranu). 108 × `HUD_CHAR_WIDTH_PX` + `HUD_HORIZONTAL_CHROME_PX` = **812,3 px**, więc
+ * 800 NIE wystarcza — i dowiedział tego dopiero test, po tym jak wpisałem tu 800 „bo to okno,
+ * w którym mierzymy". Pierwsza wersja tej stałej była właśnie taką kotwicą na dzisiejszy
+ * pomiar; 840 wypada z najgorszego przypadku i zostawia 3 znaki zapasu.
+ *
+ * Pomiary zasłonięcia tarczy z Zadania 3 (0,000 % przy 800×482) **zachowują ważność**:
+ * szersze okno zasłania MNIEJ, a panel jest kotwiczony do dołu i nie rośnie z szerokością.
+ *
+ * Poniżej tej szerokości gra nadal się uruchomi — `pre-wrap` zawinie zamiast uciąć, więc nic
+ * nie zniknie. Przestaje natomiast obowiązywać prześwit nad Core i wszystko, co z niego wynika.
+ */
+export const MIN_WINDOW_WIDTH_PX = 840; // [WYGLĄD]
+export const MIN_WINDOW_HEIGHT_PX = 480; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Szerokość znaku panelu w pikselach — **zmierzona, nie założona**.
+ *
+ * Panel jest monospace'owy (`12px/1.5 ui-monospace`, `apps/client/index.html`), więc szerokość
+ * wiersza to czysta funkcja LICZBY ZNAKÓW. To jest jedyny powód, dla którego układ tego panelu
+ * da się związać testem: `jsdom` nie liczy układu i nigdy nie policzy, ale liczyć znaki umie.
+ *
+ * Zmierzone na żywej stronie (`getBoundingClientRect` stu znaków podzielone przez sto):
+ * **7,225 px**. Zmiana kroju albo rozmiaru czcionki w `index.html` unieważnia tę liczbę —
+ * i dlatego test `31` sprawdza ją osobno wobec `MAX_HUD_LINE_CHARS`, zamiast ufać, że ktoś
+ * zauważy.
+ */
+export const HUD_CHAR_WIDTH_PX = 7.225; // [WYGLĄD]
+
+/** `[WYGLĄD]` Wyściółka panelu (2 × 8) plus margines od krawędzi okna (2 × 8). */
+export const HUD_HORIZONTAL_CHROME_PX = 32; // [WYGLĄD]
+
+/**
+ * Budżet znaków na wiersz, WYPROWADZONY z `MIN_WINDOW_WIDTH_PX` — nie przepisany.
+ *
+ * Kolejność zależności jest tu istotna: deklarujemy **okno**, a budżet znaków z niego wypada.
+ * Odwrotnie (najpierw budżet, potem okno) dałoby kotwicę na dzisiejszą treść wierszy —
+ * wzorzec, który w tej fazie wystąpił już czterokrotnie.
+ */
+export const MAX_HUD_LINE_CHARS = Math.floor(
+  (MIN_WINDOW_WIDTH_PX - HUD_HORIZONTAL_CHROME_PX) / HUD_CHAR_WIDTH_PX,
+);
+
 /** Szerokości kolumn monospace w menu. [WYGLĄD] */
-const NAME_WIDTH = 18; // [WYGLĄD] najdłuższy typ to EVACUATION_MODULE (17 znaków) + spacja
-const COST_WIDTH = 4; // [WYGLĄD] najdroższy budynek kosztuje 300
+export const NAME_WIDTH = 18; // [WYGLĄD] najdłuższy typ to EVACUATION_MODULE (17 znaków) + spacja
+export const COST_WIDTH = 4; // [WYGLĄD] najdroższy budynek kosztuje 300
 /**
  * `[WYGLĄD]` Szerokość kolumny poboru energii: `  12,0/s` to 7 znaków, a najwięcej bierze
  * `LASER_TURRET` (12/s). Stała, także dla budynków bez poboru — kolumna trzyma wyrównanie
  * zdań odmowy, które stoją za nią.
  */
-const DRAIN_WIDTH = 7; // [WYGLĄD]
+export const DRAIN_WIDTH = 7; // [WYGLĄD]
 
 /**
  * Maksymalna liczba pozycji, jaką unosi maska dostępności w bramce świeżości.

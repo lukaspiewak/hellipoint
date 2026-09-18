@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  BROWNOUT_ORDER,
   BUILDINGS,
   canBuild,
   createPlanet,
@@ -43,6 +44,13 @@ import {
   shownRateTenths,
   type ElementLike,
   type MenuRow,
+  MIN_WINDOW_WIDTH_PX,
+  HUD_CHAR_WIDTH_PX,
+  HUD_HORIZONTAL_CHROME_PX,
+  MAX_HUD_LINE_CHARS,
+  NAME_WIDTH,
+  COST_WIDTH,
+  DRAIN_WIDTH,
 } from '../src/hud.js';
 import {
   attachInput,
@@ -1510,4 +1518,116 @@ describe('wireClient — panel na ekranie gracza', () => {
     // odśmiecania, a Vitest uruchamia pliki RÓWNOLEGLE, więc czas zależy od obciążenia.
     30_000,
   );
+});
+
+// ---------------------------------------------------------------------------------------
+// 31. Układ panelu — związany LICZBĄ ZNAKÓW, bo silnika układu w pakiecie nie ma
+// ---------------------------------------------------------------------------------------
+describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie', () => {
+  /**
+   * `jsdom` nie liczy układu i nigdy nie policzy — to jest zapisana granica całej Fazy 2C
+   * i wada tej klasy uderzyła już TRZY razy (bramka 2B unieważniona przy 480 px, powód
+   * odmowy schowany za paskiem przewijania, panel zasłaniający 38,7% tarczy).
+   *
+   * Ale panel jest MONOSPACE'OWY, więc szerokość wiersza to czysta funkcja liczby znaków —
+   * a liczyć znaki `jsdom` umie. Ten test zamienia nieosiągalny pomiar w osiągalny, przy
+   * jednym jawnym założeniu: `HUD_CHAR_WIDTH_PX` zmierzone na żywej stronie.
+   *
+   * Najgorsze przypadki są WYPROWADZANE z kodu (najdłuższa nazwa typu, najdłuższy komunikat
+   * odmowy, komplet `BROWNOUT_ORDER`), nie przepisane — inaczej test byłby kotwicą na
+   * dzisiejszą treść, czyli wzorcem, który w tej fazie wystąpił już czterokrotnie.
+   */
+  const AMOUNT_CAP = 99_999; // [STROJENIE w teście] pięć cyfr; szczyt zmierzony w Fazie 1C to 2345
+  const RATE_TENTHS_CAP = 99_999; // → „9999,9/s"; szczyt realny to ok. 310/s (12 capów + CORE)
+
+  function longestRefusal(): string {
+    let worst = '';
+    for (const reason of Object.keys(REFUSAL_MESSAGES)) {
+      const msg = refusalMessage(reason);
+      if (msg.length > worst.length) worst = msg;
+    }
+    return worst;
+  }
+
+  function worstMenuRow(): string {
+    let worstType: BuildingType = 'CORE';
+    let worstCost = 0;
+    for (const [type, def] of Object.entries(BUILDINGS)) {
+      if (type.length >= worstType.length) worstType = type as BuildingType;
+      if (def.costOre > worstCost) worstCost = def.costOre;
+    }
+    // Dokładnie tak, jak składa to `createHudView`: numer, nazwa, koszt, pobór, zdanie.
+    return (
+      `9 ${worstType.padEnd(NAME_WIDTH)}${String(worstCost).padStart(COST_WIDTH)}` +
+      `${rateText(RATE_TENTHS_CAP).padStart(DRAIN_WIDTH)}` +
+      `  ${longestRefusal()}`
+    );
+  }
+
+  /**
+   * **Składane PRAWDZIWYMI funkcjami panelu, nie przepisanym literałem.**
+   *
+   * Pierwsza wersja tego pomocnika budowała zdanie sama (`… więc gasną: …`) i przez to nie
+   * widziała, gdy zdanie rosło: mutacja wydłużająca je o 39 znaków oblała trzy inne testy,
+   * a ten przeszedł. To był dokładnie wzorzec „wyjście porównane z przepisaną kopią",
+   * czwarty w tej fazie — tyle że tym razem we WŁASNYM teście.
+   *
+   * Najgorszy przypadek: komplet `BROWNOUT_ORDER` (najdłuższa lista), niedobór różny od zera
+   * (żeby zdanie niosło obie połowy) i czterocyfrowe natężenia po obu stronach bilansu.
+   */
+  function worstBalanceLine(): string {
+    const power: PowerReport = {
+      supply: 0,
+      demand: 0,
+      rawDemand: RATE_TENTHS_CAP / 10,
+      shedTypes: [...BROWNOUT_ORDER],
+      outage: new Uint8Array(0),
+    };
+    // `supply` tak dobrane, żeby `rateText` wypisało czterocyfrową liczbę PO OBU stronach
+    // bilansu ORAZ czterocyfrowy niedobór — najgorszy skład, jaki ta linia może przyjąć.
+    power.supply = RATE_TENTHS_CAP / 10 - RATE_TENTHS_CAP / 10;
+    return `${powerLine(power)} · ${shortfallLine(power)}`;
+  }
+
+  /** Też prawdziwą funkcją: `resourceLine` plus nagłówek składany jak w `createHudView`. */
+  function worstResourceLine(): string {
+    const { s } = richRun();
+    s.ore = AMOUNT_CAP;
+    s.storedEnergy = AMOUNT_CAP;
+    s.phase = 'DEFEAT';
+    return (
+      resourceLine(s) +
+      ` · komórka: ${planet.cells.length - 1}` +
+      ` · komendy nie są przyjmowane — run zakończony (${s.phase})`
+    );
+  }
+
+  it('31a. budżet znaków jest WYPROWADZONY z minimalnej szerokości okna, nie przepisany', () => {
+    expect(MAX_HUD_LINE_CHARS).toBe(
+      Math.floor((MIN_WINDOW_WIDTH_PX - HUD_HORIZONTAL_CHROME_PX) / HUD_CHAR_WIDTH_PX),
+    );
+    // Gdyby ktoś podniósł szerokość znaku (inny krój w index.html), budżet MUSI zmaleć.
+    expect(MAX_HUD_LINE_CHARS).toBeLessThan(MIN_WINDOW_WIDTH_PX / HUD_CHAR_WIDTH_PX);
+  });
+
+  it('31b. najdłuższy możliwy wiersz menu mieści się w budżecie', () => {
+    const row = worstMenuRow();
+    // eslint-disable-next-line no-console
+    console.log(`[UKŁAD] najdłuższy wiersz menu: ${row.length} znaków z ${MAX_HUD_LINE_CHARS}`);
+    expect(row.length).toBeLessThanOrEqual(MAX_HUD_LINE_CHARS);
+  });
+
+  it('31c. najdłuższa możliwa linia bilansu mieści się w budżecie', () => {
+    const line = worstBalanceLine();
+    // eslint-disable-next-line no-console
+    console.log(`[UKŁAD] najdłuższa linia bilansu: ${line.length} znaków z ${MAX_HUD_LINE_CHARS}`);
+    expect(line.length).toBeLessThanOrEqual(MAX_HUD_LINE_CHARS);
+  });
+
+  it('31d. najdłuższa możliwa linia zasobów mieści się w budżecie', () => {
+    const line = worstResourceLine();
+    // eslint-disable-next-line no-console
+    console.log(`[UKŁAD] najdłuższa linia zasobów: ${line.length} znaków z ${MAX_HUD_LINE_CHARS}`);
+    expect(line.length).toBeLessThanOrEqual(MAX_HUD_LINE_CHARS);
+  });
 });
