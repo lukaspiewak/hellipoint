@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createPlanet, type Planet } from '../src/world/planet.js';
+import { Sim } from '../src/sim/loop.js';
+import { DEFAULT_RUN } from '../src/sim/rules.js';
+import { stateHash } from '../src/sim/hash.js';
+import { BUILDINGS } from '../src/sim/defs.js';
+import type { BuildingType } from '../src/sim/state.js';
 
 /**
  * Regresja złotego hasza: najsilniejsza weryfikacja, jaką ta faza wyprodukowała —
@@ -104,5 +109,89 @@ describe('złoty hasz determinizmu', () => {
     const originalHash = createHash('sha256').update(serializePlanetForHash(planet)).digest('hex');
     const reorderedHash = createHash('sha256').update(serializePlanetForHash(reordered)).digest('hex');
     expect(reorderedHash).not.toBe(originalHash);
+  });
+});
+
+// =========================================================================================
+// Złoty hasz TRAJEKTORII — nie samej planety
+// =========================================================================================
+
+/**
+ * ## Czego brakowało, i co to kosztowało
+ *
+ * Do tej pory złoty hasz przypinał **wyłącznie `createPlanet`**, a test determinizmu
+ * porównywał przebieg SAM ZE SOBĄ (dwa `Sim` z tego samego seeda). Obie te rzeczy są
+ * potrzebne i żadna nie pilnuje tego, co obie miały pilnować razem: **że zmiana w kodzie
+ * symulacji nie przestawia przebiegu**.
+ *
+ * Zmierzone przez bramkę gałęzi Fazy 2C: pod mutacją trajektorii oba istniejące testy
+ * zostawały **zielone (47/47)**. Twierdzenie „Zadanie 5 nie ruszyło determinizmu" było
+ * prawdziwe — ale dowodu w zapisanej formie nie było, bo test porównujący przebieg z samym
+ * sobą przesuwa się razem z kodem. Tamto twierdzenie zostało potwierdzone dopiero ręcznym
+ * zestawieniem z `main`, czyli robotą, której nikt nie powtórzy przy następnej zmianie.
+ *
+ * Ten test przypina **ciąg haszów stanu co 100 ticków** dla scenariusza, który przechodzi
+ * przez ekonomię, sieć, walkę i kaskadę brownoutu. Dowolna zmiana przebiegu go oblewa.
+ *
+ * **Kiedy wolno zaktualizować `GOLDEN_RUN_SHA256`:** wyłącznie wtedy, gdy zmiana przebiegu
+ * jest ZAMIERZONA (strojenie `[STROJENIE]`, nowa mechanika) i zapisana w commicie jako taka.
+ * Podmiana tej liczby, żeby „testy przeszły", kasuje jedyny strażnik, jaki ta własność ma.
+ */
+const GOLDEN_RUN_TICKS = 1200;
+const GOLDEN_RUN_SAMPLE_EVERY = 100;
+const GOLDEN_RUN_SHA256 = '645f024019888221255e1a8a115f37da7273360986630bff473d681274729513';
+
+/**
+ * Skrypt budowy — stały, nie losowy, i dobrany tak, żeby przebieg **dotykał wszystkich
+ * systemów**: ekonomii (EXTRACTOR), sieci (PYLON), walki (wieże) i kaskady (cztery lasery
+ * przy produkcji 10/s wymuszają brownout, gdy magazyn siądzie).
+ */
+const GOLDEN_RUN_SCRIPT: readonly (readonly [number, BuildingType])[] = [
+  [0, 'BARRICADE'],
+  [1, 'PYLON'],
+  [2, 'KINETIC_TURRET'],
+  [3, 'LASER_TURRET'],
+  [4, 'LASER_TURRET'],
+  [5, 'LASER_TURRET'],
+  [6, 'LASER_TURRET'],
+];
+
+function goldenRunHashes(): string[] {
+  const planet = createPlanet({ seed: GOLDEN_SEED });
+  const sim = new Sim(planet, { ...DEFAULT_RUN, startingOre: 100_000 });
+  const free = planet.cells[planet.startCell].neighbors.filter(
+    (c) => planet.cells[c].cellType === 'HEXAGON',
+  );
+  for (const [slot, type] of GOLDEN_RUN_SCRIPT) {
+    const cellId = free[slot % free.length];
+    if (BUILDINGS[type].allowedCells === 'HEXAGON') {
+      sim.enqueue({ kind: 'BUILD', cellId, type });
+    }
+  }
+  const hashes: string[] = [];
+  for (let t = 0; t < GOLDEN_RUN_TICKS; t++) {
+    sim.step();
+    if ((t + 1) % GOLDEN_RUN_SAMPLE_EVERY === 0) hashes.push(stateHash(sim.state));
+  }
+  return hashes;
+}
+
+describe('złoty hasz TRAJEKTORII', () => {
+  it('scenariusz 1200 ticków haszuje się do przypiętej wartości', () => {
+    const digest = createHash('sha256').update(goldenRunHashes().join('|')).digest('hex');
+    // eslint-disable-next-line no-console
+    console.log(`[ZŁOTY PRZEBIEG] ${digest}`);
+    expect(digest).toBe(GOLDEN_RUN_SHA256);
+  });
+
+  /**
+   * Kontrola na fiksturę: przebieg musi być BOGATY. Ciąg identycznych haszów znaczyłby,
+   * że nic się nie dzieje, a test przypinałby stan spoczynku — przechodziłby wtedy także
+   * po wyłączeniu połowy systemów.
+   */
+  it('przebieg naprawdę się zmienia — hasze z kolejnych próbek są różne', () => {
+    const hashes = goldenRunHashes();
+    expect(hashes).toHaveLength(GOLDEN_RUN_TICKS / GOLDEN_RUN_SAMPLE_EVERY);
+    expect(new Set(hashes).size).toBe(hashes.length);
   });
 });

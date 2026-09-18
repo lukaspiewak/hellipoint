@@ -5,6 +5,7 @@ import {
   BUILDINGS,
   canBuild,
   createPlanet,
+  ENEMIES,
   DEFAULT_RUN,
   Sim,
   TICK_SECONDS,
@@ -41,6 +42,8 @@ import {
   evacCountdownSeconds,
   outcomeSummary,
   headlineText,
+  powerRowText,
+  resourceRowText,
   MAX_MENU_TYPES,
   menuRowText,
   powerLine,
@@ -1593,8 +1596,14 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
     };
     // `supply` tak dobrane, żeby `rateText` wypisało czterocyfrową liczbę PO OBU stronach
     // bilansu ORAZ czterocyfrowy niedobór — najgorszy skład, jaki ta linia może przyjąć.
-    power.supply = RATE_TENTHS_CAP / 10 - RATE_TENTHS_CAP / 10;
-    return `${powerLine(power)} · ${shortfallLine(power)}`;
+    //
+    // **Do bramki gałęzi stało tu `RATE_TENTHS_CAP / 10 - RATE_TENTHS_CAP / 10`, czyli
+    // ZERO** — wbrew zdaniu wyżej. Produkcja wypisywała się jako „0,0/s", więc pomocnik
+    // mierzył 105 znaków zamiast prawdziwych 108, a wzrost linii o 4 znaki przechodził test
+    // i jednocześnie łamał zadeklarowane minimum okna (112 > 111). Komentarz był poprawny
+    // od początku; arytmetyka pod nim nie.
+    power.supply = 1000;
+    return powerRowText(power);
   }
 
   /**
@@ -1605,12 +1614,28 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
    * mierzył 97 i przechodził (N9). Najgorszy przypadek to najdłuższy numer komórki,
    * capowane zapasy i faza, w której ostrzeżenie jest widoczne.
    */
+  /**
+   * Faza wybierana po DŁUGOŚCI, nie wpisana. Pierwsza wersja przypinała `DEFEAT`, a nazwa
+   * `VICTORY` jest o znak dłuższa — najgorszy przypadek był o znak za mały (Z6).
+   * `Record<SimState['phase'], true>` wymusza komplet przy kompilacji.
+   */
+  const PHASES: Readonly<Record<SimState['phase'], true>> = {
+    RUNNING: true,
+    VICTORY: true,
+    DEFEAT: true,
+  };
+
   function worstResourceLine(): string {
     const { s } = richRun();
     s.ore = AMOUNT_CAP;
     s.storedEnergy = AMOUNT_CAP;
-    s.phase = 'DEFEAT';
-    return resourceLine(s) + headlineText(s, planet.cells.length - 1);
+    let worst = '';
+    for (const phase of Object.keys(PHASES) as SimState['phase'][]) {
+      s.phase = phase;
+      const line = resourceRowText(s, planet.cells.length - 1);
+      if (line.length > worst.length) worst = line;
+    }
+    return worst;
   }
 
   it('31a. budżet znaków jest WYPROWADZONY z minimalnej szerokości okna, nie przepisany', () => {
@@ -1643,9 +1668,9 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
   it('31e. najdłuższe możliwe zdanie o zakończeniu runu mieści się w budżecie', () => {
     const { s } = richRun();
     let worst = '';
-    for (const phase of ['VICTORY', 'DEFEAT'] as const) {
+    for (const phase of ['VICTORY', 'DEFEAT'] satisfies SimState['phase'][]) {
       s.phase = phase;
-      for (const damager of [null, 'SWARM', 'ARMOR', 'DISRUPTOR'] as const) {
+      for (const damager of [null, ...(Object.keys(ENEMIES) as EnemyType[])]) {
         const line = outcomeSummary(s, damager);
         if (line.length > worst.length) worst = line;
       }
@@ -1846,6 +1871,30 @@ describe('33. [UKŁAD] liczby układu w kodzie zgadzają się z arkuszem', () =>
     expect(rule![2]).toContain('display: none');
   });
 
+  /**
+   * **Kontrakt trafialności wskaźnikiem musi być ślepy na arkusz — i to trzeba EGZEKWOWAĆ.**
+   *
+   * `hud.ts` ustawia `pointerEvents` w kodzie (korzeń `none`, wąska „łapka" wiersza `auto`),
+   * bo to kontrakt ZACHOWANIA, a Vitest arkusza nie wykonuje. Do bramki gałęzi Fazy 2C
+   * pilnował tego wyłącznie **komentarz** w `hud.css` — czyli nic.
+   *
+   * Zmierzone: dopisanie `#hud .hud-why { pointer-events: auto }` do arkusza przywraca
+   * wadę, która w Zadaniu 3 połykała **38,7 % wskazywalnej tarczy** (92,1 % przy 380×480),
+   * przy **109/109 zielonych**. Inline'owy `none` na korzeniu nie broni dzieci, a szerokie
+   * zdanie odmowy nie dostaje żadnego stylu w kodzie, więc reguła z arkusza je obejmuje.
+   *
+   * Dziura powstała przy WYDZIELENIU arkusza w Zadaniu 6 — dopóki styl siedział w
+   * `index.html`, nikt nie miał powodu tam tego pisać. To jest szew między zadaniami,
+   * czyli dokładnie ta klasa, której przegląd zadaniowy nie widzi.
+   */
+  it('33g. arkusz NIE deklaruje pointer-events — kontrakt wskaźnika mieszka w kodzie', () => {
+    // Komentarze precz: uzasadnienie tej reguły samo zawiera słowa `pointer-events`.
+    const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(withoutComments).not.toContain('pointer-events');
+    // Kontrola na fiksturę: gdyby czyszczenie zjadło cały arkusz, powyższe byłoby darmowe.
+    expect(withoutComments).toContain('#hud');
+  });
+
   it('33d. obramowanie poziome w arkuszu zgadza się z HUD_HORIZONTAL_CHROME_PX', () => {
     // Budżet znaków liczy SZEROKOŚĆ TREŚCI: okno minus marginesy (odjęte w `calc`) minus
     // wyściółka (`padding`, po obu stronach). Suma obu musi być tym, co odejmuje `hud.ts`.
@@ -1931,14 +1980,14 @@ describe('35. [KONIEC RUNU] ekran mówi, jak run się skończył i dlaczego', ()
 
   it('35c. [PARA] każdy typ wroga dojeżdża na ekran — nie tylko ten z testu', () => {
     // Bez tego „zawiera ARMOR" spełniałaby też funkcja zwracająca stałe zdanie o ARMOR-ze.
-    for (const type of ['SWARM', 'ARMOR', 'DISRUPTOR'] as const) {
+    for (const type of Object.keys(ENEMIES) as EnemyType[]) {
       expect(panelInPhase('DEFEAT', type).text()).toContain(type);
     }
   });
 
   it('35d. przegrana bez znanego sprawcy NIE zgaduje typu', () => {
     const text = panelInPhase('DEFEAT', null).text();
-    for (const type of ['SWARM', 'ARMOR', 'DISRUPTOR'] as const) {
+    for (const type of Object.keys(ENEMIES) as EnemyType[]) {
       expect(text).not.toContain(type);
     }
     // …ale sam fakt przegranej pada — milczenie byłoby gorsze niż „nie wiadomo".

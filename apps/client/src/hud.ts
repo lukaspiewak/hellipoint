@@ -375,9 +375,46 @@ export function storageText(s: SimState): string {
   return `magazyn ${shownAmount(s.storedEnergy)}`;
 }
 
+/**
+ * Separator segmentów w jednym wierszu panelu — **jedno miejsce w całym module**.
+ *
+ * Do bramki gałęzi Fazy 2C był przepisywany w czterech: dwa złączenia składał
+ * `createHudView` w miejscu, a pomocniki budżetu składały własne kopie. Skutek zmierzony
+ * przez bramkę: dwa złączenia stały POZA jakąkolwiek funkcją budżetową, więc ich wzrost
+ * nie ruszał ani jednego testu (Z1).
+ */
+export const SEGMENT_SEPARATOR = ' · ';
+
+/** Segment „magazyn" razem z poprzedzającym go separatorem. */
+export function storageSegment(s: SimState): string {
+  return `${SEGMENT_SEPARATOR}${storageText(s)}`;
+}
+
+/** Segment „skutek niedoboru" razem z separatorem; pusty, gdy nie ma skutku. */
+export function shortfallSegment(report: PowerReport): string {
+  const shed = shortfallLine(report);
+  return shed === '' ? '' : `${SEGMENT_SEPARATOR}${shed}`;
+}
+
 /** Wiersz z liczbami, których świat unieść nie może. Bez `powered`, bez punktów życia. */
 export function resourceLine(s: SimState): string {
-  return `${oreText(s)} · ${storageText(s)}`;
+  return `${oreText(s)}${storageSegment(s)}`;
+}
+
+/**
+ * CAŁY wiersz zasobów tak, jak czyta go gracz: zasoby, magazyn i nagłówek.
+ *
+ * Istnieje po to, żeby budżet znaków mierzył WIERSZ, a nie jego kawałki. Pomocnik testowy
+ * składający `resourceLine(s) + headlineText(...)` mierzył równoległą sklejkę — poprawną
+ * dziś i ślepą na każdą zmianę tego, jak panel te segmenty łączy.
+ */
+export function resourceRowText(s: SimState, cellId: number | null): string {
+  return `${resourceLine(s)}${headlineText(s, cellId)}`;
+}
+
+/** CAŁY wiersz bilansu: produkcja, zapotrzebowanie i skutek niedoboru. */
+export function powerRowText(report: PowerReport): string {
+  return `${powerLine(report)}${shortfallSegment(report)}`;
 }
 
 /**
@@ -577,11 +614,13 @@ export const HUD_FONT_SIZE_PX = 12; // [WYGLĄD]
  *
  * **Powtórzony pomiar, 2026-09-18, `localhost:5185`, ta sama metoda: 7,224609 px → 0,602051.**
  * Rozbieżność 0,005 % i w stronę zachowawczą (stała jest odrobinę WIĘKSZA, więc budżet
- * odrobinę mniejszy); `MAX_HUD_LINE_CHARS` wychodzi 111 przy obu wartościach. Pomiar
- * potwierdził też, po co jest `max()` w arkuszu: linia 111-znakowa ma **801,9 px**, więc
- * przy oknie 800 px mieści się w wyegzekwowanych 824 px treści, a w 784 px sprzed naprawy
- * NIE mieściłaby się — czyli budżet był nieegzekwowalny dokładnie w tym oknie, w którym
- * zapadały wszystkie pomiary układu tej fazy.
+ * odrobinę mniejszy); `MAX_HUD_LINE_CHARS` wychodzi 111 przy obu wartościach.
+ *
+ * Przy tym samym pomiarze: linia 111-znakowa zajmuje **801,9 px**. Przy oknie 840 px treść
+ * panelu dostaje 816 px, więc się mieści — i to jest cała treść `MIN_WINDOW_WIDTH_PX`,
+ * czyli WARUNKU WSTĘPNEGO budżetu. **Arkusz tego nie egzekwuje i egzekwować nie może**
+ * (patrz `MIN_WINDOW_WIDTH_PX`); zdanie o `max()` stało tu do rundy naprawczej 2 i było
+ * nieprawdziwe — regułę cofnął ten sam commit, który opisał, dlaczego nie działała.
  */
 export const HUD_CHAR_ADVANCE_RATIO = 0.60208; // [WYGLĄD]
 
@@ -992,14 +1031,14 @@ export function createHudView(
 
       outcome.textContent = outcomeSummary(s, coreDamager);
       resources.textContent = oreText(s);
-      storage.textContent = ` · ${storageText(s)}`;
+      storage.textContent = storageSegment(s);
       power.textContent = powerLine(report);
       // Zdanie o skutku pojawia się WYŁĄCZNIE wtedy, gdy jest skutek — a że stoi w TYM SAMYM
       // wierszu co bilans, jego brak nie kosztuje ani jednej linii wysokości panelu (patrz
       // `createHudView`). Klasa niesie ODDZIELNIE fakt zgaszenia (kolor alarmu) od samego
       // niedoboru (magazyn jeszcze go pokrywa), bo to dwie różne pilności.
       const shed = shortfallLine(report);
-      shortfall.textContent = shed === '' ? '' : ` · ${shed}`;
+      shortfall.textContent = shortfallSegment(report);
       shortfall.className =
         shed === ''
           ? 'hud-shortfall'
