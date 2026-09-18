@@ -1,4 +1,4 @@
-import { FIELD_OF_VIEW_DEGREES, INITIAL_DISTANCE_FACTOR } from '../../src/camera.js';
+import { FIELD_OF_VIEW_DEGREES, INITIAL_DISTANCE_FACTOR, MIN_DISTANCE_FACTOR } from '../../src/camera.js';
 
 /**
  * Przelicznik JEDNOSTEK ŚWIATA NA PIKSELE — jedyna liczba, na której stoi cała metodologia
@@ -92,9 +92,31 @@ export function pixelsPerUnit(planetRadius: number): number {
  * dało się przypiąć SAM rachunek (0,758198), nie tylko jego iloczyn z płótnem. Niezależny od
  * promienia planety: `R` skraca się w `R/d`.
  */
-export function silhouetteFrameFraction(): number {
-  const angularRadius = Math.asin(1 / INITIAL_DISTANCE_FACTOR);
+export function silhouetteFrameFraction(distanceFactor: number = INITIAL_DISTANCE_FACTOR): number {
+  if (!(distanceFactor > 1)) {
+    throw new RangeError(
+      `silhouetteFrameFraction: distanceFactor must be > 1 (kamera wewnątrz planety nie ma sylwetki), got ${distanceFactor}`,
+    );
+  }
+  const angularRadius = Math.asin(1 / distanceFactor);
   return Math.tan(angularRadius) / Math.tan((FIELD_OF_VIEW_DEGREES * Math.PI) / 360);
+}
+
+/**
+ * Skala w NAJWIĘKSZYM przybliżeniu, jakie dopuszcza kamera (`MIN_DISTANCE_FACTOR`).
+ *
+ * `pixelsPerUnit` liczy skalę przy odległości DOMYŚLNEJ i to jest właściwe odniesienie dla
+ * progów WIDOCZNOŚCI: rzecz niewidoczna z domyślnego widoku jest niewidoczna, choćby dało się
+ * do niej dojechać. Ale dla progów WIERNOŚCI KSZTAŁTU jest odwrotnie — wielokąt udający okrąg
+ * zdradza się przy zbliżeniu, nie przy oddaleniu, więc najgorszym przypadkiem jest największe
+ * dopuszczalne przybliżenie. Stąd osobna funkcja zamiast stałej: obie skale wyprowadzają się
+ * z tych samych stałych `camera.ts` i nie wolno im się rozjechać.
+ */
+export function pixelsPerUnitClosest(planetRadius: number): number {
+  if (!(planetRadius > 0)) {
+    throw new RangeError(`pixelsPerUnitClosest: planetRadius must be positive and finite, got ${planetRadius}`);
+  }
+  return (silhouetteFrameFraction(MIN_DISTANCE_FACTOR) * CANVAS_HEIGHT_PX) / (2 * planetRadius);
 }
 
 /**

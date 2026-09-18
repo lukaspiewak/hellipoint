@@ -501,7 +501,7 @@ export const ALERT_COLOR_DARK: Rgb = [0.02, 0.016, 0.008]; // [WYGLĄD]
 /** `[WYGLĄD]` Liczba boków bryły i rdzenia: sześciokąt, jak komórka pod spodem. */
 const SHELL_SIDES = 6; // [WYGLĄD]
 /** `[WYGLĄD]` Liczba boków pierścienia alarmu — tyle, żeby przy zbliżeniu czytał się jako okrąg. */
-const ALERT_SIDES = 24; // [WYGLĄD]
+export const ALERT_SIDES = 24; // [WYGLĄD]
 
 /**
  * `[WYGLĄD]` Ile przerw ma pierścień budynku ODCIĘTEGO OD SIECI (Faza 2C, Zadanie 4, Krok 6).

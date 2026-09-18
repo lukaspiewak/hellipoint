@@ -39,13 +39,14 @@ import {
   SHELL_COLOR,
   SHELL_TAPER,
   SURFACE_LIFT_FACTOR,
+  ALERT_SIDES,
 } from '../src/buildingMesh.js';
 import { DEFAULT_OUTLINE_PALETTE, DEFAULT_PALETTE, type Rgb } from '../src/shading.js';
 import { buildCellOutlines } from '../src/planetMesh.js';
 import { MAX_DISTANCE_FACTOR } from '../src/camera.js';
 import { createSceneWithRenderer, type SceneRenderer } from '../src/scene.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
-import { MIN_VISIBLE_PX, pixelsPerUnit } from './support/pixelScale.js';
+import { MIN_VISIBLE_PX, pixelsPerUnit, pixelsPerUnitClosest } from './support/pixelScale.js';
 
 const planet = createPlanet({ seed: 20260915 });
 const geo = buildPlanetGeometry(planet);
@@ -1772,5 +1773,53 @@ describe('konwencja [WYGLĄD] (runda naprawcza 1)', () => {
     expect(declarations.length, 'regex przestał widzieć deklaracje').toBeGreaterThanOrEqual(12);
     const unmarked = declarations.filter((d) => !d.marked).map((d) => d.name);
     expect(unmarked, `stałe bez markera: ${unmarked.join(', ')}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// 31. Obręcz alarmu ma czytać się jako OKRĄG, nie jako wielokąt
+// ---------------------------------------------------------------------------------------
+describe('31. [KSZTAŁT] obręcz alarmu nie zdradza się jako wielokąt przy zbliżeniu', () => {
+  /**
+   * `ALERT_SIDES = 24` miało w doc-commencie uzasadnienie („tyle, żeby przy zbliżeniu czytał
+   * się jako okrąg") i ANI JEDNEGO testu: ponowny przegląd Zadania 4 pokazał, że `= 3`
+   * przechodzi cały pakiet, a obręcz staje się czworokątem. Test 26b mierzy DŁUGOŚĆ KĄTOWĄ
+   * łuku i jest na kształt ślepy z konstrukcji.
+   *
+   * Własność, która to wiąże: **strzałka cięciwy** — odległość między cięciwą wielokąta
+   * a łukiem, który on udaje. Dla wielokąta o `n` bokach wpisanego w okrąg promienia `R`
+   * wynosi `R · (1 − cos(π/n))`. Gdy spada poniżej progu widoczności, oko nie ma jak odróżnić
+   * wielokąta od okręgu.
+   *
+   * **Odniesieniem jest NAJWIĘKSZE przybliżenie**, nie domyślne — i to jest różnica wobec
+   * wszystkich pozostałych progów tej fazy. Progi WIDOCZNOŚCI biorą widok domyślny, bo rzecz
+   * niewidoczna stamtąd jest niewidoczna. Próg WIERNOŚCI KSZTAŁTU jest odwrotny: wielokąt
+   * zdradza się, gdy podjedziesz blisko, więc najgorszym przypadkiem jest `MIN_DISTANCE_FACTOR`.
+   */
+  function sagittaPx(sides: number): number {
+    const planet = createPlanet({ seed: 20260915 });
+    const ringRadius = planet.radius * ALERT_RADIUS_FACTOR;
+    const sagittaUnits = ringRadius * (1 - Math.cos(Math.PI / sides));
+    return sagittaUnits * pixelsPerUnitClosest(planet.radius);
+  }
+
+  it('31a. strzałka cięciwy przy dzisiejszej liczbie boków jest poniżej progu widoczności', () => {
+    const s = sagittaPx(ALERT_SIDES);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[KSZTAŁT] strzałka cięciwy przy ${ALERT_SIDES} bokach: ${s.toFixed(3)} px ` +
+        `(próg ${MIN_VISIBLE_PX} px, zapas ${(MIN_VISIBLE_PX / s).toFixed(1)}×)`,
+    );
+    expect(s).toBeLessThan(MIN_VISIBLE_PX);
+  });
+
+  it('31b. [PARA] 14 boków jeszcze przechodzi, 13 już nie — próg wiąże przy granicy', () => {
+    expect(sagittaPx(14)).toBeLessThan(MIN_VISIBLE_PX);
+    expect(sagittaPx(13)).toBeGreaterThanOrEqual(MIN_VISIBLE_PX);
+  });
+
+  it('31c. [REGRESJA] liczba boków z ponownego przeglądu (3) łamie próg wielokrotnie', () => {
+    // Kontrola kierunku: gdyby próg dało się spełnić czworokątem, nie mierzyłby kształtu.
+    expect(sagittaPx(3)).toBeGreaterThan(MIN_VISIBLE_PX * 5);
   });
 });
