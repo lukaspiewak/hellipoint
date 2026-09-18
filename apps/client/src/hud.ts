@@ -522,7 +522,7 @@ if (BROWNOUT_ORDER.length + 2 > SHED_KEY_RADIX) {
   );
 }
 
-const MAX_MENU_TYPES = 31;
+export const MAX_MENU_TYPES = 31;
 if (MENU_TYPES.length > MAX_MENU_TYPES) {
   throw new RangeError(
     `hud.ts: menu ma ${MENU_TYPES.length} pozycji, a maska dostępności w bramce świeżości ` +
@@ -530,6 +530,83 @@ if (MENU_TYPES.length > MAX_MENU_TYPES) {
       'tej granicy bit zawija i panel przestaje się przemalowywać przy zmianie dostępności ' +
       'zawiniętej pozycji. Zamień maskę na tablicę bitów albo na porównanie po elementach.',
   );
+}
+
+// =========================================================================================
+// Składanie linii — każde złączenie, które gracz czyta, ma funkcję
+// =========================================================================================
+//
+// ## Dlaczego te cztery funkcje istnieją zamiast sklejek w `createHudView`
+//
+// Bo inaczej **nie ma czego zawołać z testu**, a test, który składa zdanie własną kopią,
+// mierzy tę kopię, nie panel. Zawężony przegląd rundy naprawczej Zadania 4 zmierzył obie
+// połowy tego skutku:
+//
+// - **N9**: pomocnik budżetu znaków przepisywał wiersz zasobów literałem, więc wydłużenie
+//   realnego komunikatu o 68 znaków dawało na ekranie linię 165-znakową przy budżecie 111,
+//   a test dalej mierzył 97 i przechodził. To samo w wierszu menu: poszerzenie odstępu
+//   o 12 znaków nie ruszyło mierzonych 89.
+// - **N11**: złączenie ` · ` przed ostrzeżeniem o końcu runu nie miało testu wcale. Jego
+//   usunięcie dawało `komórka: 731komendy nie są przyjmowane` przy 699/699 zielonych —
+//   dosłownie ten sam tryb awarii, który opisano dwa złączenia wcześniej.
+//
+// Reguła, którą to wprowadza dla całego panelu: **linię, którą gracz czyta, składa funkcja
+// eksportowana stąd.** `createHudView` tylko rozdziela jej wynik na elementy.
+
+/**
+ * Nagłówek w wierszu zasobów: wskazana komórka, a po końcu runu także ostrzeżenie, że
+ * komendy nie są już przyjmowane.
+ *
+ * Wskazana komórka zostaje w nagłówku TAKŻE po końcu runu. Pierwsza wersja podmieniała całą
+ * linię na ostrzeżenie i zabierała przy tym jedyny odczyt wskazania — zmierzone na ekranie
+ * po `DEFEAT`: menu dalej liczyło powody odmowy dla komórki, której numeru już nie było widać.
+ */
+export function headlineText(s: SimState, cellId: number | null): string {
+  return (
+    ` · komórka: ${cellId === null ? '—' : cellId}` +
+    (commandsAccepted(s) ? '' : ` · komendy nie są przyjmowane — run zakończony (${s.phase})`)
+  );
+}
+
+/**
+ * Lewa, KLIKALNA część wiersza menu: numer klawisza, nazwa, koszt.
+ *
+ * `index + 1`, nie `index`: to jest NUMER KLAWISZA, którym `input.ts` wybiera tę pozycję
+ * (`/^Digit([1-9])$/` → `types[n - 1]`). Panel obiecujący zły klawisz jest gorszy od panelu
+ * bez numerów, bo gracz wciska to, co przeczytał.
+ *
+ * Prefiks rośnie z liczbą pozycji — od dziesiątej ma trzy znaki, nie dwa. Test budżetu wołał
+ * do tej rundy literał `9 `, czyli DWA znaki, choć `MAX_MENU_TYPES` dopuszcza 31 pozycji.
+ */
+export function menuPickText(index: number, row: MenuRow): string {
+  return `${index + 1} ${row.type.padEnd(NAME_WIDTH)}${String(row.costOre).padStart(COST_WIDTH)}`;
+}
+
+/**
+ * Kolumna poboru energii. Pobór CZYTANY z `BUILDINGS` (przez `buildMenuRows`), nie
+ * przepisany — jedna tabela. Budynek bez poboru zostawia puste miejsce zamiast „0/s": zero
+ * jest tu szumem, a kolumna ma zostać na miejscu, żeby zdania odmowy dalej się wyrównywały.
+ */
+export function menuDrainText(row: MenuRow): string {
+  return row.energyDrain > 0
+    ? rateText(shownRateTenths(row.energyDrain)).padStart(DRAIN_WIDTH)
+    : ' '.repeat(DRAIN_WIDTH);
+}
+
+/** Zdanie odmowy przy pozycji menu; pusty napis, gdy pozycja jest do zbudowania. */
+export function menuWhyText(row: MenuRow): string {
+  return row.check.ok ? '' : `  ${refusalMessage(row.check.reason)}`;
+}
+
+/**
+ * Cały wiersz menu tak, jak widzi go gracz — trzy części sklejone w tej samej kolejności,
+ * w jakiej `createHudView` układa je w elementach.
+ *
+ * Panel rozdziela je na trzy elementy, bo **tylko lewa część łapie wskaźnik** (patrz
+ * `createHudView`); gracz czyta je jako jedną linię i tak liczy się budżet znaków.
+ */
+export function menuRowText(index: number, row: MenuRow): string {
+  return menuPickText(index, row) + menuDrainText(row) + menuWhyText(row);
 }
 
 /**
@@ -750,31 +827,18 @@ export function createHudView(
         shed === ''
           ? 'hud-shortfall'
           : `hud-shortfall${report.shedTypes.length > 0 ? ' hud-shortfall--shed' : ' hud-shortfall--drain'}`;
-      // Wskazana komórka zostaje w nagłówku TAKŻE po końcu runu. Pierwsza wersja podmieniała
-      // całą linię na ostrzeżenie i zabierała przy tym jedyny odczyt wskazania — zmierzone
-      // na ekranie po `DEFEAT`: menu dalej liczyło powody odmowy dla komórki, której numeru
-      // już nie było widać.
       const accepted = commandsAccepted(s);
-      headline.textContent =
-        ` · komórka: ${cellId === null ? '—' : cellId}` +
-        (accepted ? '' : ` · komendy nie są przyjmowane — run zakończony (${s.phase})`);
+      headline.textContent = headlineText(s, cellId);
       headline.className = accepted ? 'hud-headline' : 'hud-headline hud-headline--over';
 
       const rows = buildMenuRows(s, cellId);
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
-        // `i + 1`, nie `i`: to jest NUMER KLAWISZA, którym `input.ts` wybiera tę pozycję
-        // (`/^Digit([1-9])$/` → `types[n - 1]`). Panel obiecujący zły klawisz jest gorszy
-        // od panelu bez numerów, bo gracz wciska to, co przeczytał.
-        pickElements[i].textContent =
-          `${i + 1} ${row.type.padEnd(NAME_WIDTH)}${String(row.costOre).padStart(COST_WIDTH)}`;
-        // Pobór CZYTANY z `BUILDINGS` (przez `buildMenuRows`), nie przepisany — jedna tabela.
-        // Budynek bez poboru zostawia puste miejsce zamiast „0/s": zero jest tu szumem,
-        // a kolumna ma zostać na miejscu, żeby zdania odmowy dalej się wyrównywały.
-        drainElements[i].textContent = row.energyDrain > 0
-          ? rateText(shownRateTenths(row.energyDrain)).padStart(DRAIN_WIDTH)
-          : ' '.repeat(DRAIN_WIDTH);
-        whyElements[i].textContent = row.check.ok ? '' : `  ${refusalMessage(row.check.reason)}`;
+        // Trzy elementy, jedna linia dla gracza — składana funkcjami wyżej, żeby test miał
+        // co zawołać zamiast przepisywać sklejkę (N9).
+        pickElements[i].textContent = menuPickText(i, row);
+        drainElements[i].textContent = menuDrainText(row);
+        whyElements[i].textContent = menuWhyText(row);
         // Klasy, nie style w linii: liczby wyglądu mieszkają w `index.html`, gdzie da się
         // je oglądać razem z resztą układu panelu. Wyjątkiem jest `pointerEvents`, ustawiany
         // przy budowie — patrz doc-comment `createHudView`.

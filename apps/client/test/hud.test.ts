@@ -8,6 +8,7 @@ import {
   Sim,
   type BuildCheck,
   type BuildingType,
+  type BuildRefusalReason,
   type Planet,
   type PowerReport,
   type SimState,
@@ -32,6 +33,9 @@ import {
   buildMenuRows,
   commandsAccepted,
   createHudView,
+  headlineText,
+  MAX_MENU_TYPES,
+  menuRowText,
   powerLine,
   rateText,
   refusalMessage,
@@ -1490,15 +1494,45 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
   const AMOUNT_CAP = 99_999; // [STROJENIE w teście] pięć cyfr; szczyt zmierzony w Fazie 1C to 2345
   const RATE_TENTHS_CAP = 99_999; // → „9999,9/s"; szczyt realny to ok. 310/s (12 capów + CORE)
 
-  function longestRefusal(): string {
-    let worst = '';
-    for (const reason of Object.keys(REFUSAL_MESSAGES) as RefusalReason[]) {
-      const msg = refusalMessage(reason);
-      if (msg.length > worst.length) worst = msg;
+  /**
+   * Powody, które może nieść WIERSZ MENU — czyli wyłącznie te z `canBuild`.
+   *
+   * `REFUSAL_MESSAGES` jest kluczowany SUMĄ powodów budowy i rozbiórki, a rozbiórka melduje
+   * się nakładką, nie wierszem menu. Pierwsza wersja tego pomocnika brała najdłuższy
+   * komunikat z całej sumy i **nie skompilowała się** — domknięta unia z `6a81067` nie
+   * pozwoliła wstawić `CORE_INDESTRUCTIBLE` do `MenuRow.check`. To jest ta gwarancja przy
+   * pracy, nie jej opis.
+   *
+   * `Record<BuildRefusalReason, true>` wymusza komplet przy kompilacji: ósmy powód budowy
+   * nie skompiluje tego pliku, dopóki go tu nie będzie.
+   */
+  const BUILD_REASONS: Readonly<Record<BuildRefusalReason, true>> = {
+    NO_SUCH_CELL: true,
+    CELL_OCCUPIED: true,
+    NOT_PLAYER_BUILDABLE: true,
+    NO_SUCH_BUILDING_TYPE: true,
+    WRONG_CELL_TYPE: true,
+    INSUFFICIENT_ORE: true,
+    EVAC_LOCKED: true,
+  };
+
+  function longestRefusalReason(): BuildRefusalReason {
+    let worst: BuildRefusalReason = 'NO_SUCH_CELL';
+    for (const reason of Object.keys(BUILD_REASONS) as BuildRefusalReason[]) {
+      if (refusalMessage(reason).length > refusalMessage(worst).length) worst = reason;
     }
     return worst;
   }
 
+  /**
+   * **Składany PRAWDZIWĄ funkcją panelu** (`menuRowText`), nie przepisaną sklejką.
+   *
+   * Poprzednia wersja przepisywała układ wiersza i przez to nie widziała jego wzrostu:
+   * poszerzenie odstępu przed zdaniem odmowy o 12 znaków zostawiało mierzone 89 znaków
+   * nietknięte, przy całym pliku zielonym (N9). Przepisany był też prefiks — literał `9 `,
+   * czyli DWA znaki, choć `MAX_MENU_TYPES` dopuszcza 31 pozycji, a od dziesiątej prefiks
+   * ma trzy. Najgorszy przypadek bierze więc OSTATNI możliwy numer pozycji.
+   */
   function worstMenuRow(): string {
     let worstType: BuildingType = 'CORE';
     let worstCost = 0;
@@ -1506,12 +1540,14 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
       if (type.length >= worstType.length) worstType = type as BuildingType;
       if (def.costOre > worstCost) worstCost = def.costOre;
     }
-    // Dokładnie tak, jak składa to `createHudView`: numer, nazwa, koszt, pobór, zdanie.
-    return (
-      `9 ${worstType.padEnd(NAME_WIDTH)}${String(worstCost).padStart(COST_WIDTH)}` +
-      `${rateText(RATE_TENTHS_CAP).padStart(DRAIN_WIDTH)}` +
-      `  ${longestRefusal()}`
-    );
+    const row: MenuRow = {
+      type: worstType,
+      costOre: worstCost,
+      energyDrain: RATE_TENTHS_CAP / 10,
+      affordable: false,
+      check: { ok: false, reason: longestRefusalReason() },
+    };
+    return menuRowText(MAX_MENU_TYPES - 1, row);
   }
 
   /**
@@ -1539,17 +1575,20 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
     return `${powerLine(power)} · ${shortfallLine(power)}`;
   }
 
-  /** Też prawdziwą funkcją: `resourceLine` plus nagłówek składany jak w `createHudView`. */
+  /**
+   * **Obie połowy prawdziwymi funkcjami**: `resourceLine` i `headlineText`.
+   *
+   * Poprzednia wersja przepisywała nagłówek literałem — wydłużenie realnego ostrzeżenia
+   * o końcu runu o 68 znaków dawało linię 165-znakową przy budżecie 111, a ten test dalej
+   * mierzył 97 i przechodził (N9). Najgorszy przypadek to najdłuższy numer komórki,
+   * capowane zapasy i faza, w której ostrzeżenie jest widoczne.
+   */
   function worstResourceLine(): string {
     const { s } = richRun();
     s.ore = AMOUNT_CAP;
     s.storedEnergy = AMOUNT_CAP;
     s.phase = 'DEFEAT';
-    return (
-      resourceLine(s) +
-      ` · komórka: ${planet.cells.length - 1}` +
-      ` · komendy nie są przyjmowane — run zakończony (${s.phase})`
-    );
+    return resourceLine(s) + headlineText(s, planet.cells.length - 1);
   }
 
   it('31a. budżet znaków jest WYPROWADZONY z minimalnej szerokości okna, nie przepisany', () => {
@@ -1630,5 +1669,33 @@ describe('32. [SEPARATOR] segmenty składane w jeden wiersz są rozdzielone', ()
     expect(panel.text()).not.toContain(`${resourceLine(s)}komórka:`);
     expect(panel.text()).toContain(resourceLine(s));
     expect(panel.text()).toContain(`komórka: ${cell}`);
+  });
+
+  /**
+   * TRZECIE złączenie tego samego wiersza — nagłówek ↔ ostrzeżenie o końcu runu. Zawężony
+   * przegląd rundy naprawczej zmierzył, że jako jedyne z trzech nie miało testu: usunięcie
+   * ` · ` dawało na ekranie `komórka: 731komendy nie są przyjmowane`, przy 699/699 zielonych
+   * (N11). Ten sam tryb awarii, ten sam wiersz, ten sam commit, co dwa złączenia obok.
+   *
+   * Asercja **nie wymienia ani separatora, ani sąsiadujących słów**: bierze nagłówek runu
+   * TRWAJĄCEGO jako przedrostek i sprawdza, że ogon dołożony po końcu runu nie zaczyna się
+   * od znaku niebiałego. Przeżyje zmianę separatora i zmianę treści ostrzeżenia.
+   */
+  it('32c. ostrzeżenie o końcu runu nie zlewa się z numerem komórki', () => {
+    const { s } = richRun();
+    const cell = freeHexagonNear(s);
+    const running = headlineText(s, cell);
+    s.phase = 'DEFEAT';
+    const finished = headlineText(s, cell);
+
+    // Kontrola na fiksturę: ostrzeżenie faktycznie doszło, a wskazanie zostało.
+    expect(finished.startsWith(running)).toBe(true);
+    const tail = finished.slice(running.length);
+    expect(tail.length).toBeGreaterThan(0);
+    expect(tail).not.toMatch(/^\S/);
+
+    const panel = makePanel();
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+    expect(panel.text()).toContain(finished);
   });
 });
