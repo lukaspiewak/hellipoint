@@ -354,9 +354,30 @@ export function rateText(tenths: number): string {
   return `${(tenths / 10).toFixed(1).replace('.', ',')}/s`;
 }
 
+/** Zapas rudy — jedyna wielkość w tym wierszu, która NIE jest energią. */
+export function oreText(s: SimState): string {
+  return `ruda ${shownAmount(s.ore)}`;
+}
+
+/**
+ * Zapas energii — **wydzielony z `resourceLine` w Zadaniu 6, i to nie jest kosmetyka.**
+ *
+ * Magazyn jest wielkością ENERGETYCZNĄ, czyli należy do tej samej rodziny co linia bilansu:
+ * to on rozstrzyga, czy niedobór jest pokryty, czy kaskada już gasi. Zmierzone na bramce
+ * czytelności przyczynowej: przy ukrytej linii bilansu sam magazyn **dalej identyfikował
+ * przyczynę** (13 / 199 / 0 / 19 w czterech układach), więc kontrola pozytywna mierzyła
+ * czytelność jednego kanału zamiast jej braku. Dopóki był sklejony z rudą w jednym napisie,
+ * nie dało się go zasłonić bez zasłonięcia rudy, która przyczyny nie niesie.
+ *
+ * Gracz widzi jedną linię — rozdzielenie jest w elementach, nie w treści.
+ */
+export function storageText(s: SimState): string {
+  return `magazyn ${shownAmount(s.storedEnergy)}`;
+}
+
 /** Wiersz z liczbami, których świat unieść nie może. Bez `powered`, bez punktów życia. */
 export function resourceLine(s: SimState): string {
-  return `ruda ${shownAmount(s.ore)} · magazyn ${shownAmount(s.storedEnergy)}`;
+  return `${oreText(s)} · ${storageText(s)}`;
 }
 
 /**
@@ -812,6 +833,12 @@ export function createHudView(
   resources.className = 'hud-resources';
   resourceRow.appendChild(resources);
 
+  // Magazyn OSOBNYM elementem — patrz `storageText`. Kontrola pozytywna bramki musi umieć
+  // zasłonić energię bez zasłaniania rudy, a tego nie da się zrobić na jednym napisie.
+  const storage = doc.createElement('span');
+  storage.className = 'hud-storage';
+  resourceRow.appendChild(storage);
+
   const headline = doc.createElement('span');
   headline.className = 'hud-headline';
   resourceRow.appendChild(headline);
@@ -964,7 +991,8 @@ export function createHudView(
       lastOreLeft = oreLeft;
 
       outcome.textContent = outcomeSummary(s, coreDamager);
-      resources.textContent = resourceLine(s);
+      resources.textContent = oreText(s);
+      storage.textContent = ` · ${storageText(s)}`;
       power.textContent = powerLine(report);
       // Zdanie o skutku pojawia się WYŁĄCZNIE wtedy, gdy jest skutek — a że stoi w TYM SAMYM
       // wierszu co bilans, jego brak nie kosztuje ani jednej linii wysokości panelu (patrz

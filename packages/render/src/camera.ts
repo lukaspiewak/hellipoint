@@ -167,6 +167,32 @@ const rayDirectionScratch = new Vector3();
  * wylot do `Vec3` i `pickCell` zamienia go na `null` (brak podświetlenia przez jedną
  * klatkę), zamiast wywalać pętlę renderu wyjątkiem.
  */
+/**
+ * Rzut punktu świata na **znormalizowane współrzędne urządzenia** (NDC): odwrotność
+ * `cameraRay`, tą samą kamerą i tymi samymi macierzami.
+ *
+ * Mieszka tutaj z dokładnie tych samych dwóch powodów, co `cameraRay`: to jest matematyka
+ * TEJ kamery, a `apps/client` z założenia nie importuje `three` (barierka pakietu).
+ * Bramka czytelności przyczynowej (Faza 2C, Zadanie 6) potrzebuje tego, żeby postawić
+ * celownik nad pytanym budynkiem — celownik jest elementem DOM, bo trzeci kanał wizualny
+ * W SCENIE byłby dokładnie tym, czego zabrania budżet kanałów z Fazy 2B.
+ *
+ * `z` wyniku mówi o głębi: wartości **powyżej 1 leżą za daleką płaszczyzną albo za kamerą**,
+ * czyli na niewidocznej półkuli. Wołający ma to sprawdzić — punkt po drugiej stronie kuli
+ * rzutuje się na ekran normalnie i bez tego sprawdzenia celownik wskazywałby miejsce,
+ * w którym nic nie ma.
+ *
+ * **Wejście niefinitne NIE rzuca** — ten sam kontrakt, co `cameraRay` i `pickCell`:
+ * płótno o zerowym rozmiarze daje `NaN` w macierzy rzutowania, a pętla renderu ma przez
+ * jedną klatkę narysować bzdurę, nie paść.
+ */
+export function worldToNdc(camera: PerspectiveCamera, point: Vec3): Vec3 {
+  // Ten sam powód co w `cameraRay`: pozycja kamery bywa świeższa niż `matrixWorld`.
+  camera.updateMatrixWorld();
+  rayDirectionScratch.set(point.x, point.y, point.z).project(camera);
+  return { x: rayDirectionScratch.x, y: rayDirectionScratch.y, z: rayDirectionScratch.z };
+}
+
 export function cameraRay(
   camera: PerspectiveCamera,
   ndcX: number,

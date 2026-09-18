@@ -35,6 +35,7 @@ export {
   ORBIT_ROTATE_SPEED,
   ORBIT_ZOOM_SPEED,
   type OrbitCamera,
+  worldToNdc,
 } from './camera.js';
 export {
   alertPulse,

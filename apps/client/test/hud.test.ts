@@ -1761,7 +1761,7 @@ describe('33. [UKŁAD] liczby układu w kodzie zgadzają się z arkuszem', () =>
    *   nie był nigdzie wyegzekwowany — panel kurczył się bez dna, choć cały budżet znaków
    *   stoi na założeniu, że nie schodzi poniżej deklarowanego minimum.
    */
-  const css = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../hud.css', import.meta.url), 'utf8');
 
   /** Reguła `#hud` — żeby liczby z innych reguł nie wchodziły w rachunek. */
   function hudRule(): string {
@@ -1769,6 +1769,19 @@ describe('33. [UKŁAD] liczby układu w kodzie zgadzają się z arkuszem', () =>
     expect(at, 'reguła #hud w arkuszu').toBeGreaterThan(-1);
     return css.slice(at, css.indexOf('}', at));
   }
+
+  /**
+   * Arkusz jest WSPÓLNY dla gry i dla bramki czytelności przyczynowej (Zadanie 6) — bramka
+   * pytająca o ekran gry musi pokazywać TEN SAM ekran. Obie strony muszą go faktycznie
+   * wciągać: plik bez odbiorcy przestałby cokolwiek znaczyć, a testy niżej dalej by go
+   * czytały i orzekały o wyglądzie, którego nikt nie widzi.
+   */
+  it('33z. obie strony wciągają wspólny arkusz panelu', () => {
+    for (const page of ['../index.html', '../causal-gate.html']) {
+      const html = readFileSync(new URL(page, import.meta.url), 'utf8');
+      expect(html, page).toContain('hud.css');
+    }
+  });
 
   function numberFrom(pattern: RegExp, what: string): number {
     const m = pattern.exec(hudRule());
@@ -1804,10 +1817,33 @@ describe('33. [UKŁAD] liczby układu w kodzie zgadzają się z arkuszem', () =>
    * przesłanki — rozmiar czcionki i to, że krój jest monospace'owy — i na tym kończy się
    * zasięg tego pakietu. Sprawdzenie samego ułamka wymaga przeglądarki.
    */
-  it('33e. krój panelu jest monospace\'owy — przesłanka całego budżetu znaków', () => {
+  it('33f. krój panelu jest monospace\'owy — przesłanka całego budżetu znaków', () => {
     const font = /font:[^;]*;/.exec(hudRule());
     expect(font, 'deklaracja font w regule #hud').not.toBeNull();
     expect(font![0]).toMatch(/monospace\s*;$/);
+  });
+
+  /**
+   * **Kontrola pozytywna bramki musi zasłaniać KAŻDY kanał energetyczny panelu.**
+   *
+   * Zmierzone na żywej bramce (Zadanie 6): przy ukrytej samej linii bilansu kontrola
+   * PRZECIEKAŁA — `magazyn` w wierszu zasobów dalej identyfikował przyczynę, bo cztery
+   * układy miały cztery różne zapasy (13 / 199 / 0 / 19). Kontrola mierzyła wtedy czytelność
+   * jednego kanału zamiast jej braku, a jej sufit był 12/12, nie 6/12. To trzeci raz, kiedy
+   * kontrola pozytywna w tym projekcie przeciekła — dwa poprzednie były w Fazie 2B.
+   *
+   * Test wiąże LISTĘ zasłanianych elementów, nie sam fakt istnienia reguły: dołożenie do
+   * panelu kolejnej liczby energetycznej bez dopisania jej tutaj przechodzi, ale wtedy
+   * przejdzie też ten test — i to jest granica, którą trzeba znać. Wiązane jest to, co da
+   * się związać bez silnika układu.
+   */
+  it('33e. tryb kontroli zasłania OBA kanały energetyczne: bilans i magazyn', () => {
+    const rule = /#hud\.hud-blind([^{]*)\{([^}]*)\}/.exec(css);
+    expect(rule, 'reguła trybu kontroli w arkuszu').not.toBeNull();
+    const selectors = `#hud.hud-blind${rule![1]}`;
+    expect(selectors).toContain('.hud-line--power');
+    expect(selectors).toContain('.hud-storage');
+    expect(rule![2]).toContain('display: none');
   });
 
   it('33d. obramowanie poziome w arkuszu zgadza się z HUD_HORIZONTAL_CHROME_PX', () => {

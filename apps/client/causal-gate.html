@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Heliopolis — bramka czytelności przyczynowej</title>
+    <!--
+      ARKUSZ PANELU JEST TEN SAM, CO W GRZE (`hud.css`). To nie jest wygoda: bramka pyta,
+      czy z EKRANU GRY da się odczytać przyczynę, więc ekran musi być ten sam co do reguły
+      CSS. Własna kopia stylu znaczyłaby, że mierzymy coś, co tylko wygląda jak gra.
+    -->
+    <link rel="stylesheet" href="./hud.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        color: #e8f0ff;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      #gate-canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+      /*
+        PANEL BRAMKI stoi w prawym GÓRNYM rogu — rozłącznie z panelem gry (lewy dół)
+        i z nakładką diagnostyczną. Gdyby zachodził na panel gry, zasłaniałby dokładnie
+        te liczby, o które bramka pyta, i wynik mierzyłby układ, a nie czytelność.
+      */
+      #gate {
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        width: 340px;
+        max-height: calc(100vh - 16px);
+        overflow: auto;
+        z-index: 20;
+        padding: 10px 12px;
+        border-radius: 4px;
+        background: rgba(8, 12, 18, 0.92);
+      }
+      #gate h1 {
+        margin: 0 0 8px 0;
+        font-size: 13px;
+        letter-spacing: 0.04em;
+      }
+      #gate .row {
+        margin: 8px 0;
+      }
+      #gate button {
+        display: block;
+        width: 100%;
+        margin: 4px 0;
+        padding: 6px 8px;
+        border: 1px solid #3a4a63;
+        border-radius: 3px;
+        background: #16202e;
+        color: #e8f0ff;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      #gate button:hover {
+        background: #1f2c3e;
+      }
+      #gate button.mode-on {
+        border-color: #d8a23a;
+        background: #2a2314;
+      }
+      #gate .question {
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+      #gate .note {
+        color: #9fb2cc;
+        font-size: 12px;
+      }
+      #gate .warn {
+        color: #f0b429;
+        font-weight: 700;
+      }
+      #gate textarea {
+        width: 100%;
+        height: 220px;
+        background: #0c131d;
+        color: #e8f0ff;
+        border: 1px solid #3a4a63;
+        border-radius: 3px;
+        font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      /*
+        WYRÓŻNIENIE PYTANEGO BUDYNKU — celownik rysowany w DOM, nie w scenie.
+        W scenie musiałby być trzecim kanałem wizualnym obok obręczy alarmu i pola rdzenia,
+        czyli dokładnie tym, czego Faza 2B zabroniła (budżet kanałów jest wyczerpany).
+        Celownik nie niesie ŻADNEJ informacji o przyczynie — mówi tylko „o ten pytam".
+      */
+      #crosshair {
+        position: fixed;
+        z-index: 15;
+        width: 46px;
+        height: 46px;
+        margin: -23px 0 0 -23px;
+        border: 2px solid #ffffff;
+        border-radius: 50%;
+        box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.7);
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gate-canvas"></canvas>
+    <div id="hud"></div>
+    <div id="crosshair" hidden></div>
+    <div id="gate">
+      <h1>Bramka czytelności PRZYCZYNOWEJ</h1>
+      <div class="row">
+        <button id="mode-graded" class="mode-on">Przebieg oceniany</button>
+        <button id="mode-control">Kontrola pozytywna</button>
+        <div id="mode-note" class="note"></div>
+      </div>
+      <div class="row">
+        <div id="status" class="note"></div>
+        <div id="question" class="question"></div>
+        <div id="answers"></div>
+      </div>
+      <div class="row">
+        <div id="tally" class="note"></div>
+        <div id="warning" class="warn"></div>
+        <div id="occlusion" class="warn"></div>
+      </div>
+      <div class="row">
+        <button id="restart">Zacznij ten przebieg od nowa</button>
+      </div>
+      <div class="row" id="result-row" hidden>
+        <div class="note">Skopiuj do dokumentu wyników:</div>
+        <textarea id="result" readonly></textarea>
+      </div>
+    </div>
+    <script type="module" src="/src/causalGate.ts"></script>
+  </body>
+</html>
