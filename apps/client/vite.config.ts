@@ -26,6 +26,10 @@ export default defineConfig({
         // Faza 2B, Zadanie 5: bramka PEŁNEGO OBRAZU — osobna strona, bo bramka terenowa
         // (`gate.html`) zostaje nietknięta jako instrument mierzący sam teren.
         sceneGate: resolve(rootDir, 'scene-gate.html'),
+        // Faza 2C, Zadanie 6: bramka czytelności PRZYCZYNOWEJ — trzecia strona i INNA OŚ
+        // pomiaru niż dwie poprzednie. Tamte pytają, co widać; ta, czy da się cofnąć
+        // po przyczynie.
+        causalGate: resolve(rootDir, 'causal-gate.html'),
       },
     },
   },

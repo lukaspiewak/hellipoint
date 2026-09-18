@@ -1,4 +1,4 @@
-import { FIELD_OF_VIEW_DEGREES, INITIAL_DISTANCE_FACTOR } from '../../src/camera.js';
+import { FIELD_OF_VIEW_DEGREES, INITIAL_DISTANCE_FACTOR, MIN_DISTANCE_FACTOR } from '../../src/camera.js';
 
 /**
  * Przelicznik JEDNOSTEK ŚWIATA NA PIKSELE — jedyna liczba, na której stoi cała metodologia
@@ -52,6 +52,17 @@ import { FIELD_OF_VIEW_DEGREES, INITIAL_DISTANCE_FACTOR } from '../../src/camera
  * (`apps/client`, okno pełnoekranowe na maszynie właściciela projektu). Płótno wyższe daje
  * WIĘCEJ pikseli na jednostkę, więc wszystkie progi tej fazy są przy nim spełnione z
  * zapasem; ta liczba jest zachowawczym dołem, nie pomiarem konkretnej sesji.
+ *
+ * **To NIE jest dół dla okna podglądu w panelu przeglądarki (800×482).** Skala jest wprost
+ * proporcjonalna do wysokości płótna, więc przy 482 px każda liczba pikselowa tej fazy
+ * kurczy się o czynnik 0,536 — obwódka rdzenia schodzi z 1,19 na 0,64 px, najwęższy pas
+ * obręczy alarmu z 1,76 na 0,94 px, przerwa obręczy z 2,01 na 1,08 px. Czyli **dwie
+ * wielkości starsze niż ta faza są w oknie podglądu POD progiem**, a nie tylko bliżej niego.
+ *
+ * Wniosek, zapisany tutaj, żeby nie musiał być odkrywany przy każdej bramce: **werdykt
+ * wzrokowy zapada na płótnie co najmniej tej wysokości, nie w oknie podglądu.** Obniżenie
+ * tej stałej nie jest zestrojeniem jednego progu — unieważnia wszystkie progi Fazy 2B naraz
+ * i jest decyzją o metodologii.
  */
 export const CANVAS_HEIGHT_PX = 900;
 
@@ -81,9 +92,69 @@ export function pixelsPerUnit(planetRadius: number): number {
  * dało się przypiąć SAM rachunek (0,758198), nie tylko jego iloczyn z płótnem. Niezależny od
  * promienia planety: `R` skraca się w `R/d`.
  */
-export function silhouetteFrameFraction(): number {
-  const angularRadius = Math.asin(1 / INITIAL_DISTANCE_FACTOR);
+export function silhouetteFrameFraction(distanceFactor: number = INITIAL_DISTANCE_FACTOR): number {
+  if (!(distanceFactor > 1)) {
+    throw new RangeError(
+      `silhouetteFrameFraction: distanceFactor must be > 1 (kamera wewnątrz planety nie ma sylwetki), got ${distanceFactor}`,
+    );
+  }
+  const angularRadius = Math.asin(1 / distanceFactor);
   return Math.tan(angularRadius) / Math.tan((FIELD_OF_VIEW_DEGREES * Math.PI) / 360);
+}
+
+/**
+ * Skala dla powierzchni ZWRÓCONEJ DO KAMERY, w największym dopuszczalnym przybliżeniu
+ * (`MIN_DISTANCE_FACTOR`) — odniesienie dla progów WIERNOŚCI KSZTAŁTU.
+ *
+ * ## Dlaczego to NIE jest `pixelsPerUnit` przy innej odległości
+ *
+ * `pixelsPerUnit` liczy skalę na SYLWETCE, czyli uśrednioną po tarczy, i to jest właściwe
+ * odniesienie dla progów WIDOCZNOŚCI — rzecz niewidoczna z widoku domyślnego jest niewidoczna,
+ * a skala mniejsza od prawdziwej daje próg OSTRZEJSZY, czyli zachowawczy.
+ *
+ * **Dla progów WIERNOŚCI KSZTAŁTU oba te kierunki się odwracają i to jest cała treść tej
+ * funkcji.** Wielokąt udający okrąg zdradza się, gdy podjedziesz blisko i patrzysz na niego
+ * WPROST, a nie gdy oglądasz go z brzegu tarczy w skrócie perspektywicznym. Najgorszym
+ * przypadkiem jest więc powierzchnia czołowa przy `MIN_DISTANCE_FACTOR`, gdzie skala jest
+ * NAJWIĘKSZA — a większa skala to większa strzałka w pikselach, czyli próg trudniejszy do
+ * spełnienia. Skala mniejsza od prawdziwej jest tu POBŁAŻLIWA, nie zachowawcza.
+ *
+ * **Wpadka, której nie wolno przywrócić** (naprawiona tutaj; zawężony przegląd rundy
+ * naprawczej Zadania 4, znalezisko N13): pierwsza wersja brała `silhouetteFrameFraction`
+ * przy `MIN_DISTANCE_FACTOR`, czyli skalę SYLWETKOWĄ — 11,62 px/j zamiast 32,17 px/j,
+ * **2,77× w stronę pobłażliwą**. Uzasadnienie „bierzemy uśrednioną, bo jest zachowawcza"
+ * zostało przeniesione z doc-commentu `pixelsPerUnit` do kontekstu, w którym ma PRZECIWNY
+ * znak. Skutkiem próg wypadał na 14 bokach zamiast na 22: obręcz czternastoboczna
+ * przechodziła 699/699 przy realnej strzałce ponad progiem.
+ *
+ * ## Wyprowadzenie
+ *
+ * Kamera stoi w odległości `d = MIN_DISTANCE_FACTOR × R` od ŚRODKA planety, więc powierzchnia
+ * zwrócona do niej leży na głębokości OSIOWEJ `d − R`. Płaszczyzna prostopadła do osi widoku
+ * na głębokości `z` odwzorowuje jednostkę świata na `H / (2 z tan(fov/2))` pikseli. Stąd
+ *
+ *     px/jednostkę = H / (2 R (MIN_DISTANCE_FACTOR − 1) tan(fov/2))
+ *
+ * Dla `R = 100`, `MIN_DISTANCE_FACTOR = 1,3`, `fov = 50°`, `H = 900` daje **32,168 px/j**.
+ *
+ * @throws {RangeError} gdy `planetRadius` nie jest dodatni albo gdy `MIN_DISTANCE_FACTOR`
+ *   nie jest większy od 1 — kamera na powierzchni planety albo w jej wnętrzu nie ma przed
+ *   sobą powierzchni czołowej, a dzielenie przez zero dałoby ciche `Infinity`.
+ */
+export function pixelsPerUnitFacingClosest(planetRadius: number): number {
+  if (!(planetRadius > 0)) {
+    throw new RangeError(
+      `pixelsPerUnitFacingClosest: planetRadius must be positive and finite, got ${planetRadius}`,
+    );
+  }
+  if (!(MIN_DISTANCE_FACTOR > 1)) {
+    throw new RangeError(
+      `pixelsPerUnitFacingClosest: MIN_DISTANCE_FACTOR is ${MIN_DISTANCE_FACTOR} — kamera nie ` +
+        'stoi przed powierzchnią planety, więc skala czołowa nie istnieje',
+    );
+  }
+  const depth = planetRadius * (MIN_DISTANCE_FACTOR - 1);
+  return CANVAS_HEIGHT_PX / (2 * depth * Math.tan((FIELD_OF_VIEW_DEGREES * Math.PI) / 360));
 }
 
 /**

@@ -774,9 +774,11 @@ describe('warstwa w scenie', () => {
       return out;
     };
 
-    // Teren + krata + trzy warstwy budynków + dwie warstwy jednostek = siedem rysowalnych.
+    // Teren + krata + CZTERY warstwy budynków + dwie warstwy jednostek = osiem rysowalnych.
+    // (Czwarta warstwa budynków — wycinki domykające obręcz alarmu — doszła w Zadaniu 4
+    // Fazy 2C; liczba jest przypięta, więc dołożenie jej musiało przejść przez ten test.)
     const before = drawables();
-    expect(before.length).toBe(7);
+    expect(before.length).toBe(8);
     expect(before.every((d) => d.visible)).toBe(true);
     const terrain = before.find((d) => d.object.parent === lastScene);
     expect(terrain, 'siatka terenu jest jedynym rysowalnym dzieckiem sceny').toBeDefined();
@@ -784,7 +786,7 @@ describe('warstwa w scenie', () => {
     // Schowanie SAMEJ planety — nic nie wie o jednostkach — musi wygasić wszystko.
     terrain!.object.visible = false;
     const after = drawables();
-    expect(after.length).toBe(7);
+    expect(after.length).toBe(8);
     expect(after.filter((d) => d.visible)).toEqual([]);
 
     scene.dispose();

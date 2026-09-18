@@ -5,7 +5,29 @@ export type Command =
   | { kind: 'BUILD'; cellId: number; type: BuildingType }
   | { kind: 'DEMOLISH'; cellId: number };
 
-export type BuildCheck = { ok: true } | { ok: false; reason: string };
+/**
+ * Powody, dla których `canBuild` może odmówić — **domknięta unia, nie `string`**.
+ *
+ * Do Fazy 2C, Zadania 4 pole `reason` miało typ `string`, a kompletność słownika komunikatów
+ * po stronie klienta pilnował SKAN ŹRÓDŁA tego pliku. Skan padł dwukrotnie: raz na powodzie
+ * oddanym stałą zamiast literałem, raz na odwróconej kolejności pól (`{ reason, ok: false }`).
+ * Poszerzanie wyrażenia rozpoznającego kształt jest wyścigiem nie do wygrania — ta sama
+ * lekcja, co przy strażniku mutacji stanu w Zadaniu 2.
+ *
+ * Unia przenosi gwarancję ze skanu do **kompilatora**: `Record<RefusalReason, string>`
+ * w `apps/client/src/hud.ts` jest wyczerpujący z definicji, więc ósmy powód dopisany bez
+ * komunikatu **nie skompiluje się**, niezależnie od tego, jak go zapisano.
+ */
+export type BuildRefusalReason =
+  | 'NO_SUCH_CELL'
+  | 'CELL_OCCUPIED'
+  | 'NOT_PLAYER_BUILDABLE'
+  | 'NO_SUCH_BUILDING_TYPE'
+  | 'WRONG_CELL_TYPE'
+  | 'INSUFFICIENT_ORE'
+  | 'EVAC_LOCKED';
+
+export type BuildCheck = { ok: true } | { ok: false; reason: BuildRefusalReason };
 
 /**
  * Czy `cellId` jest PRAWDZIWYM indeksem komórki, a nie tylko czymś, co tablica przyjmie.

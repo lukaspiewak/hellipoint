@@ -1,4 +1,11 @@
-import { createPlanet, DEFAULT_RUN, Sim, type Phase, type RunConfig } from '@heliopolis/sim';
+import {
+  createPlanet,
+  DEFAULT_RUN,
+  Sim,
+  type EnemyType,
+  type Phase,
+  type RunConfig,
+} from '@heliopolis/sim';
 import { ScriptedPolicy } from './policy.js';
 import { formatReport } from './report.js';
 
@@ -13,6 +20,12 @@ export interface RunResult {
   killsByTurret: number;
   /** Tick wyczerpania pierwszego złoża. -1 = nie wyczerpano żadnego. */
   firstDepletionTick: number;
+  /**
+   * Typ wroga, który ostatni uszkodził CORE (Faza 2C, Zadanie 5). `null`, gdy CORE nie
+   * oberwał ani razu — czyli przy zwycięstwie i przy przebiegu uciętym `maxTicks`.
+   * Czytany z `Sim`, nie ze stanu: to raport z ticku, nie wielkość, od której coś zależy.
+   */
+  coreDamager: EnemyType | null;
 }
 
 /**
@@ -68,6 +81,7 @@ export function simulateRun(seed: number, cfg: RunConfig, maxTicks: number): Run
     killsBySun: sim.state.killsBySun,
     killsByTurret: sim.state.killsByTurret,
     firstDepletionTick,
+    coreDamager: sim.lastCoreDamager,
   };
 }
 

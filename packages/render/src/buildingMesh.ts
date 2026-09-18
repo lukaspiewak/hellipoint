@@ -8,7 +8,7 @@ import {
   MeshBasicMaterial,
 } from 'three';
 import type { Building, BuildingType, Planet } from '@heliopolis/sim';
-import { BUILDINGS } from '@heliopolis/sim';
+import { BUILDINGS, OUTAGE_UNLINKED } from '@heliopolis/sim';
 import type { PlanetGeometry } from './geometry.js';
 import type { Rgb } from './shading.js';
 
@@ -54,10 +54,49 @@ import type { Rgb } from './shading.js';
  * |---|---|---|
  * | `shell` | graniastosłup sześciokątny, ciemny | obecność budynku + jego TYP (rozmiar bryły) |
  * | `core`  | płaski sześciokąt na szczycie, jasny | `hp` — POLE jasnego rdzenia i jego BARWA |
- * | `alert` | płaski pierścień wokół podstawy, dwutonowy | `powered === false` |
+ * | `alert` | obręcz PRZERYWANA wokół podstawy, dwutonowa | `powered === false` |
+ * | `link`  | cztery wycinki DOMYKAJĄCE tę obręcz | budynek jest wprawdzie bez prądu, ale wciąż w sieci |
  *
- * Każda to jeden `InstancedMesh`, czyli trzy wywołania rysowania niezależnie od tego, czy
+ * Każda to jeden `InstancedMesh`, czyli cztery wywołania rysowania niezależnie od tego, czy
  * budynków jest jeden, czy 1442.
+ *
+ * ## Czwarta warstwa: DLACZEGO budynek nie ma prądu (Faza 2C, Zadanie 4, Krok 6)
+ *
+ * `powered === false` zlewało DWIE przyczyny, które wymagają DWÓCH różnych reakcji gracza:
+ *
+ * - **brownout** — sieć stoi, ale zabrakło mocy (`BROWNOUT_ORDER` gasi ekstraktory PIERWSZE,
+ *   więc cztery lasery po 12/s przy produkcji 10/s wyłączają kopalnie; to jest zmierzony
+ *   łańcuch Q3 z Fazy 1C). Reakcja: dobuduj produkcję albo rozbierz odbiornik;
+ * - **odcięcie od sieci** — nie ma drogi do CORE (`DISRUPTOR` zjadł pylony; Q4). Reakcja:
+ *   napraw pylon. Dobudowanie produkcji nie pomoże TUTAJ ani trochę.
+ *
+ * Kodowanie: **obręcz PRZERWANA znaczy „poza siecią", obręcz ZAMKNIĘTA — „w sieci, ale bez
+ * mocy"**. Metafora jest obwodem elektrycznym i czyta się bez instrukcji: przerwany obwód to
+ * zerwane połączenie.
+ *
+ * Dlaczego akurat kąt, skoro ograniczenia dopuszczały też barwę:
+ *
+ * - **promienia nie ma**. Budżet między największą bryłą (2,0) a sufitem komórki (3,1720) to
+ *   1,17 j.; obręcz zajmuje go w całości, a resztka 0,1420 j. należy do pulsu. Nowy pierścień
+ *   nie ma gdzie stanąć — a wewnątrz bryły miejsce jest tylko przy MAŁYCH typach, czyli
+ *   akurat nie tam, gdzie próg wiąże;
+ * - **barwa kosztuje dwa tony**. Żaden pojedynczy ton nie osiąga 3:1 wobec wszystkich trzech
+ *   pasm terenu (optimum 2,3202), więc czwarty komunikat barwny wymagałby kolejnej PARY
+ *   barw, obok trzech już zajętych („budynek", „ranny", „bez prądu"). Przerwa nie wnosi ani
+ *   jednej barwy: usuwa OBIE naraz, więc na nocy widać jej brak w pasie jasnym, a na dniu
+ *   i zmierzchu — w ciemnym. Dwutonowość jest dziedziczona, nie dokładana;
+ * - **kąt był jedynym wymiarem obręczy, którego nic nie zajmowało.** Do Zadania 4 obręcz
+ *   była pełnym, jednolitym okręgiem: 360° jednej informacji.
+ *
+ * Kanał pierścienia jako takiego pozostaje ZAJĘTY przez `powered === false` i nie został
+ * naruszony: obręcz jest pod każdym budynkiem bez prądu, a `alert.count` nadal równa się
+ * liczbie takich budynków. Przerwy są podziałem WEWNĄTRZ tego kanału, nie jego zamianą.
+ *
+ * Najgorszym członkiem populacji jest tu `PYLON`, i to nie przypadkiem: jego bryła jest
+ * najmniejsza, więc obręcz zaczyna się u niego najbliżej środka, a łuk o zadanym kącie jest
+ * tam najkrótszy. Przerwa ma u niego **2,01 px** na krawędzi pasa jasnego przy progu 1,00 px
+ * (`ALERT_BREAK_FRACTION`). `PYLON` to zarazem szkielet sieci, której awarię ten kanał
+ * zgłasza — czyli ten sam budynek, który jest najczęstszą PRZYCZYNĄ odcięcia sąsiadów.
  *
  * ## Czego tu NIE MA: tej warstwy nie ma w scenie bramki czytelności — i to jest decyzja
  *
@@ -462,7 +501,70 @@ export const ALERT_COLOR_DARK: Rgb = [0.02, 0.016, 0.008]; // [WYGLĄD]
 /** `[WYGLĄD]` Liczba boków bryły i rdzenia: sześciokąt, jak komórka pod spodem. */
 const SHELL_SIDES = 6; // [WYGLĄD]
 /** `[WYGLĄD]` Liczba boków pierścienia alarmu — tyle, żeby przy zbliżeniu czytał się jako okrąg. */
-const ALERT_SIDES = 24; // [WYGLĄD]
+export const ALERT_SIDES = 24; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Ile przerw ma pierścień budynku ODCIĘTEGO OD SIECI (Faza 2C, Zadanie 4, Krok 6).
+ *
+ * Cztery, nie jedna i nie dwanaście. Jedna czyta się jak artefakt rasteryzacji albo jak
+ * przesłonięcie przez sąsiada; dwanaście zjadłoby sam pierścień, czyli kanał NADRZĘDNY
+ * („ten budynek nie ma prądu"), który ma zostać czytelny niezależnie od tego, czy gracz
+ * rozpozna przyczynę. Cztery zostawiają 288° obręczy (80 %) i dają wzór, a nie wyjątek.
+ */
+export const ALERT_BREAK_COUNT = 4; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Kątowa szerokość JEDNEJ przerwy, jako ułamek pełnego obrotu (18°).
+ *
+ * ## Co ta liczba wiąże
+ *
+ * Przerwa jest oknem na teren, więc jej widoczność mierzy się jej NAJWĘŻSZYM wymiarem, a to
+ * jest łuk na WEWNĘTRZNEJ krawędzi widocznej części obręczy — czyli tam, gdzie promień jest
+ * najmniejszy. Najgorszym członkiem populacji jest `PYLON`: jego bryła (1,28) jest mniejsza
+ * od krawędzi wewnętrznej pierścienia (1,8786), więc obręcz zaczyna się u niego NAJBLIŻEJ
+ * środka i łuk o tym samym kącie jest tam najkrótszy. (Dla `CORE` bryła zasłania wszystko
+ * poniżej 2,0, więc przerwa jest o 6 % szersza.)
+ *
+ *   przerwa na krawędzi pasa jasnego, `PYLON`:  1,8786 × 0,31416 = **0,5902 j. = 2,01 px**
+ *   przerwa na krawędzi pasa ciemnego, `PYLON`: 2,5149 × 0,31416 = **0,7902 j. = 2,70 px**
+ *
+ * Próg z `global-constraints.md` wynosi **1,00 px** i wiąże ROZMIARY — przerwa jest
+ * rozmiarem, nie ruchem, więc obowiązuje bez zniżki. Dwukrotny zapas jest tu świadomy:
+ * próg pochodzi z werdyktu wzrokowego (§5.3 raportu Zadania 3), a nie z pomiaru
+ * rozdzielczości, więc wartość leżąca tuż nad nim byłaby wartością leżącą tuż nad
+ * OSZACOWANIEM. Para mutacji na samej granicy stoi w teście 26.
+ *
+ * ## PRZY JAKIM PŁÓTNIE — bo „2,01 px" bez tej informacji jest nieprawdą
+ *
+ * Wszystkie piksele w tym pliku liczą się przy **płótnie 900 px wysokości**
+ * (`CANVAS_HEIGHT_PX` w `test/support/pixelScale.ts`) — i to jest odniesienie CAŁEJ fazy,
+ * nie wybór tego kanału. Skala jest wprost proporcjonalna do wysokości płótna, więc
+ * w oknie podglądu 800×482, w którym uruchamia się bramkę, KAŻDA liczba pikselowa tej fazy
+ * kurczy się o czynnik 482/900 = 0,536:
+ *
+ *   | wielkość                          | przy 900 px | przy 482 px |
+ *   |-----------------------------------|-------------|-------------|
+ *   | obwódka rdzenia (`CORE_RIM`)      | 1,19        | **0,64**    |
+ *   | pas obręczy alarmu (najwęższy)    | 1,76        | **0,94**    |
+ *   | **przerwa obręczy (ten kanał)**   | **2,01**    | **1,08**    |
+ *
+ * Czyli: przy oknie podglądu ten kanał leży **na progu**, a nie dwa razy nad nim — ale jest
+ * przy tym NAJHOJNIEJSZY z trzech, bo dwa starsze są już pod progiem. Wniosek nie brzmi
+ * „poszerzyć przerwę", tylko: **werdykt wzrokowy o czymkolwiek w tej fazie zapada na
+ * płótnie ≥ 900 px, nie w oknie podglądu.** Przestrojenie tego założenia unieważnia
+ * wszystkie progi Fazy 2B naraz i jest decyzją o metodologii, nie o tej stałej.
+ *
+ * ## Dlaczego przerwa, a nie kolor
+ *
+ * Bo przerwa jest DARMOWA pod względem kontrastu. `global-constraints.md`: żaden pojedynczy
+ * ton nie osiąga 3:1 wobec wszystkich trzech pasm terenu (optimum 2,3202), więc każdy nowy
+ * obiekt musi nieść DWA tony. Przerwa nie wnosi ani jednego — usuwa OBA naraz, jasny i
+ * ciemny, na całej szerokości obręczy. Na paśmie nocy widać jej brak w pasie jasnym
+ * (bursztyn ma tam 7,80), na dniu i zmierzchu — w pasie ciemnym (8,19 i 14,63). Kanał
+ * dziedziczy więc dwutonowość pierścienia zamiast szukać czwartej barwy w palecie, w której
+ * trzy komunikaty („budynek", „ranny", „bez prądu") już siedzą.
+ */
+export const ALERT_BREAK_FRACTION = 0.05; // [WYGLĄD]
 
 /**
  * `[WYGLĄD]` Rozmiar bryły per typ: `radius` i `height` jako mnożniki
@@ -633,13 +735,65 @@ export function buildDiscGeometry(sides: number): BufferGeometry {
   return geometry;
 }
 
+/** Łuk kątowy obręczy: `[początek, koniec]` w radianach, `koniec > początek`. */
+export type AlertSpan = readonly [number, number];
+
 /**
- * Pierścień alarmu: płaska obręcz w `z = 0` od `ALERT_INNER_FACTOR` do 1, złożona z DWÓCH
- * pasów o barwach wpisanych w atrybut `color` — jasnego wewnątrz, ciemnego na zewnątrz.
- * Dwutonowość mieszka więc w geometrii, a nie w materiale, i jest ta sama dla każdej
- * instancji (`instanceColor` tej warstwy nie używa).
+ * Łuki obręczy alarmu w DWÓCH kompletach: przerywanym (`broken`) i domykającym go
+ * (`closing`). Razem pokrywają pełny obrót, bez zakładki i bez luki.
+ *
+ * Funkcja CZYSTA i eksportowana, żeby test mógł zbudować obręcz o innym kącie przerwy
+ * i ZMIERZYĆ ją tym samym przyrządem, co obręcz produkcyjną — bez tego para mutacji
+ * „0,99 px oblewa / 1,01 px przechodzi" wymagałaby edytowania stałej i ręcznego przebiegu.
+ *
+ * @throws {RangeError} gdy przerwa nie mieści się w swoim wycinku — pierścień bez łuków
+ *   nie jest pierścieniem, a kanał NADRZĘDNY („bez prądu") zniknąłby razem z nim.
  */
-function buildAlertGeometry(sides: number): BufferGeometry {
+export function alertSpans(
+  breakCount: number,
+  breakFraction: number,
+): { broken: AlertSpan[]; closing: AlertSpan[] } {
+  if (!Number.isInteger(breakCount) || breakCount < 1) {
+    throw new RangeError(`alertSpans: breakCount must be a positive integer, got ${breakCount}`);
+  }
+  const sector = (Math.PI * 2) / breakCount;
+  const gap = Math.PI * 2 * breakFraction;
+  if (!(gap > 0) || gap >= sector) {
+    throw new RangeError(
+      `alertSpans: break of ${breakFraction} of a turn (${gap} rad) does not fit in a sector ` +
+        `of ${sector} rad — the ring would have no arcs left and the "no power" channel ` +
+        'would disappear with them',
+    );
+  }
+  const broken: AlertSpan[] = [];
+  const closing: AlertSpan[] = [];
+  for (let k = 0; k < breakCount; k++) {
+    const start = k * sector;
+    closing.push([start, start + gap]);
+    broken.push([start + gap, start + sector]);
+  }
+  return { broken, closing };
+}
+
+/**
+ * Obręcz alarmu na zadanych łukach: płaska, w `z = 0`, od `ALERT_INNER_FACTOR` do 1,
+ * złożona z DWÓCH pasów o barwach wpisanych w atrybut `color` — jasnego wewnątrz, ciemnego
+ * na zewnątrz. Dwutonowość mieszka więc w geometrii, a nie w materiale, i jest ta sama dla
+ * każdej instancji (`instanceColor` tej warstwy nie używa).
+ *
+ * Gęstość podziału jest zadana NA PEŁNY OBRÓT (`segmentsPerTurn`), a nie na łuk: obie
+ * geometrie (przerywana i domykająca) mają wtedy tę samą krzywiznę cięciwy, więc szew
+ * między nimi nie jest widoczny jako załamanie.
+ *
+ * Eksportowane z tego samego powodu co `alertSpans`: próg czytelności przerwy (1,00 px na
+ * najgorszym członku populacji) ma być ZMIERZONY NA NARYSOWANEJ GEOMETRII, także dla kątów
+ * innych niż produkcyjny — inaczej para mutacji „0,99 px oblewa / 1,01 px przechodzi"
+ * wymagałaby edytowania stałej i ręcznego przebiegu, czyli nie byłaby testem.
+ */
+export function buildAlertGeometry(
+  spans: readonly AlertSpan[],
+  segmentsPerTurn: number,
+): BufferGeometry {
   // Wierzchołki pierścienia ROZDZIELONEGO na promieniu `ALERT_SPLIT_FACTOR` są ZDUBLOWANE
   // (rings[1] i rings[2] mają ten sam promień, różne barwy). Bez zdublowania GPU
   // interpolowałby barwę wzdłuż całej obręczy i zamiast dwóch tonów byłby jeden gradient —
@@ -647,43 +801,63 @@ function buildAlertGeometry(sides: number): BufferGeometry {
   // wierzchołkami na komórkę. Pas jasny i pas ciemny mają być PŁASKIE.
   const rings = [ALERT_INNER_FACTOR, ALERT_SPLIT_FACTOR, ALERT_SPLIT_FACTOR, 1];
   const ringColors = [ALERT_COLOR_LIGHT, ALERT_COLOR_LIGHT, ALERT_COLOR_DARK, ALERT_COLOR_DARK];
-  const positions = new Float32Array(sides * rings.length * 3);
-  const colors = new Float32Array(sides * rings.length * 3);
+
+  // Próbki kątowe wszystkich łuków, sklejone w jedną listę; `spanStart`/`spanCount` mówią,
+  // gdzie leży który łuk. Czworokąty łączą WYŁĄCZNIE próbki w obrębie jednego łuku — to
+  // jedyna różnica wobec pełnego okręgu, w którym ostatnia próbka wracała do pierwszej.
+  const angles: number[] = [];
+  const spanStart: number[] = [];
+  const spanCount: number[] = [];
+  for (const [from, to] of spans) {
+    const segments = Math.max(1, Math.ceil(((to - from) / (Math.PI * 2)) * segmentsPerTurn));
+    spanStart.push(angles.length);
+    spanCount.push(segments + 1);
+    for (let i = 0; i <= segments; i++) angles.push(from + ((to - from) * i) / segments);
+  }
+
+  const n = angles.length;
+  const positions = new Float32Array(n * rings.length * 3);
+  const colors = new Float32Array(n * rings.length * 3);
   for (let r = 0; r < rings.length; r++) {
     const color = ringColors[r];
-    for (let i = 0; i < sides; i++) {
-      const a = (i / sides) * Math.PI * 2;
-      const v = r * sides + i;
-      positions[v * 3] = Math.cos(a) * rings[r];
-      positions[v * 3 + 1] = Math.sin(a) * rings[r];
+    for (let i = 0; i < n; i++) {
+      const v = r * n + i;
+      positions[v * 3] = Math.cos(angles[i]) * rings[r];
+      positions[v * 3 + 1] = Math.sin(angles[i]) * rings[r];
       colors[v * 3] = color[0];
       colors[v * 3 + 1] = color[1];
       colors[v * 3 + 2] = color[2];
     }
   }
+
   // Dwa PASY (0→1 jasny, 2→3 ciemny); para 1→2 to szew o zerowej szerokości, pomijana.
   const bands = [0, 2];
-  const indices = new Uint16Array(sides * bands.length * 6);
+  let quads = 0;
+  for (const count of spanCount) quads += count - 1;
+  const indices = new Uint16Array(quads * bands.length * 6);
   let cursor = 0;
   for (const r of bands) {
-    for (let i = 0; i < sides; i++) {
-      const j = (i + 1) % sides;
-      const a0 = r * sides + i;
-      const b0 = r * sides + j;
-      const a1 = (r + 1) * sides + i;
-      const b1 = (r + 1) * sides + j;
-      // Nawinięcie przeciwne do wskazówek zegara PATRZĄC OD +Z, czyli od strony kamery:
-      // kolejność (wewnętrzny_i, zewnętrzny_j, wewnętrzny_j) daje normalną +Z. Odwrotna —
-      // (wewnętrzny_i, wewnętrzny_j, zewnętrzny_j), czyli pierwsza, jaką się pisze —
-      // daje −Z, więc `side: FrontSide` wycina CAŁY pierścień i alarm po prostu nie
-      // istnieje na ekranie. Zobaczone w przeglądarce; żaden test tego nie łapał, bo
-      // macierze instancji były poprawne (patrz raport Zadania 3).
-      indices[cursor++] = a0;
-      indices[cursor++] = b1;
-      indices[cursor++] = b0;
-      indices[cursor++] = a0;
-      indices[cursor++] = a1;
-      indices[cursor++] = b1;
+    for (let s = 0; s < spanStart.length; s++) {
+      for (let k = 0; k + 1 < spanCount[s]; k++) {
+        const i = spanStart[s] + k;
+        const j = i + 1;
+        const a0 = r * n + i;
+        const b0 = r * n + j;
+        const a1 = (r + 1) * n + i;
+        const b1 = (r + 1) * n + j;
+        // Nawinięcie przeciwne do wskazówek zegara PATRZĄC OD +Z, czyli od strony kamery:
+        // kolejność (wewnętrzny_i, zewnętrzny_j, wewnętrzny_j) daje normalną +Z. Odwrotna —
+        // (wewnętrzny_i, wewnętrzny_j, zewnętrzny_j), czyli pierwsza, jaką się pisze —
+        // daje −Z, więc `side: FrontSide` wycina CAŁY pierścień i alarm po prostu nie
+        // istnieje na ekranie. Zobaczone w przeglądarce; żaden test tego nie łapał, bo
+        // macierze instancji były poprawne (patrz raport Zadania 3).
+        indices[cursor++] = a0;
+        indices[cursor++] = b1;
+        indices[cursor++] = b0;
+        indices[cursor++] = a0;
+        indices[cursor++] = a1;
+        indices[cursor++] = b1;
+      }
     }
   }
   const geometry = new BufferGeometry();
@@ -763,7 +937,17 @@ export interface BuildingLayer {
   /** Wystawione dla testowalności — ten sam wzorzec co `PlanetMesh.mesh`/`outline`. */
   readonly shell: InstancedMesh;
   readonly core: InstancedMesh;
+  /**
+   * Obręcz PRZERYWANA — rysowana pod KAŻDYM budynkiem bez prądu, niezależnie od przyczyny.
+   * To jest kanał nadrzędny („ten budynek nie ma prądu") i on się nie zmienił: liczba
+   * instancji tej warstwy równa się liczbie budynków z `powered === false`.
+   */
   readonly alert: InstancedMesh;
+  /**
+   * Cztery wycinki DOMYKAJĄCE obręcz — rysowane tylko tam, gdzie budynek jest wprawdzie bez
+   * prądu, ale wciąż PODŁĄCZONY do sieci (`OUTAGE_SHED`). Razem z `alert` dają obręcz pełną.
+   */
+  readonly link: InstancedMesh;
   /**
    * Przepisuje macierze i barwy instancji z bieżącego `SimState.buildings`. Bezpieczne do
    * wołania co klatkę: NIC nie alokuje (test 16) i NICZEGO nie mutuje w wejściu (test 14).
@@ -777,12 +961,23 @@ export interface BuildingLayer {
    * wychylenia", bo warstwa bez zegara nie ma skąd go wziąć. Pulsowanie jest dziś domyślnym
    * wyglądem gry i wnosi je wywołujący (`scene.ts` → `apps/client`); patrz komentarz modułu.
    *
+   * @param outage przyczyna braku prądu per komórka — `PowerReport.outage` z `@heliopolis/sim`.
+   *   Pominięta znaczy „przyczyna nieznana": obręcz jest wtedy PEŁNA, czyli dokładnie taka,
+   *   jak przed Zadaniem 4. Warstwa **nie liczy jej sama** — `connectedToCore` to
+   *   przeszukiwanie całej planety, więc w pętli renderu byłaby tą samą pracą sześćdziesiąt
+   *   razy na sekundę zamiast dwadzieścia (i drugim źródłem prawdy o sieci).
    * @throws {RangeError} gdy `alertPulse` jest ujemny albo przekracza
    *   `planet.radius × ALERT_PULSE_AMPLITUDE_FACTOR`. Amplituda ponad sufit wyprowadza
    *   pierścień poza komórkę — a to jest dokładnie ta awaria, którą runda naprawcza 1
    *   Zadania 3 znalazła w 72 komórkach i którą test 8 pilnuje NA SZCZYCIE pulsu.
+   * @throws {RangeError} gdy `outage` ma inną długość niż lista budynków — dwie tablice
+   *   indeksowane tym samym `cellId`, których nic nie wiąże składniowo.
    */
-  update(buildings: readonly (Building | null)[], alertPulse?: number): void;
+  update(
+    buildings: readonly (Building | null)[],
+    outage?: Uint8Array,
+    alertPulse?: number,
+  ): void;
   dispose(): void;
 }
 
@@ -813,7 +1008,9 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
 
   const shellGeometry = buildShellGeometry(SHELL_SIDES);
   const coreGeometry = buildDiscGeometry(SHELL_SIDES);
-  const alertGeometry = buildAlertGeometry(ALERT_SIDES);
+  const spans = alertSpans(ALERT_BREAK_COUNT, ALERT_BREAK_FRACTION);
+  const alertGeometry = buildAlertGeometry(spans.broken, ALERT_SIDES);
+  const linkGeometry = buildAlertGeometry(spans.closing, ALERT_SIDES);
 
   // `MeshBasicMaterial` wszędzie — BEZ modelu oświetlenia, tak samo jak teren
   // (`global-constraints.md`). Materiał oświetlony wymagałby `THREE.Light` w scenie, a
@@ -827,18 +1024,22 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
   // mnoży `material.color × instanceColor`, więc każdy inny odcień tutaj po cichu
   // przesunąłby całą rampę.
   const coreMaterial = new MeshBasicMaterial({ color: 0xffffff });
+  // JEDEN materiał na obie części obręczy: barwy siedzą w atrybucie `color` geometrii, więc
+  // drugi materiał byłby drugim miejscem, w którym można by je po cichu rozjechać — a wtedy
+  // przerwana obręcz różniłaby się od pełnej NIE TYLKO przerwą.
   const alertMaterial = new MeshBasicMaterial({ vertexColors: true });
 
   const shell = new InstancedMesh(shellGeometry, shellMaterial, cellCount);
   const core = new InstancedMesh(coreGeometry, coreMaterial, cellCount);
   const alert = new InstancedMesh(alertGeometry, alertMaterial, cellCount);
+  const link = new InstancedMesh(linkGeometry, alertMaterial, cellCount);
 
   // Bufor barw instancji tworzony TERAZ, nie przy pierwszym `setColorAt` — inaczej
   // pierwsza klatka z budynkiem alokowałaby 17 kB w pętli renderu.
   const coreColors = new Float32Array(cellCount * 3);
   core.instanceColor = new InstancedBufferAttribute(coreColors, 3);
 
-  for (const mesh of [shell, core, alert]) {
+  for (const mesh of [shell, core, alert, link]) {
     // Sfera otaczająca `InstancedMesh` wynika z macierzy WSZYSTKICH instancji, więc po
     // każdej zmianie trzeba by ją przeliczać (przejście po 1442 macierzach z alokacją) —
     // albo zostawić nieaktualną i ryzykować, że cała warstwa zniknie odcięta ostrosłupem
@@ -849,11 +1050,12 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
   }
 
   const object = new Group();
-  object.add(shell, core, alert);
+  object.add(shell, core, alert, link);
 
   const shellMatrices = shell.instanceMatrix.array as Float32Array;
   const coreMatrices = core.instanceMatrix.array as Float32Array;
   const alertMatrices = alert.instanceMatrix.array as Float32Array;
+  const linkMatrices = link.instanceMatrix.array as Float32Array;
 
   /**
    * Parametry `writeInstance`, przekazywane przez ZAALOKOWANY RAZ bufor, a nie argumentami
@@ -922,11 +1124,21 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
     shell,
     core,
     alert,
+    link,
 
-    update(buildings: readonly (Building | null)[], alertPulse = 0): void {
+    update(
+      buildings: readonly (Building | null)[],
+      outage?: Uint8Array,
+      alertPulse = 0,
+    ): void {
       if (buildings.length !== cellCount) {
         throw new RangeError(
           `BuildingLayer.update: buildings.length (${buildings.length}) must equal planet.cells.length (${cellCount})`,
+        );
+      }
+      if (outage !== undefined && outage.length !== cellCount) {
+        throw new RangeError(
+          `BuildingLayer.update: outage.length (${outage.length}) must equal planet.cells.length (${cellCount})`,
         );
       }
       if (!(alertPulse >= 0 && alertPulse <= maxAlertPulse)) {
@@ -937,6 +1149,7 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
 
       let built = 0;
       let unpowered = 0;
+      let linked = 0;
       for (let i = 0; i < cellCount; i++) {
         const building = buildings[i];
         if (building === null || building === undefined) continue;
@@ -982,15 +1195,26 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
           params[2] = lift;
           writeInstance(alertMatrices, unpowered, i);
           unpowered++;
+          // Obręcz DOMYKANA wszędzie poza budynkiem odciętym od sieci — i przy braku
+          // informacji o przyczynie też, bo wtedy alarm ma wyglądać dokładnie tak, jak
+          // wyglądał przed Zadaniem 4, zamiast zgłaszać awarię sieci, której nikt nie
+          // stwierdził. Ta sama macierz co obręcz: oba komplety łuków są rozłączne kątowo,
+          // więc nic się nie nakłada i nie biją się o bufor głębokości.
+          if (outage === undefined || outage[i] !== OUTAGE_UNLINKED) {
+            writeInstance(linkMatrices, linked, i);
+            linked++;
+          }
         }
       }
 
       shell.count = built;
       core.count = built;
       alert.count = unpowered;
+      link.count = linked;
       shell.instanceMatrix.needsUpdate = true;
       core.instanceMatrix.needsUpdate = true;
       alert.instanceMatrix.needsUpdate = true;
+      link.instanceMatrix.needsUpdate = true;
       if (core.instanceColor) core.instanceColor.needsUpdate = true;
     },
 
@@ -998,12 +1222,14 @@ export function createBuildingLayer(planet: Planet, geo: PlanetGeometry): Buildi
       shellGeometry.dispose();
       coreGeometry.dispose();
       alertGeometry.dispose();
+      linkGeometry.dispose();
       shellMaterial.dispose();
       coreMaterial.dispose();
       alertMaterial.dispose();
       shell.dispose();
       core.dispose();
       alert.dispose();
+      link.dispose();
     },
   };
 }

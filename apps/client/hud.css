@@ -1,0 +1,202 @@
+/*
+  STYL PANELU HUD — WSPÓLNY dla gry (`index.html`) i dla bramki czytelności PRZYCZYNOWEJ
+  (`causal-gate.html`).
+
+  Wydzielony w Zadaniu 6 i to NIE jest porządkowanie. Bramka pyta, czy z EKRANU GRY da się
+  odczytać przyczynę. Gdyby miała własną kopię tych reguł, mierzyłaby ekran, który tylko
+  WYGLĄDA jak gra — a rozjazd jednej liczby (rozmiaru czcionki, wyściółki, koloru
+  ostrzeżenia) unieważniałby wynik bramki po cichu, bo nic by go nie łączyło z grą.
+  Jeden plik, dwie strony, żadnej kopii.
+
+  Liczby układu odbite w `hud.ts` (`HUD_FONT_SIZE_PX`, `HUD_HORIZONTAL_CHROME_PX`) są
+  wiązane z tym plikiem testem 33 w `apps/client/test/hud.test.ts`.
+*/
+
+/*
+PANEL ZASOBÓW I BUDOWY (Faza 2C, Zadanie 3).
+
+Wygląd mieszka TUTAJ, a nie w `hud.ts`: tam wylądowałby jako kilkanaście liczb
+`[WYGLĄD]` w napisach ze stylem, których nie da się obejrzeć razem. `hud.ts` ustawia
+wyłącznie klasy i treść.
+
+Wysokość odniesienia to okno ~480 px — tak samo jak w `scene-gate.html`, i z tego
+samego powodu: przy 1080 px wada układu jest niewidoczna, a w Fazie 2B kontrolki
+schowane pod krawędzią przewijania unieważniły cztery z pięciu pomiarów bramki.
+Panel ma dziewięć pozycji i dwie linie nagłówka, czyli ~190 px — mieści się bez
+przewijania; `max-height`/`overflow` są tu wyłącznie jako zderzak.
+
+Lewy DÓŁ, a nie góra: górny lewy róg zajmuje nakładka diagnostyczna (liczniki
+budżetu), a panel gracza nie ma z nią konkurować o to samo miejsce.
+*/
+#hud {
+  position: fixed;
+  left: 8px;
+  bottom: 8px;
+  z-index: 10;
+  /*
+    `max-width` to SUFIT, nie podłoga — i dlatego nie da się nim wymusić minimalnego
+    okna. Runda naprawcza 2 wpisała tu `calc(max(100vw, 840px) - 16px)` w przekonaniu,
+    że to egzekwuje `MIN_WINDOW_WIDTH_PX`. ZMIERZONE W PRZEGLĄDARCE i nieprawda: panel
+    jest `position: fixed` bez `right`, więc jego szerokość to shrink-to-fit ograniczony
+    DOSTĘPNYM miejscem (`100vw − left`), a sufit większy od okna nie ma na co działać.
+    Przy oknie 840×600 panel ma 666 px i ZERO zawiniętych wierszy — identycznie z tą
+    regułą i z `calc(100vw - 16px)`. Sufit wyższy od okna nie zmieniał ani piksela.
+
+    Co naprawdę obowiązuje: przy oknie ≥ 840 px treść ma 816 px, a najdłuższy możliwy
+    wiersz (111 znaków) 802 px — więc nic się nie zawija. To jest WARUNEK WSTĘPNY
+    budżetu znaków, nie coś, co arkusz wymusza. Poniżej tej szerokości `pre-wrap`
+    zawija zamiast ucinać, więc nic nie znika (przewijanie poziome byłoby gorsze —
+    Zadanie 3 zmierzyło powód odmowy schowany za paskiem).
+  */
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(8, 12, 18, 0.82);
+  color: #e8f0ff;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /*
+    Kolumny menu są wyrównane spacjami (`padEnd`/`padStart` w `hud.ts`), więc krój MUSI
+    być o stałej szerokości znaku, a spacje nie mogą być zwijane.
+
+    `pre-wrap`, nie `pre`, i to jest naprawa ZMIERZONA NA EKRANIE przy oknie 380 px:
+    pod `pre` wiersz „9 EVACUATION_MODULE 300 jeszcze zamknięty…" ma ~84 znaki (~605 px)
+    i wychodził poza `max-width`, więc powód odmowy chował się za poziomym paskiem
+    przewijania. To jest DOKŁADNIE wada Fazy 2B, przez którą kontrolki pod krawędzią
+    przewijania unieważniły cztery z pięciu pomiarów bramki czytelności — tyle że tym
+    razem chowała się przyczyna, po którą całe to zadanie istnieje.
+
+    `pre-wrap` zachowuje spacje (więc kolumny dalej się zgadzają), a przy wąskim oknie
+    zawija zdanie odmowy do następnej linii zamiast je ucinać. Przy szerokości, na której
+    wiersz się mieści, nic się nie zmienia.
+  */
+  white-space: pre-wrap;
+  user-select: none;
+}
+/*
+  ZAKOŃCZENIE RUNU (Faza 2C, Zadanie 5). Pusty, dopóki run biegnie — pusty `div` bez
+  treści nie tworzy pudełka liniowego, więc w czasie gry nie kosztuje ani piksela
+  wysokości panelu i prześwit nad Core zmierzony w Zadaniu 4 zostaje.
+
+  Jedna klasa na oba zakończenia, nie dwie: różnicę niesie ZDANIE („ZWYCIĘSTWO"
+  kontra „PRZEGRANA"), a osobny kolor dla każdej fazy byłby trzecim kanałem na tę
+  samą informację. Wyróżnienie jest potrzebne wobec RESZTY PANELU, nie wobec drugiego
+  zakończenia — run kończy się raz i gracz ma to zauważyć.
+*/
+#hud .hud-outcome:not(:empty) {
+  margin: 0 0 4px 0;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(232, 240, 255, 0.12);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+#hud .hud-resources {
+  font-weight: 700;
+}
+/*
+  DWA WIERSZE NAGŁÓWKA, nie cztery — i to jest naprawa czytelności, nie oszczędność
+  miejsca. Runda naprawcza 1 Zadania 4: bilans i jego skutek jako osobne wiersze
+  podniosły górną krawędź panelu z `y = 260` na `y = 224` przy oknie 800×482, a skrót
+  „wróć do Core" parkuje Core w środku płótna (`y = 241`). W chwili brownoutu — jedynej,
+  w której nowy kanał w świecie coś znaczy — Core leżał pod tą płachtą.
+
+  Napisy są SPANAMI wewnątrz wiersza (patrz `createHudView`), więc każda para dzieli
+  jedną linię: zasoby + wskazana komórka, bilans + jego skutek.
+*/
+#hud .hud-line {
+  margin: 0;
+}
+/*
+  BILANS ENERGII (Faza 2C, Zadanie 4). Produkcja i pobór to wielkości NA SEKUNDĘ, więc
+  stoją w innym wierszu niż zapasy — czytane razem z „rudą" wyglądałyby jak zapas.
+*/
+#hud .hud-power {
+  color: #cbd7e8;
+}
+/* Ten sam odstęp przed menu, który do Zadania 4 niósł wiersz wskazania. */
+#hud .hud-line--power {
+  margin-bottom: 4px;
+}
+/*
+  POBÓR ENERGII przy pozycji menu (runda naprawcza 1 Zadania 4) — druga z dwóch liczb,
+  z których gracz wylicza sprawcę brownoutu (4 × 12/s = 48/s). Przygaszony wobec nazwy
+  i kosztu, bo to dana do SPRAWDZENIA, a nie do wyboru: koszt gracz czyta przy każdym
+  kliknięciu, pobór — wtedy, gdy szuka, co zjada prąd.
+*/
+#hud .hud-drain {
+  color: #9fb2cc;
+}
+/*
+  SKUTEK niedoboru. Bursztyn jest TEN SAM, co jasny pas pierścienia alarmu w świecie
+  (`ALERT_COLOR_LIGHT` = liniowe [1; 0,72; 0,12], po zakodowaniu do sRGB #ffdd5c) — i to
+  nie jest zbieg okoliczności: gracz ma połączyć zdanie w panelu z obręczami, które
+  właśnie zapaliły się na kuli. Wiersz zgaszenia jest MOCNIEJSZY niż wiersz drenażu
+  magazynu, bo to dwie różne pilności: pierwsze już się stało, drugie dopiero grozi.
+*/
+#hud .hud-shortfall--drain {
+  color: #ffdd5c;
+}
+#hud .hud-shortfall--shed {
+  color: #ffdd5c;
+  font-weight: 700;
+}
+#hud .hud-headline {
+  color: #9fb2cc;
+}
+/* Faza inna niż RUNNING: symulacja kasuje kolejkę komend, więc sterowanie NAPRAWDĘ
+   przestaje działać. Ostrzegawczy kolor, żeby nikt nie szukał usterki w myszy. */
+#hud .hud-headline--over {
+  color: #ff9a76;
+  font-weight: 700;
+}
+/*
+  TRAFIALNOŚĆ WSKAŹNIKIEM NIE MIESZKA W TYM ARKUSZU.
+
+  `pointer-events` ustawia `hud.ts` przy budowie panelu (korzeń `none`, wąska „łapka"
+  wiersza `auto`) i to jest celowe: to kontrakt ZACHOWANIA, nie wygląd, a arkusza
+  Vitest nie czyta — naprawa zapisana tutaj nie miałaby strażnika. Uzasadnienie
+  i zmierzone liczby: doc-comment `createHudView`.
+*/
+#hud .hud-row {
+  padding: 0 4px;
+  border-left: 2px solid transparent;
+}
+/* Klikalna jest WYŁĄCZNIE „łapka" (numer, nazwa, koszt) — i tylko ona pokazuje, że
+   jest klikalna. Zdanie z powodem odmowy leży na planecie i przepuszcza wskaźnik. */
+#hud .hud-pick {
+  cursor: pointer;
+}
+#hud .hud-pick:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+#hud .hud-row--refused {
+  color: #8b97ab;
+}
+/* Nie stać gracza — kanał NIEZALEŻNY od powodu odmowy, bo `canBuild` zwraca powód
+   PIERWSZY: na komórce zajętej pozycja za 300 wygląda inaczej niż ta za 8, choć obie
+   mówią „zajęte". */
+#hud .hud-row--poor {
+  border-left-color: #d08a3c;
+}
+#hud .hud-row--selected {
+  background: rgba(120, 180, 255, 0.18);
+  color: #ffffff;
+}
+
+/*
+  TRYB KONTROLI POZYTYWNEJ bramki czytelności przyczynowej (Faza 2C, Zadanie 6).
+
+  Ukrywa LINIĘ BILANSU — jeden z dwóch kanałów przyczyny, które kontrola usuwa (drugim jest
+  rozróżnienie obręczy alarmu, robione w `causalGate.ts`). Ukrycie przez CSS, a nie przez
+  podanie panelowi wyzerowanego raportu: zerowy bilans byłby KŁAMSTWEM na ekranie
+  („prąd 0,0/s z 0,0/s potrzebnych"), a kontrola ma informację USUWAĆ, nie podmieniać.
+
+  Reguła stoi we WSPÓLNYM arkuszu, nie w bramce, bo dotyczy elementu panelu — gdyby panel
+  przemianował swoje klasy, ta reguła ma się psuć razem z nim, nie cicho przestać działać.
+*/
+#hud.hud-blind .hud-line--power,
+#hud.hud-blind .hud-storage {
+  display: none;
+}

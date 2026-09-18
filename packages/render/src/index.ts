@@ -9,6 +9,7 @@ export const RENDER_VERSION = '0.0.0';
 // `mountEmptyCanvas`/`EmptyCanvasHandle` — w pełni zastąpione przez `createScene` —
 // zostały usunięte zamiast zostać martwym, nieużywanym eksportem.
 export { buildPlanetGeometry, type PlanetGeometry } from './geometry.js';
+export { pickCell } from './picking.js';
 export {
   DEFAULT_OUTLINE_PALETTE,
   DEFAULT_PALETTE,
@@ -21,6 +22,7 @@ export {
   type Rgb,
 } from './shading.js';
 export {
+  cameraRay,
   clampDistance,
   createCamera,
   distanceLimits,
@@ -33,15 +35,19 @@ export {
   ORBIT_ROTATE_SPEED,
   ORBIT_ZOOM_SPEED,
   type OrbitCamera,
+  worldToNdc,
 } from './camera.js';
 export {
   alertPulse,
+  alertSpans,
   buildCellBases,
   buildDiscGeometry,
   coreScale,
   createBuildingLayer,
   healthFraction,
   writeCoreColor,
+  ALERT_BREAK_COUNT,
+  ALERT_BREAK_FRACTION,
   ALERT_COLOR_DARK,
   ALERT_COLOR_LIGHT,
   ALERT_INNER_FACTOR,
@@ -60,6 +66,7 @@ export {
   SHELL_TAPER,
   SURFACE_LIFT_FACTOR,
   type AlertPulseOffset,
+  type AlertSpan,
   type BuildingLayer,
 } from './buildingMesh.js';
 export {

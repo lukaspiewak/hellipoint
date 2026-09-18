@@ -50,7 +50,15 @@ Zweryfikowane w kodzie 2026-09-17. Budowanie tego jeszcze raz byłoby czystą st
 
 **Czego NIE ma i trzeba zbudować:** wskazania komórki (`grep -rn "Raycaster"` → zero trafień), jakiegokolwiek HUD, wysyłania komend z klienta, widocznego bilansu energii.
 
-**Kluczowy fakt geometryczny dla Zadania 1:** wielościan Goldberga jest **diagramem Voronoi swoich środków** — komórka to dokładnie zbiór punktów sfery bliższych jej środkowi niż każdemu innemu. Wskazanie komórki nie wymaga więc raycastu po trójkątach: wystarczy przeciąć promień ze sferą i wziąć **najbliższy środek**. Wynik jest dokładny, a nie przybliżony.
+**Kluczowy fakt geometryczny dla Zadania 1 — POPRAWIONY PO ZADANIU 1, bo pierwsza wersja była fałszywa.**
+
+Pierwotnie napisałem tu, że wielościan Goldberga **jest** diagramem Voronoi swoich środków, więc „najbliższy środek" daje wynik **dokładny**. To nieprawda dla **tej** konstrukcji. `buildDual` (`packages/sim/src/world/dual.ts:28-30`) buduje narożniki jako **centroidy** trójkątów siatki geodezyjnej, a nie jako **cyrkumcentry** — a te pokrywają się wyłącznie dla trójkąta równobocznego, czego subdywizja nie gwarantuje. Dokładnym diagramem Voronoi byłby dual z cyrkumcentrów.
+
+**Zmierzony skutek** (wykonawca Zadania 1 na 2000 próbek, ja niezależnie na 20 000): dla **1,25–1,46%** losowych punktów sfery „najbliższy środek" **nie zgadza się** z „wewnątrz narysowanego wieloboku". Niezgodność zawsze dotyczy **bezpośredniego sąsiada**, a pas niezgody leży 10–100× **poniżej jednego piksela** ekranu — przy kroku grafu 5,74°, czyli **34,2 px** przy domyślnej odległości kamery.
+
+**Ruling:** zostajemy przy „najbliższym środku". Uzasadnienie: pas niezgody jest podpikselowy, więc gracz nie ma jak w niego trafić, a uzależnienie `picking.ts` od buforów `buildPlanetGeometry` byłoby gorszym handlem niż podpikselowa nieścisłość — moduł jest dziś wolny od Three.js i od geometrii renderu. **Ale nie wolno twierdzić, że wynik jest dokładny.** Jest dokładny co do piksela, nie co do definicji.
+
+**Osobne odkrycie, POZA zakresem tej fazy:** czy `buildDual` powinien używać cyrkumcentrów, jest pytaniem o Fazę 1A. Zmiana przesunęłaby narożniki **każdej** komórki, czyli unieważniła wszystkie baseline'y renderu łącznie z odległością barw przez terminator (0,9005). Nie teraz.
 
 ---
 
@@ -69,7 +77,7 @@ liczba, która przeżyje swoje wejście.
 | `freeHexagonNear(s: SimState): number` | indeks **pustego heksagonu** w zasięgu sieci od `startCell` — czyli takiego, na którym `canBuild(s, id, 'BARRICADE').ok === true` |
 | `fourFreeHexagonsNear(s: SimState): number[]` | cztery różne takie indeksy; rzuca, jeśli nie ma czterech |
 | `mulberry32(seed: number): () => number` | prosty PRNG **wyłącznie do testów**, żeby losowe promienie w Zadaniu 1 były powtarzalne. **Nie używaj `Rng` z `packages/sim`** — tamten jest częścią kontraktu determinizmu i wiązanie testu renderu z jego strumieniem byłoby kotwicą na cudzy moduł (ta wada wystąpiła w Fazie 2B trzy razy) |
-| `defeatedStateWithLastDamager(type: EnemyType): SimState` | stan z `phase === 'DEFEAT'` i zapamiętanym typem, który zadał ostatnie obrażenia Core. **Jeśli `SimState` tego nie zapamiętuje — to jest odkrycie Zadania 5, nie luka planu:** pole trzeba wtedy dołożyć, a jego koszt (snapshot Fazy 5) rozstrzygnąć i zapisać |
+| `defeatedStateWithDamager(type: EnemyType): { state: SimState; lastCoreDamager: EnemyType }` | stan z `phase === 'DEFEAT'` plus typ, który zadał ostatnie obrażenia Core. **Sprawdzone w przeglądzie wstępnym: `SimState` tego NIE zapamiętuje.** Rozstrzygnięcie niżej |
 
 ---
 
@@ -147,6 +155,20 @@ Run: `npx vitest run packages/render/test/picking.test.ts` → PASS.
 
 - [ ] **Krok 5: Test własności Voronoi — to jest właściwy strażnik**
 
+> **DEFEKT PLANU, naprawiony po Zadaniu 1 — przeczytaj, zanim przepiszesz kod niżej.**
+> Pierwsza wersja tego kroku losowała promienie **osiowe** (`origin = 4R·n`, `direction = −n`),
+> więc punkt trafienia równał się `n` **z konstrukcji**, a wyrocznia porównywała właśnie z `n`.
+> To pierwsza pozycja katalogu wad tej fazy — *asercja prawdziwa z konstrukcji wejścia* —
+> i napisałem ją tu własnoręcznie. Zmierzony skutek: **siedem z ośmiu mutacji na kodzie
+> produkcyjnym przeszło na zielono**, w tym usunięcie normalizacji kierunku (72,4% realnych
+> kliknięć złych) i podmiana punktu trafienia na `−d·R` (99,4% złych). Dla skali: na siatce
+> 81×81 promieni ekranowych w planetę trafia 2885, a **osiowy jest dokładnie jeden**.
+>
+> **Promienie muszą być SKOŚNE:** losuj punkt trafienia i pozycję kamery **osobno**, tak żeby
+> promień nie przechodził przez środek planety. Dołóż też **deterministyczny przelot po
+> wszystkich 1442 komórkach** — losowanie 2000 próbek pokrywa 1067 z nich, więc błąd o jeden
+> w skanie jest dla niego niewidoczny.
+
 Poprzednie dwa testy sprawdzają dwa punkty. Ten sprawdza **własność**, i oblewa, gdy ktoś zamieni „najbliższy środek" na cokolwiek innego:
 
 ```ts
@@ -203,14 +225,20 @@ git commit -m "Faza 2C/1: wskazanie komorki przez wlasnosc Voronoi, nie raycast 
 **Interfejsy:**
 - Konsumuje: `pickCell` (Zadanie 1), `canBuild`/`Command` z `@heliopolis/sim`, `focusPosition` z `@heliopolis/render`.
 - Produkuje: `screenToRay(camera, canvas, clientX, clientY): {origin, direction}` oraz `intentFromPointer(...)` zwracające `{ kind:'BUILD'|'DEMOLISH', cellId, type? } | null`.
+- Produkuje też **stan wyboru**: `selectedCell: number | null` i `selectedType: BuildingType`, trzymane w kliencie i aktualizowane ruchem kursora oraz wyborem z menu. **Rozstrzygnięcie przeglądu wstępnego:** wybór należy do wejścia, nie do HUD — Zadanie 3 dostaje `cellId` jako argument `buildMenuRows(s, cellId)` i samo niczego nie pamięta. Gdyby wybór mieszkał w HUD, ten sam stan miałby dwóch właścicieli.
 
 **To zadanie zakłada pakiet testowy w `apps/client`.** Dziś go nie ma; dodaj minimalną konfigurację Vitest dla tego workspace'u i **trzymaj logikę wejścia POZA modułami dotykającymi DOM**, żeby dała się testować bez przeglądarki. To jest bezpośrednia reakcja na defekt Fazy 2B, w którym wada zamknięta w kliencie unieważniła cztery z pięciu pomiarów bramki.
 
 - [ ] **Krok 1: Test zamiany współrzędnych ekranu na promień**
 
+**Nie buduj własnej atrapy płótna.** `packages/render/test/support/fakeCanvas.ts` już istnieje
+i jest udokumentowana co do tego, które pola faktycznie czyta `OrbitControls` — ale ma dziś
+`clientWidth`/`clientHeight` i **nie ma `getBoundingClientRect`**. Rozszerz **ją**, a nie twórz
+drugiej. Kopia atrapy w pliku testowym to następna liczba, która przeżyje swoje wejście.
+
 ```ts
 it('1. kliknięcie w środek kadru daje promień wzdłuż osi patrzenia kamery', () => {
-  const canvas = { clientWidth: 800, clientHeight: 600, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+  const canvas = createFakeCanvas(800, 600);   // rozszerzona o getBoundingClientRect
   const camera = new PerspectiveCamera(50, 800 / 600, 1, 1000);
   camera.position.set(0, 0, 300);
   camera.lookAt(0, 0, 0);
@@ -377,6 +405,16 @@ W `power.ts` policz `rawDemand` w tej samej pętli co `demand`, **przed** kaskad
 
 - [ ] **Krok 4: Uruchom — ma przejść.**
 
+- [ ] **Krok 0: meldunki strukturalne zamiast gotowych napisów** (rozstrzygnięcie po Zadaniu 3)
+
+Zadanie 3 zgłosiło rozjazd, którego nie naprawiło po cichu — i słusznie, bo naprawa rusza kontrakt z Zadania 2. Panel mówi po polsku („komórka zajęta — najpierw rozbierz"), a **nakładka diagnostyczna obok pokazuje surowy `odmowa: CELL_OCCUPIED`**. Gracz widzi jedno i drugie naraz.
+
+Przyczyna: `report(message: string)` w `input.ts` dostaje napis **już sformatowany**, więc nie ma czego przetłumaczyć. Zmień go na **strukturalny** (powód plus dane), tak żeby jedno źródło komunikatów obsługiwało oba miejsca. Testy 21/22 Zadania 2 wiążą dzisiejsze napisy — zaktualizuj je.
+
+Przy okazji: `refusalReason` ma **dwa powody spoza siódemki `canBuild`** — `NOTHING_TO_DEMOLISH` i `CORE_INDESTRUCTIBLE`. Słownik ma po tej zmianie obejmować **dziewięć**, a własność z Zadania 3 („każdy powód ma komunikat, oblewa przy dodaniu nowego bez komunikatu") ma objąć wszystkie dziewięć, nie siedem.
+
+**Nazwy budynków zostają angielskimi identyfikatorami** (`LASER_TURRET`) — to nie jest zaniedbanie tego kroku. Polskie nazwy byłyby drugim słownikiem bez źródła, z którym dałoby się je związać własnością (w odróżnieniu od powodów, które mają źródło w `commands.ts`), i rozjechałyby się z meldunkami oraz skrótami 1-9. Decyzja należy do Fazy 4 razem z kierunkiem artystycznym i onboardingiem.
+
 - [ ] **Krok 5: HUD pokazuje bilans, nie samą liczbę**
 
 Trzy wielkości: **produkcja**, **zapotrzebowanie (`rawDemand`)**, **magazyn**. Gdy `rawDemand > supply`, HUD nazywa **co zostało zgaszone** — z `shedTypes`, po polsku, w kolejności gaszenia.
@@ -443,14 +481,16 @@ it('1. przed evacUnlockTick menu odmawia z EVAC_LOCKED i podaje, ile zostało', 
 
 - [ ] **Krok 5: Trzy fazy mają trzy zakończenia na ekranie**
 
+**Rozstrzygnięcie przeglądu wstępnego — gdzie mieszka „co zniszczyło Core".** Sprawdziłem: `SimState` nie zapamiętuje tego dziś w żadnej postaci. Pole ma powstać **POZA `SimState`**, jako `Sim.lastCoreDamager: EnemyType | null`, dokładnie tak jak `Sim.lastPower` z Zadania 4 — i z tego samego powodu: **nic w logice symulacji tego nie czyta**, więc nie ma prawa wejść do `stateHash` ani obciążyć snapshotu Fazy 5. Raport z ticku nie jest stanem. Gdyby kiedyś któraś mechanika zaczęła to czytać, przeniesienie do stanu będzie świadomą zmianą, a nie skutkiem ubocznym ekranu porażki.
+
 `RUNNING`, `VICTORY`, `DEFEAT`. Przy `DEFEAT` — **powód**, nie sam fakt: run kończy się utratą Core, więc ekran ma powiedzieć **co zniszczyło Core** (ostatni typ wroga, który zadał obrażenia). To jest ta sama zasada co Zadanie 4 i wprost przygotowuje bramkę z Zadania 6.
 
 - [ ] **Krok 6: Test — ekran porażki niesie przyczynę**
 
 ```ts
 it('2. ekran porażki nazywa typ, który zniszczył Core', () => {
-  const s = defeatedStateWithLastDamager('ARMOR');
-  expect(defeatSummary(s)).toContain('ARMOR');
+  const { state, lastCoreDamager } = defeatedStateWithDamager('ARMOR');
+  expect(defeatSummary(state, lastCoreDamager)).toContain('ARMOR');
 });
 ```
 

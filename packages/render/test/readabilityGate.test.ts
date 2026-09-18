@@ -365,17 +365,49 @@ describe('Krok 1 Zadania 5: kamera NIE celuje w pytaną komórkę', () => {
     // Połówka „ma przejść" jest tu ważniejsza od połówki „ma oblać": mierzy, że test 5c
     // orzeka o POŁOŻENIU NA EKRANIE, a nie o samych liczbach w `CameraOffset`.
     const cellId = 733;
-    const cell = planet.cells[cellId];
-    const normal = new Vector3(cell.normal.x, cell.normal.y, cell.normal.z);
-    const screenOffset = (degrees: number): number => {
-      const aim = aimDirection(planet, cellId, { polarRad: (degrees * Math.PI) / 180, azimuthRad: 0.7 });
+    const screenOffset = (degrees: number, id: number = cellId): number => {
+      const aim = aimDirection(planet, id, { polarRad: (degrees * Math.PI) / 180, azimuthRad: 0.7 });
       const view = new Vector3(aim.x, aim.y, aim.z);
-      // Odległość rzutu komórki od środka tarczy, w jednostkach świata.
-      return Math.sin(Math.acos(Math.min(1, view.dot(normal)))) * planet.radius;
+      // Odległość rzutu komórki od środka tarczy, w jednostkach świata: R·sin(kąt).
+      //
+      // `|view × normal| · R`, a NIE `sin(acos(view·normal)) · R` — dla wektorów
+      // jednostkowych obie postacie są tą samą wielkością, ale druga ma podłogę szumu
+      // własnego, która przewraca próg niżej. `acos` blisko jedynki podnosi błąd do
+      // pierwiastka: iloczyn skalarny obarczony kilkoma ULP daje kąt rzędu 1,5·10⁻⁸ rad,
+      // czyli offset do **2,581·10⁻⁶** — pięć tysięcy razy ponad tolerancję `toBeCloseTo(0, 9)`.
+      //
+      // ZMIERZONE na wszystkich 1442 komórkach tej planety (przegląd rundy 1): starym
+      // przyrządem **814 z nich** dawało iloczyn różny od 1.0 i niezerowy offset — test był
+      // zielony WYŁĄCZNIE dlatego, że wpisana na sztywno `cellId = 733` trafia na komórkę,
+      // dla której iloczyn wychodzi dokładnie 1.0. Zmiana komórki, seeda albo jednego
+      // zaokrąglenia w `buildDual` (otwarte pytanie Fazy 1A) czerwieniłaby go bez żadnego
+      // defektu. Postać z iloczynem wektorowym daje dla wszystkich 1442 dokładnie 0, bo
+      // `|a × a| = 0` wychodzi z odejmowania identycznych iloczynów, nie z `acos`.
+      //
+      // Przy okazji znika druga usterka tamtej postaci: `Math.min(1, …)` przycinał iloczyn
+      // tylko z GÓRY, więc para bliska antypodom dawałaby `acos` poza dziedziną, czyli `NaN`.
+      const n = planet.cells[id].normal;
+      return view.clone().cross(new Vector3(n.x, n.y, n.z)).length() * planet.radius;
     };
     // Widoczny promień tarczy z odległości startowej `3R`: `R × sqrt(1 − 1/9)` = 94,3.
     const discRadius = planet.radius * Math.sqrt(1 - 1 / 9);
     expect(screenOffset(0)).toBeCloseTo(0, 9); // tuż PRZED: dawne zachowanie, komórka na środku
+    // …i to samo dla KAŻDEJ komórki, nie tylko dla wpisanej na sztywno. Wybrana komórka
+    // przestaje być częścią przesłanki testu: gdyby próg zależał od tego, na którą się
+    // trafi (a przy starym przyrządzie zależał — 814 z 1442 dawało niezerowy offset),
+    // ten przebieg by to pokazał.
+    let worstZeroOffset = 0;
+    for (let id = 0; id < planet.cells.length; id++) {
+      worstZeroOffset = Math.max(worstZeroOffset, screenOffset(0, id));
+    }
+    // TOLERANCJA, nie równość bitowa. Dzisiejszy `aimDirection` przy polar 0 zwraca
+    // normalną co do bitu, więc `toBe(0)` przechodzi — ale kotwiczyłoby test na TOŻSAMOŚCI
+    // ALGEBRAICZNEJ, której nikt nie obiecywał: neutralny znaczeniowo refaktor (normalizacja
+    // wyniku `aimDirection`) daje 7,85·10⁻¹⁵ i czerwieniłby ten test bez żadnego defektu.
+    // 5·10⁻¹⁰ to ta sama tolerancja, którą miała linia zastąpiona w rundzie 1 — i leży
+    // 160 000× nad tym szumem, a jednocześnie 5000× pod błędem starego przyrządu
+    // (`sin(acos(x))`, do 2,581·10⁻⁶), który ten test miał przestać przepuszczać.
+    expect(worstZeroOffset).toBeCloseTo(0, 9);
     expect(screenOffset(CAMERA_OFFSET_MIN_DEGREES) / discRadius).toBeGreaterThan(0.25);
     expect(screenOffset(CAMERA_OFFSET_MAX_DEGREES) / discRadius).toBeLessThan(0.62); // wciąż daleko od limbu
   });
@@ -1081,16 +1113,24 @@ describe('bramka a krata komórek (Faza 2B, Zadanie 2 — runda naprawcza 1)', (
     // do kontroli ANI JEDNEGO widocznego obiektu.
     expect(inControl.size).toBe(2);
 
-    // WŁASNOŚĆ 3: w trybie ocenianym widać osiem — teren, krata, trzy warstwy budynku
-    // (bryła, rdzeń, pierścień alarmu), dwie warstwy jednostki (tarcza, rdzeń) i znacznik.
-    // Liczba WPISANA WPROST, nie „co najmniej": dołożenie czegokolwiek do pełnej sceny ma
-    // przejść przez ten test, bo dokładnie tego dotyczy własność 1.
-    expect(inThreshold.size).toBe(8);
+    // WŁASNOŚĆ 3: w trybie ocenianym widać dziewięć — teren, krata, CZTERY warstwy budynku
+    // (bryła, rdzeń, przerywana obręcz alarmu, wycinki ją domykające), dwie warstwy jednostki
+    // (tarcza, rdzeń) i znacznik. Liczba WPISANA WPROST, nie „co najmniej": dołożenie
+    // czegokolwiek do pełnej sceny ma przejść przez ten test, bo dokładnie tego dotyczy
+    // własność 1. (Ósma warstwa doszła w Zadaniu 4 Fazy 2C — patrz `buildingMesh.ts`.)
+    expect(inThreshold.size).toBe(9);
 
     // KONTROLA POZYTYWNA NA SAM POMIAR: te same warstwy, które gasną, muszą być tymi, które
-    // bramka faktycznie wystawia — inaczej „8" mogłoby pochodzić z ośmiu innych obiektów.
+    // bramka faktycznie wystawia — inaczej „9" mogłoby pochodzić z dziewięciu innych obiektów.
     const world = gate.world!;
-    for (const object of [world.buildings.shell, world.buildings.core, world.buildings.alert, world.units.body, world.units.core]) {
+    for (const object of [
+      world.buildings.shell,
+      world.buildings.core,
+      world.buildings.alert,
+      world.buildings.link,
+      world.units.body,
+      world.units.core,
+    ]) {
       expect(inThreshold.has(object), 'warstwa pełnej sceny nie jest widoczna w trybie ocenianym').toBe(true);
       expect(inControl.has(object), 'warstwa pełnej sceny PRZETRWAŁA przełączenie na kontrolę').toBe(false);
     }

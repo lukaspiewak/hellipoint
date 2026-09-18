@@ -2,8 +2,9 @@
 
 Aplikacja Vite renderująca planetę Heliopolis przez Three.js (`@heliopolis/render`).
 Zaczęło się w Fazie 2A, Zadanie 1, jako dowód samej rury renderującej (pusty canvas);
-Zadania 2-4 dołożyły geometrię, progowane światło i kamerę K1 — dziś `/` pokazuje
-prawdziwą, oświetloną planetę.
+Zadania 2-4 dołożyły geometrię, progowane światło i kamerę K1. Faza 2C, Zadanie 2
+wstawiła pod to PRAWDZIWĄ symulację (`Sim`) i zamknęła pętlę: kliknięcie gracza jest
+komendą, którą symulacja wykonuje w następnym ticku.
 
 ## Uruchomienie
 
@@ -19,7 +20,49 @@ albo bezpośrednio przez filtr workspace:
 pnpm --filter @heliopolis/client dev
 ```
 
-Otwiera serwer deweloperski Vite pod `http://localhost:5180/`.
+Otwiera serwer deweloperski Vite pod `http://localhost:5180/`. Port jest ustawiony na
+sztywno (`strictPort`), więc jeśli 5180 zajmuje serwer z INNEGO worktree tego repo,
+uruchomienie się nie powiedzie zamiast po cichu wylądować na innym porcie — zatrzymaj
+tamten albo dodaj `--port`.
+
+## Sterowanie
+
+| Wejście | Co robi |
+|---|---|
+| lewy przycisk (klik) | buduje wybrany typ na wskazanej komórce |
+| prawy przycisk (klik) | rozbiera budynek na wskazanej komórce |
+| przeciągnięcie | obraca kamerę — **nie** buduje (próg `CLICK_SLOP_PX` w `input.ts`) |
+| kółko | zoom, ograniczony do `[1,3 R, 8 R]` |
+| `1`–`9` | wybór typu budynku (kolejność jak w `BUILDINGS`, bez CORE) |
+| `Spacja` | „wróć do Core" — kamera patrzy wprost na komórkę startową, bez zmiany zoomu |
+| `Shift`+`1/2/3` | tryb cieniowania jednostek (narzędzie diagnostyczne Fazy 2B) |
+
+Wejście gracza dociera do symulacji **wyłącznie** przez `sim.enqueue(cmd)` — nigdy przez
+zapis do `sim.state` ani do `Planet`. To warunek Fazy 5 (autorytatywny serwer), pilnowany
+**wyłącznie własnością**, mierzoną tam, gdzie test wykonuje kod:
+
+- `src/input.ts` — `attachInput` trzyma całą drogę od zdarzenia do kolejki;
+- `src/client.ts` — `wireClient` trzyma całe spięcie (pętla klatki, wskazanie, skróty);
+- `src/main.ts` — **sam rozruch**, 29 linii kodu. Nie dostaje ani `Planet`, ani `Sim`,
+  tylko seed i dwie fabryki, więc nie ma w nim uchwytu, przez który dałoby się dotknąć
+  świata.
+
+Odcisk świata (`test/support/fixtures.ts`) obejmuje `SimState` **i** planetę, a testy
+sprawdzają go po KAŻDYM nasłuchu oraz po każdej klatce. Skan źródła, który w rundzie 1
+udawał strażnika, został skasowany — padał na jednej parze zbędnych nawiasów.
+
+## Testy
+
+```sh
+pnpm test            # całe repo (buduje `dist` przed uruchomieniem)
+npx vitest run apps/client
+```
+
+Testy tego workspace'u **nie potrzebują przeglądarki**: cała logika wejścia siedzi
+w `src/input.ts`, poza modułami dotykającymi DOM, a atrapę płótna dostarcza
+`packages/render/test/support/fakeCanvas.ts`. **Granica:** to nie jest strażnik UKŁADU —
+jsdom nie liczy layoutu, więc wada z Fazy 2B (kontrolki panelu pod krawędzią przewijania
+przy oknie 480 px) dalej nie jest niczym strzeżona.
 
 ## Strony
 

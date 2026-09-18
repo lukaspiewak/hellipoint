@@ -3,8 +3,11 @@ import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS } from '../src/sim/state.js';
 import { applyCommand } from '../src/sim/commands.js';
 import { BUILDINGS } from '../src/sim/defs.js';
-import { updatePower } from '../src/sim/power.js';
+import { OUTAGE_NONE, OUTAGE_SHED, OUTAGE_UNLINKED, updatePower } from '../src/sim/power.js';
+import { Sim } from '../src/sim/loop.js';
+import { DEFAULT_RUN } from '../src/sim/rules.js';
 import { multiSourceDistances } from '../src/world/graph.js';
+import { fourFreeHexagonsNear } from './support/fixtures.js';
 
 const planet = createPlanet({ seed: 8 });
 const neighbors = planet.cells.map((c) => c.neighbors);
@@ -210,6 +213,11 @@ describe('updatePower', () => {
 
     const r = updatePower(s, noLight);
     expect(r.demand).toBeCloseTo(15, 9); // popyt PYLON-ów NAPRAWDĘ policzony, nie pominięty
+    // …i TO SAMO dla `rawDemand`, bo to on idzie na ekran. PYLON jest JEDYNYM odbiorcą spoza
+    // `BROWNOUT_ORDER`, więc akumulator ograniczony do typów gaszalnych gubi CAŁĄ tę pozycję
+    // i nic innego — panel pokazywałby wtedy „z 0,0/s potrzebnych" przy sieci drenującej
+    // magazyn. Zmierzone w przeglądzie: taka mutacja przechodziła 686/686.
+    expect(r.rawDemand).toBeCloseTo(15, 9);
     expect(r.shedTypes).toEqual([]);
     expect(r.shedTypes).not.toContain('PYLON'); // ani teraz, ani przy dalszym drenażu niżej
     expect(s.storedEnergy).toBe(0); // od razu na zerze, nie poniżej
@@ -220,5 +228,240 @@ describe('updatePower', () => {
       expect(r2.shedTypes).toEqual([]);
     }
     expect(s.storedEnergy).toBe(0);
+  });
+});
+
+// =========================================================================================
+// Faza 2C, Zadanie 4 — BILANS, którego gra nie umiała pokazać
+//
+// `demand` jest liczone PO kaskadzie gaszenia (doc-comment przy polu mówił to wprost od
+// Fazy 1B), więc UI pokazujący „potrzebowano X/s, było Y/s" nie miał skąd wziąć X. Q3:
+// cztery lasery to 48/s przy produkcji CORE 10/s — i to jest liczba, po której gracz może
+// zobaczyć, że czwarta wieża OSŁABIŁA obronę.
+// =========================================================================================
+
+const LASER_DRAIN = BUILDINGS.LASER_TURRET.energyDrain;
+const FOUR_LASERS = 4 * LASER_DRAIN;
+
+/** Świeży run z rudą na cztery lasery — dokładnie scenariusz Q3 z Fazy 1C. */
+function fourLaserRun(): Sim {
+  const sim = new Sim(planet, DEFAULT_RUN);
+  const s = sim.state;
+  s.ore = 10_000; // [STROJENIE] w teście: skarbiec ponad czterema laserami (4 × 100)
+  for (const cellId of fourFreeHexagonsNear(s)) {
+    sim.enqueue({ kind: 'BUILD', cellId, type: 'LASER_TURRET' });
+  }
+  sim.step();
+  return sim;
+}
+
+describe('rawDemand — zapotrzebowanie SPRZED kaskady', () => {
+  it('0. [KLASA] rawDemand to suma po WSZYSTKICH podłączonych odbiorcach — gaszalnych i nie', () => {
+    // Przypadek MIESZANY: w jednym raporcie stoi odbiorca gaszalny (laser, `BROWNOUT_ORDER`)
+    // i odbiorca NIEGASZALNY (pylony — gaszenie ich rozspójniłoby sieć, §5.1). Bez niego
+    // własność „suma po wszystkich podłączonych" była związana wyłącznie dla `LASER_TURRET`,
+    // a wyrzucenie `PYLON` z akumulatora przechodziło komplet testów. Sieć z pylonami to
+    // DOKŁADNIE sieć Q4 — ta, której pylony zjada DISRUPTOR.
+    const s = base();
+    // Laser PIERWSZY, pylony po nim i z pominięciem jego komórki: oba zasięgi (1-2 i 1-3
+    // kroku od startu) zachodzą na siebie, więc odwrotna kolejność po cichu połykała laser
+    // na `CELL_OCCUPIED` i test mierzył same pylony.
+    const [laserCell] = nearbyHexes(1);
+    applyCommand(s, { kind: 'BUILD', cellId: laserCell, type: 'LASER_TURRET' });
+    const pylons = nearbyHexesForPylons(31).filter((id) => id !== laserCell).slice(0, 30);
+    for (const cellId of pylons) applyCommand(s, { kind: 'BUILD', cellId, type: 'PYLON' });
+    s.storedEnergy = 0;
+
+    // Kontrola na fiksturę: tyle budynków NAPRAWDĘ stanęło, ile test zakłada.
+    expect(s.buildings.filter((b) => b?.type === 'PYLON').length).toBe(30);
+    expect(s.buildings[laserCell]?.type).toBe('LASER_TURRET');
+    const pylonDrain = 30 * BUILDINGS.PYLON.energyDrain;
+    const r = updatePower(s, noLight);
+    // Suma OBU rodzajów, nie jednego: 30 × 0,5 + 12 = 27/s.
+    expect(r.rawDemand).toBeCloseTo(pylonDrain + LASER_DRAIN, 9);
+    // …a kaskada gasi WYŁĄCZNIE laser, więc `demand` zostaje na samych pylonach. Ta para
+    // rozstrzyga, że `rawDemand` i `demand` liczą się po RÓŻNYCH zbiorach, a nie że jeden
+    // jest kopią drugiego przemnożoną przez cokolwiek.
+    expect(r.shedTypes).toEqual(['LASER_TURRET']);
+    expect(r.demand).toBeCloseTo(pylonDrain, 9);
+    expect(r.outage[laserCell]).toBe(OUTAGE_SHED);
+    for (const cellId of pylons) expect(r.outage[cellId]).toBe(OUTAGE_NONE);
+  });
+
+  it('1. rawDemand niesie zapotrzebowanie PRZED gaszeniem, demand — po nim', () => {
+    const sim = fourLaserRun();
+    sim.state.storedEnergy = 0; // wyczerpany magazyn: kaskada musi zadziałać
+    sim.step();
+
+    const p = sim.lastPower;
+    expect(p.rawDemand).toBeGreaterThanOrEqual(FOUR_LASERS);
+    expect(p.demand).toBeLessThan(p.rawDemand); // coś zgaszono
+    expect(p.shedTypes.length).toBeGreaterThan(0);
+  });
+
+  it('2. [PARA] rawDemand RÓWNA SIĘ demand dokładnie wtedy, gdy nic nie zgaszono', () => {
+    // Bez tej połowy „rawDemand > demand" spełniałaby też implementacja dokładająca do
+    // rawDemand cokolwiek (stałą, podwojenie, popyt niepodłączonych) — a wtedy liczba na
+    // ekranie nie byłaby zapotrzebowaniem, tylko ozdobą rosnącą razem z nim.
+    const sim = fourLaserRun();
+    const s = sim.state;
+
+    // POŁOWA „NIC NIE ZGASZONO": magazyn pokrywa niedobór, więc kaskada nie rusza.
+    s.storedEnergy = 10_000;
+    sim.step();
+    const covered = sim.lastPower;
+    expect(covered.shedTypes).toEqual([]);
+    expect(covered.rawDemand).toBe(covered.demand);
+    // …i jest to DOKŁADNIE suma poborów podłączonych odbiorców, nie „coś większego".
+    expect(covered.rawDemand).toBeCloseTo(FOUR_LASERS, 9);
+
+    // POŁOWA „ZGASZONO": ta sama zabudowa, pusty magazyn — rawDemand ANI DRGNIE, a demand spada.
+    s.storedEnergy = 0;
+    sim.step();
+    const shed = sim.lastPower;
+    expect(shed.rawDemand).toBeCloseTo(covered.rawDemand, 9);
+    expect(shed.demand).toBeLessThan(shed.rawDemand);
+  });
+
+  it('3. niedobór z Q3 jest ODCZYTYWALNY z raportu: 48/s żądane przy 10/s produkcji', () => {
+    // Łańcuch przyczynowy Q3 w liczbach, nie w prozie: gracz autoryzował cztery lasery,
+    // a dostał deficyt 38/s. Test wiąże OBIE strony odejmowania, bo to ich RÓŻNICA jest
+    // zdaniem, które HUD ma powiedzieć.
+    //
+    // Obie liczby są tu WYPROWADZONE z `defs.ts` (`[STROJENIE]`), a obok stoi KOTWICA na
+    // wartości, którymi Faza 1C zmierzyła Q3 (10 224 tiki na czterech laserach kontra
+    // 13 323 na dwóch). Kotwica jest po to, żeby przestrojenie poboru lasera w Fazie 3
+    // oblało tutaj GŁOŚNO — łańcuch przyczynowy Q3 trzeba będzie wtedy zmierzyć na nowo,
+    // a nie odziedziczyć po liczbach, których już nie ma.
+    const coreOutput = BUILDINGS.CORE.energyOutput;
+    const coreRate = coreOutput.kind === 'CONSTANT' ? coreOutput.rate : Number.NaN;
+    expect({ coreRate, laser: LASER_DRAIN }).toEqual({ coreRate: 10, laser: 12 }); // kotwica Q3
+
+    const sim = fourLaserRun();
+    sim.state.storedEnergy = 0;
+    sim.step();
+    const p = sim.lastPower;
+
+    expect(p.supply).toBeCloseTo(coreRate, 9);
+    expect(p.rawDemand).toBeCloseTo(FOUR_LASERS, 9);
+    expect(p.rawDemand - p.supply).toBeCloseTo(FOUR_LASERS - coreRate, 9);
+  });
+});
+
+describe('outage — DLACZEGO budynek nie ma prądu', () => {
+  /**
+   * Stan, w którym OBIE przyczyny stoją obok siebie: jeden laser zgaszony kaskadą
+   * (podłączony, ale zabrakło mocy) i jeden odcięty od sieci (poza zasięgiem CORE).
+   *
+   * Zwraca obie komórki, bo cała trudność tego przypadku polega na tym, że po stronie
+   * `powered` są NIE DO ODRÓŻNIENIA — i dokładnie to test sprawdza najpierw.
+   */
+  function twoCauses(): { s: ReturnType<typeof base>; shedCell: number; orphanCell: number } {
+    const s = base();
+    const [near] = nearbyHexes(1);
+    const orphan = planet.cells.find(
+      (c) => c.cellType === 'HEXAGON' && c.oreCapacity === 0 && dist[c.id] > 8,
+    );
+    if (orphan === undefined) throw new Error('fixture: brak odciętego heksagonu');
+    applyCommand(s, { kind: 'BUILD', cellId: near, type: 'LASER_TURRET' });
+    applyCommand(s, { kind: 'BUILD', cellId: orphan.id, type: 'LASER_TURRET' });
+    s.storedEnergy = 0;
+    return { s, shedCell: near, orphanCell: orphan.id };
+  }
+
+  it('4. dwa budynki bez prądu Z DWÓCH RÓŻNYCH POWODÓW są nie do odróżnienia po `powered`', () => {
+    const { s, shedCell, orphanCell } = twoCauses();
+    const r = updatePower(s, noLight);
+
+    // To jest dokładnie stan z briefu: „dziś oba mają powered === false i wyglądają identycznie".
+    expect(s.buildings[shedCell]!.powered).toBe(false);
+    expect(s.buildings[orphanCell]!.powered).toBe(false);
+
+    // …a raport je ROZRÓŻNIA. Mutacja „zrównaj kodowanie obu" (jedna wartość dla obu gałęzi)
+    // oblewa tutaj i nigdzie indziej.
+    expect(r.outage[shedCell]).toBe(OUTAGE_SHED);
+    expect(r.outage[orphanCell]).toBe(OUTAGE_UNLINKED);
+    expect(OUTAGE_SHED).not.toBe(OUTAGE_UNLINKED);
+
+    // …a `rawDemand` liczy WYŁĄCZNIE odbiorcę podłączonego — jeden laser, nie dwa. Budynek
+    // poza siecią nie żąda od niej niczego, więc doliczenie go kazałoby graczowi dobudowywać
+    // produkcję na pobór, którego dobudowanie produkcji nie zaspokoi (naprawiłby go PYLON).
+    // Zmierzone: bez tej asercji mutacja „rawDemand liczy też odciętych" przechodziła 18/18.
+    expect(r.rawDemand).toBeCloseTo(LASER_DRAIN, 9);
+  });
+
+  it('5. budynek zasilony i komórka pusta znaczą to samo: BRAK awarii', () => {
+    const { s, shedCell } = twoCauses();
+    // CORE zasila się sam — i nie ma być zgłaszany jako awaria.
+    const r = updatePower(s, noLight);
+    expect(s.buildings[planet.startCell]!.powered).toBe(true);
+    expect(r.outage[planet.startCell]).toBe(OUTAGE_NONE);
+    // Komórka bez budynku — zero, a nie śmieć po poprzednim ticku.
+    const empty = s.buildings.findIndex((b, i) => b === null && i !== shedCell);
+    expect(r.outage[empty]).toBe(OUTAGE_NONE);
+  });
+
+  it('6. [ŚWIEŻOŚĆ] wpis znika w ticku, w którym prąd wraca — bufor nie jest sumą historii', () => {
+    // Bufor jest współdzielony między tickami (patrz `Sim`), więc bez czyszczenia pokazywałby
+    // awarię jeszcze długo po tym, jak gracz ją naprawił — i był to jedyny stan, w którym
+    // gracz nie ma jak sprawdzić, czy jego reakcja zadziałała.
+    const { s, shedCell } = twoCauses();
+    const buffer = new Uint8Array(s.buildings.length);
+    expect(updatePower(s, noLight, buffer).outage[shedCell]).toBe(OUTAGE_SHED);
+
+    s.storedEnergy = 100_000; // magazyn pokrywa wszystko — nic nie gaśnie
+    expect(updatePower(s, noLight, buffer).outage[shedCell]).toBe(OUTAGE_NONE);
+    expect(s.buildings[shedCell]!.powered).toBe(true);
+  });
+
+  it('7. bufor podany z zewnątrz musi mieć długość tablicy budynków — inaczej RangeError', () => {
+    // Ta sama straż i to samo uzasadnienie, co dla `light`: cichy zapis poza końcem
+    // `Uint8Array` jest ignorowany, więc awaria ostatnich komórek po prostu nigdy nie
+    // dotarłaby na ekran, bez jednego śladu w logach.
+    const s = base();
+    expect(() => updatePower(s, noLight, new Uint8Array(s.buildings.length - 1))).toThrow(RangeError);
+    expect(() => updatePower(s, noLight, new Uint8Array(s.buildings.length + 1))).toThrow(RangeError);
+    expect(() => updatePower(s, noLight, new Uint8Array(s.buildings.length))).not.toThrow();
+  });
+});
+
+describe('Sim.lastPower — raport ticku, POZA stanem', () => {
+  it('8. raport jest z OSTATNIEGO ticku i nie leży w SimState', () => {
+    const sim = fourLaserRun();
+    const s = sim.state;
+    s.storedEnergy = 0;
+    sim.step();
+    const shed = sim.lastPower.shedTypes.length;
+    expect(shed).toBeGreaterThan(0);
+
+    // POZA STANEM: żadne pole `SimState` nie niesie raportu, więc migawka Fazy 5 i `stateHash`
+    // nie rosną o wielkość, która jest czystą funkcją ticka. Sprawdzane po KLUCZACH stanu,
+    // a nie przez „wiem, że nie dodałem" — dopisanie pola byłoby widoczne tutaj.
+    expect(Object.keys(s)).not.toContain('lastPower');
+    for (const key of Object.keys(s)) {
+      expect({ key, jest: (s as unknown as Record<string, unknown>)[key] === sim.lastPower }).toEqual({
+        key,
+        jest: false,
+      });
+    }
+
+    // ŚWIEŻOŚĆ: raport idzie za tickiem. Magazyn napełniony ⇒ następny tick nic nie gasi.
+    s.storedEnergy = 100_000;
+    sim.step();
+    expect(sim.lastPower.shedTypes).toEqual([]);
+  });
+
+  it('9. przed pierwszym krokiem raport istnieje i jest pusty, zamiast być nullem', () => {
+    // Pętla renderu czyta `lastPower` na KAŻDEJ klatce, także pierwszej — przed pierwszym
+    // `step()`. `null` byłby tam gałęzią w kodzie rysującym, czyli miejscem, w którym
+    // rozruch wygląda inaczej niż gra.
+    const sim = new Sim(planet, DEFAULT_RUN);
+    const p = sim.lastPower;
+    expect(p.supply).toBe(0);
+    expect(p.demand).toBe(0);
+    expect(p.rawDemand).toBe(0);
+    expect(p.shedTypes).toEqual([]);
+    expect(p.outage.length).toBe(planet.cells.length);
+    expect([...p.outage].every((v) => v === OUTAGE_NONE)).toBe(true);
   });
 });

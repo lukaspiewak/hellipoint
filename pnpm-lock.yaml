@@ -29,6 +29,9 @@ importers:
       '@heliopolis/render':
         specifier: workspace:*
         version: link:../../packages/render
+      '@heliopolis/sim':
+        specifier: workspace:*
+        version: link:../../packages/sim
     devDependencies:
       vite:
         specifier: ^7.0.0
