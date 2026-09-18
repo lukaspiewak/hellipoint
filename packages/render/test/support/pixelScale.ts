@@ -103,20 +103,58 @@ export function silhouetteFrameFraction(distanceFactor: number = INITIAL_DISTANC
 }
 
 /**
- * Skala w NAJWIĘKSZYM przybliżeniu, jakie dopuszcza kamera (`MIN_DISTANCE_FACTOR`).
+ * Skala dla powierzchni ZWRÓCONEJ DO KAMERY, w największym dopuszczalnym przybliżeniu
+ * (`MIN_DISTANCE_FACTOR`) — odniesienie dla progów WIERNOŚCI KSZTAŁTU.
  *
- * `pixelsPerUnit` liczy skalę przy odległości DOMYŚLNEJ i to jest właściwe odniesienie dla
- * progów WIDOCZNOŚCI: rzecz niewidoczna z domyślnego widoku jest niewidoczna, choćby dało się
- * do niej dojechać. Ale dla progów WIERNOŚCI KSZTAŁTU jest odwrotnie — wielokąt udający okrąg
- * zdradza się przy zbliżeniu, nie przy oddaleniu, więc najgorszym przypadkiem jest największe
- * dopuszczalne przybliżenie. Stąd osobna funkcja zamiast stałej: obie skale wyprowadzają się
- * z tych samych stałych `camera.ts` i nie wolno im się rozjechać.
+ * ## Dlaczego to NIE jest `pixelsPerUnit` przy innej odległości
+ *
+ * `pixelsPerUnit` liczy skalę na SYLWETCE, czyli uśrednioną po tarczy, i to jest właściwe
+ * odniesienie dla progów WIDOCZNOŚCI — rzecz niewidoczna z widoku domyślnego jest niewidoczna,
+ * a skala mniejsza od prawdziwej daje próg OSTRZEJSZY, czyli zachowawczy.
+ *
+ * **Dla progów WIERNOŚCI KSZTAŁTU oba te kierunki się odwracają i to jest cała treść tej
+ * funkcji.** Wielokąt udający okrąg zdradza się, gdy podjedziesz blisko i patrzysz na niego
+ * WPROST, a nie gdy oglądasz go z brzegu tarczy w skrócie perspektywicznym. Najgorszym
+ * przypadkiem jest więc powierzchnia czołowa przy `MIN_DISTANCE_FACTOR`, gdzie skala jest
+ * NAJWIĘKSZA — a większa skala to większa strzałka w pikselach, czyli próg trudniejszy do
+ * spełnienia. Skala mniejsza od prawdziwej jest tu POBŁAŻLIWA, nie zachowawcza.
+ *
+ * **Wpadka, której nie wolno przywrócić** (naprawiona tutaj; zawężony przegląd rundy
+ * naprawczej Zadania 4, znalezisko N13): pierwsza wersja brała `silhouetteFrameFraction`
+ * przy `MIN_DISTANCE_FACTOR`, czyli skalę SYLWETKOWĄ — 11,62 px/j zamiast 32,17 px/j,
+ * **2,77× w stronę pobłażliwą**. Uzasadnienie „bierzemy uśrednioną, bo jest zachowawcza"
+ * zostało przeniesione z doc-commentu `pixelsPerUnit` do kontekstu, w którym ma PRZECIWNY
+ * znak. Skutkiem próg wypadał na 14 bokach zamiast na 22: obręcz czternastoboczna
+ * przechodziła 699/699 przy realnej strzałce ponad progiem.
+ *
+ * ## Wyprowadzenie
+ *
+ * Kamera stoi w odległości `d = MIN_DISTANCE_FACTOR × R` od ŚRODKA planety, więc powierzchnia
+ * zwrócona do niej leży na głębokości OSIOWEJ `d − R`. Płaszczyzna prostopadła do osi widoku
+ * na głębokości `z` odwzorowuje jednostkę świata na `H / (2 z tan(fov/2))` pikseli. Stąd
+ *
+ *     px/jednostkę = H / (2 R (MIN_DISTANCE_FACTOR − 1) tan(fov/2))
+ *
+ * Dla `R = 100`, `MIN_DISTANCE_FACTOR = 1,3`, `fov = 50°`, `H = 900` daje **32,168 px/j**.
+ *
+ * @throws {RangeError} gdy `planetRadius` nie jest dodatni albo gdy `MIN_DISTANCE_FACTOR`
+ *   nie jest większy od 1 — kamera na powierzchni planety albo w jej wnętrzu nie ma przed
+ *   sobą powierzchni czołowej, a dzielenie przez zero dałoby ciche `Infinity`.
  */
-export function pixelsPerUnitClosest(planetRadius: number): number {
+export function pixelsPerUnitFacingClosest(planetRadius: number): number {
   if (!(planetRadius > 0)) {
-    throw new RangeError(`pixelsPerUnitClosest: planetRadius must be positive and finite, got ${planetRadius}`);
+    throw new RangeError(
+      `pixelsPerUnitFacingClosest: planetRadius must be positive and finite, got ${planetRadius}`,
+    );
   }
-  return (silhouetteFrameFraction(MIN_DISTANCE_FACTOR) * CANVAS_HEIGHT_PX) / (2 * planetRadius);
+  if (!(MIN_DISTANCE_FACTOR > 1)) {
+    throw new RangeError(
+      `pixelsPerUnitFacingClosest: MIN_DISTANCE_FACTOR is ${MIN_DISTANCE_FACTOR} — kamera nie ` +
+        'stoi przed powierzchnią planety, więc skala czołowa nie istnieje',
+    );
+  }
+  const depth = planetRadius * (MIN_DISTANCE_FACTOR - 1);
+  return CANVAS_HEIGHT_PX / (2 * depth * Math.tan((FIELD_OF_VIEW_DEGREES * Math.PI) / 360));
 }
 
 /**

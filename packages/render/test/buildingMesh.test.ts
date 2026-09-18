@@ -46,7 +46,7 @@ import { buildCellOutlines } from '../src/planetMesh.js';
 import { MAX_DISTANCE_FACTOR } from '../src/camera.js';
 import { createSceneWithRenderer, type SceneRenderer } from '../src/scene.js';
 import { createFakeCanvas } from './support/fakeCanvas.js';
-import { MIN_VISIBLE_PX, pixelsPerUnit, pixelsPerUnitClosest } from './support/pixelScale.js';
+import { MIN_VISIBLE_PX, pixelsPerUnit, pixelsPerUnitFacingClosest } from './support/pixelScale.js';
 
 const planet = createPlanet({ seed: 20260915 });
 const geo = buildPlanetGeometry(planet);
@@ -1796,11 +1796,70 @@ describe('31. [KSZTAŁT] obręcz alarmu nie zdradza się jako wielokąt przy zbl
    * niewidoczna stamtąd jest niewidoczna. Próg WIERNOŚCI KSZTAŁTU jest odwrotny: wielokąt
    * zdradza się, gdy podjedziesz blisko, więc najgorszym przypadkiem jest `MIN_DISTANCE_FACTOR`.
    */
+  /**
+   * Strzałka cięciwy odczytana z **NARYSOWANEJ GEOMETRII**, nie policzona ze stałej.
+   *
+   * Pierwsza wersja liczyła `R · (1 − cos(π/ALERT_SIDES))` z samej stałej i przez to pilnowała
+   * STAŁEJ, a nie obręczy: pięciokrotne zgrubienie podziału łuku przy `ALERT_SIDES` nietkniętym
+   * na 24 przechodziło 699/699 (znalezisko N12). To był ten sam wzorzec „wyjście porównane
+   * z przepisanym wzorem", który w tej fazie wystąpił już trzykrotnie.
+   *
+   * Czytane są PARY WIERZCHOŁKÓW ZEWNĘTRZNEGO pierścienia, które faktycznie tworzą trójkąt —
+   * czyli cięciwy, które GPU naprawdę rysuje. Dzięki temu rachunek nie musi odtwarzać ani
+   * podziału łuków (`Math.ceil` w `buildAlertGeometry` daje krok mniejszy niż `2π/n`), ani
+   * kąta przerw: cokolwiek zmieni kształt, zmieni te pary.
+   */
+  function worstSagittaLocal(geometry: BufferGeometry): number {
+    const position = geometry.getAttribute('position') as BufferAttribute;
+    const index = geometry.getIndex();
+    if (!index) throw new Error('test: geometria bez bufora indeksów');
+    const radiusOf = (v: number): number => Math.hypot(position.getX(v), position.getY(v));
+
+    let outer = 0;
+    for (let v = 0; v < position.count; v++) outer = Math.max(outer, radiusOf(v));
+
+    let worst = 0;
+    const seen = new Set<string>();
+    for (let t = 0; t < index.count / 3; t++) {
+      const onOuter: number[] = [];
+      for (let k = 0; k < 3; k++) {
+        const v = index.getX(t * 3 + k);
+        if (Math.abs(radiusOf(v) - outer) < 1e-6) onOuter.push(v);
+      }
+      // Trójkąt trapezu promieniowego ma na pierścieniu zewnętrznym dokładnie dwa
+      // wierzchołki — to jest jedna narysowana cięciwa. Trójkąty z jednym są pomijane.
+      if (onOuter.length !== 2) continue;
+      const key = onOuter[0] < onOuter[1] ? `${onOuter[0]},${onOuter[1]}` : `${onOuter[1]},${onOuter[0]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const mx = (position.getX(onOuter[0]) + position.getX(onOuter[1])) / 2;
+      const my = (position.getY(onOuter[0]) + position.getY(onOuter[1])) / 2;
+      worst = Math.max(worst, outer - Math.hypot(mx, my));
+    }
+    // Kontrola na fiksturę: bez ANI JEDNEJ cięciwy „zero" znaczyłoby „idealny okrąg",
+    // czyli test przechodziłby najgłośniej wtedy, gdy nic nie zmierzył.
+    expect(seen.size, 'liczba zmierzonych cięciw pierścienia zewnętrznego').toBeGreaterThan(2);
+    return worst;
+  }
+
+  /**
+   * Najgorsza strzałka z OBU odmian obręczy, w pikselach.
+   *
+   * Odniesieniem jest **skala CZOŁOWA przy największym przybliżeniu** (`pixelsPerUnitFacingClosest`),
+   * nie sylwetkowa. Progi WIDOCZNOŚCI biorą widok domyślny i skalę sylwetkową, bo mniejsza
+   * skala daje ostrzejszy próg. Tutaj kierunek jest ODWROTNY: wielokąt zdradza się z bliska
+   * i na wprost, a skala mniejsza od prawdziwej robi próg POBŁAŻLIWY — pierwsza wersja tego
+   * testu wzięła sylwetkową i zaniżyła próg 2,77× (N13).
+   */
   function sagittaPx(sides: number): number {
     const planet = createPlanet({ seed: 20260915 });
+    const spans = alertSpans(ALERT_BREAK_COUNT, ALERT_BREAK_FRACTION);
+    let worstLocal = 0;
+    for (const variant of [spans.broken, spans.closing]) {
+      worstLocal = Math.max(worstLocal, worstSagittaLocal(buildAlertGeometry(variant, sides)));
+    }
     const ringRadius = planet.radius * ALERT_RADIUS_FACTOR;
-    const sagittaUnits = ringRadius * (1 - Math.cos(Math.PI / sides));
-    return sagittaUnits * pixelsPerUnitClosest(planet.radius);
+    return worstLocal * ringRadius * pixelsPerUnitFacingClosest(planet.radius);
   }
 
   it('31a. strzałka cięciwy przy dzisiejszej liczbie boków jest poniżej progu widoczności', () => {
@@ -1813,9 +1872,21 @@ describe('31. [KSZTAŁT] obręcz alarmu nie zdradza się jako wielokąt przy zbl
     expect(s).toBeLessThan(MIN_VISIBLE_PX);
   });
 
-  it('31b. [PARA] 14 boków jeszcze przechodzi, 13 już nie — próg wiąże przy granicy', () => {
-    expect(sagittaPx(14)).toBeLessThan(MIN_VISIBLE_PX);
-    expect(sagittaPx(13)).toBeGreaterThanOrEqual(MIN_VISIBLE_PX);
+  /**
+   * **Granica jest SCHODKOWA, nie ciągła** — i to jest wynik pomiaru, nie założenie.
+   *
+   * `buildAlertGeometry` dzieli każdy z czterech łuków osobno
+   * (`ceil((to − from)/2π × segmentsPerTurn)`), a łuk ma 0,2 obrotu, więc `segmentsPerTurn`
+   * od 21 do 25 daje IDENTYCZNĄ geometrię: 5 cięciw na łuk i strzałkę 0,769 px. Płaskowyże
+   * mają po pięć wartości, a próg przechodzi między 20 (1,200 px) a 21 (0,769 px).
+   *
+   * Dlatego para jest 20/21, a nie „o jeden mniej niż dzisiejsze 24": zmniejszenie `ALERT_SIDES`
+   * z 24 na 21 NIE ZMIENIA ANI JEDNEGO WIERZCHOŁKA, więc test wiążący przy 23/24 twierdziłby
+   * o czułości, której ta geometria nie ma.
+   */
+  it('31b. [PARA] 21 boków jeszcze przechodzi, 20 już nie — próg wiąże przy granicy', () => {
+    expect(sagittaPx(21)).toBeLessThan(MIN_VISIBLE_PX);
+    expect(sagittaPx(20)).toBeGreaterThanOrEqual(MIN_VISIBLE_PX);
   });
 
   it('31c. [REGRESJA] liczba boków z ponownego przeglądu (3) łamie próg wielokrotnie', () => {
