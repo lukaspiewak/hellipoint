@@ -1302,18 +1302,63 @@ function coveredAngles(geometry: BufferGeometry): { from: number; to: number }[]
   return merged;
 }
 
-/** Przerwy w obręczy: dopełnienie pokrycia kątowego, w radianach. */
-function ringGaps(geometry: BufferGeometry): number[] {
+/** Przerwy w obręczy: dopełnienie pokrycia kątowego — łuk `[from, to]` każdej z nich. */
+function ringGapSpans(geometry: BufferGeometry): { from: number; to: number }[] {
   const TWO_PI = Math.PI * 2;
   const covered = coveredAngles(geometry);
-  const gaps: number[] = [];
+  const gaps: { from: number; to: number }[] = [];
   for (let i = 0; i < covered.length; i++) {
-    const to = covered[i].to;
-    const nextFrom = i + 1 < covered.length ? covered[i + 1].from : covered[0].from + TWO_PI;
-    const gap = nextFrom - to;
-    if (gap > 1e-9) gaps.push(gap);
+    const from = covered[i].to;
+    const to = i + 1 < covered.length ? covered[i + 1].from : covered[0].from + TWO_PI;
+    if (to - from > 1e-9) gaps.push({ from, to });
   }
   return gaps;
+}
+
+/** Szerokości kątowe przerw, w radianach. */
+function ringGaps(geometry: BufferGeometry): number[] {
+  return ringGapSpans(geometry).map((g) => g.to - g.from);
+}
+
+/** Długości kątowe ŁUKÓW obręczy (dopełnienie przerw), w radianach. */
+function ringArcs(geometry: BufferGeometry): number[] {
+  return coveredAngles(geometry).map((a) => a.to - a.from);
+}
+
+/**
+ * Jaka CZĘŚĆ najlepiej zachowanej przerwy zostaje, gdy obręcz jest oglądana skrajnie
+ * skośnie — minimum po wszystkich azymutach osi ściśnięcia.
+ *
+ * Obręcz leży płasko na kuli, więc budynek z dala od środka tarczy widać pod kątem: koło
+ * rzutuje się na elipsę, ściśniętą wzdłuż jednej osi. W granicy (limb) przerwa leżąca NA tej
+ * osi znika całkowicie, a przerwa prostopadła do niej zostaje w pełni — zachowanie przerwy
+ * o środku `φ` przy osi `α` to `|sin(φ − α)|`.
+ *
+ * Stąd własność, której szuka test 26c: **nie może istnieć azymut, przy którym znikają
+ * WSZYSTKIE przerwy naraz.** Jedna przerwa znika zawsze (jest azymut, na którym leży), dwie
+ * naprzeciw siebie — również (leżą na tej samej osi). Dopiero trzy rozstawione równomiernie
+ * nie dają się wygasić razem. Wartość jest tu liczona jako UŁAMEK, żeby pomnożyć ją przez
+ * zmierzoną szerokość przerwy w pikselach i porównać z tym samym progiem `MIN_VISIBLE_PX`,
+ * co wszystko inne w tym pliku.
+ *
+ * Granica stosowalności, zapisana: w limbie kurczy się TAKŻE szerokość pasów obręczy, więc
+ * warunek jest ZACHOWAWCZY — spełnienie go nie obiecuje czytelności dokładnie na krawędzi
+ * tarczy, tylko wyklucza konfigurację, która gubi kanał przy PEWNYM ustawieniu kamery
+ * niezależnie od tego, jak szeroka jest sama przerwa.
+ */
+function worstGapSurvival(geometry: BufferGeometry): number {
+  const gaps = ringGapSpans(geometry);
+  if (gaps.length === 0) return 0;
+  const centres = gaps.map((g) => (g.from + g.to) / 2);
+  const SAMPLES = 3600; // 0,05° po półokresie |sin|
+  let worst = Infinity;
+  for (let i = 0; i < SAMPLES; i++) {
+    const alpha = (i / SAMPLES) * Math.PI;
+    let best = 0;
+    for (const centre of centres) best = Math.max(best, Math.abs(Math.sin(centre - alpha)));
+    worst = Math.min(worst, best);
+  }
+  return worst;
 }
 
 describe('[MUTACJA] przyczyna braku prądu jest widoczna W ŚWIECIE', () => {
@@ -1372,9 +1417,15 @@ describe('[MUTACJA] przyczyna braku prądu jest widoczna W ŚWIECIE', () => {
     // instancji. Wiązane jest więc to, co jest treścią: najmniejszy typ leży NA minimum,
     // a największy (CORE, jedyny, którego bryła zasłania krawędź) — WYRAŹNIE nad nim.
     // Bez drugiej połowy próg mógłby mierzyć wielkość niezależną od bryły w ogóle.
-    // Sześć miejsc: skala instancji czytana jest z `Float32Array` macierzy, więc ta sama
-    // wielkość policzona dla dwóch komórek różni się w ostatnich bitach (~10⁻⁷ px).
-    expect(widthByType.get('PYLON')!).toBeCloseTo(worstPx, 6);
+    // Porównanie WZGLĘDNE, nie `toBeCloseTo(…, 6)`: tamto ma tolerancję BEZWZGLĘDNĄ
+    // (5·10⁻⁷ px) na wielkości, która rośnie razem z przerwą, więc przy szerszej przerwie
+    // oblewało na szumie `Float32` macierzy instancji, a nie na progu — czerwień mówiąca
+    // „expected 9.665412694 to be close to 9.665412180", czyli awaria przyrządu, nie kodu.
+    // Szum jest WZGLĘDNY (ostatnie bity pojedynczej precyzji), więc i tolerancja jest.
+    expect(
+      Math.abs(widthByType.get('PYLON')! - worstPx) / worstPx,
+      'PYLON nie leży na minimum populacji',
+    ).toBeLessThan(1e-6);
     expect(widthByType.get('CORE')!).toBeGreaterThan(worstPx * 1.05);
     console.log(
       `[KANAŁ] przerwa obręczy: minimum po populacji ${worstPx.toFixed(2)} px (PYLON), ` +
@@ -1409,6 +1460,133 @@ describe('[MUTACJA] przyczyna braku prądu jest widoczna W ŚWIECIE', () => {
     // za próg (katalog wad tej fazy). Wiążący próg to `MIN_VISIBLE_PX` wyżej; ile jest ponad
     // nim, mówi `console.log` i raport zadania.
 
+    layer.dispose();
+  });
+
+  it('26b. [PARA MUTACJI, PRÓG] ŁUK obręczy jest DŁUŻSZY, niż obręcz jest szeroka — minimum po populacji', () => {
+    // ## Druga strona progu z testu 26
+    //
+    // Test 26 wiąże przerwę OD DOŁU i na tym poprzestawał, więc obręcz dało się zjeść do
+    // 20 % bez jednego czerwonego testu (zmierzone w przeglądzie: `ALERT_BREAK_FRACTION`
+    // 0,20 przechodziło 686/686). A obręcz niesie kanał NADRZĘDNY — „ten budynek nie ma
+    // prądu" — który ma zostać czytelny NIEZALEŻNIE od tego, czy gracz rozpozna przyczynę.
+    //
+    // Wielkość wiążąca: **łuk musi być dłuższy, niż obręcz jest szeroka**. To jest kryterium
+    // KSZTAŁTU, nie kotwica na dzisiejszą wartość: odcinek krótszy od własnej szerokości
+    // przestaje się czytać jako łuk okręgu, a staje się kropką — i wtedy „pierścień wokół
+    // budynku" znika jako forma, choć każdy jego piksel dalej tam jest. Obie strony
+    // porównania są MIERZONE (geometria + macierze instancji), żadna nie jest wpisana.
+    const layer = createBuildingLayer(planet, geo);
+    const list = emptyBuildings();
+    ALL_TYPES.forEach((type, k) => place(list, 100 + k * 7, type, { powered: false }));
+    layer.update(list);
+    const { inner, outer } = alertBandRadii(layer);
+    const arcs = ringArcs(layer.alert.geometry);
+
+    let worstRatio = Infinity;
+    let worstType: BuildingType = ALL_TYPES[0];
+    let worstArcPx = 0;
+    let worstWidthPx = 0;
+    ALL_TYPES.forEach((type, slot) => {
+      const scale = basisColumn(matrixAt(layer.alert, slot), 0).length();
+      const shellRadius = basisColumn(matrixAt(layer.shell, slot), 0).length();
+      const visibleFrom = Math.max(inner * scale, shellRadius);
+      const arcPx = px(Math.min(...arcs) * visibleFrom);
+      const widthPx = px(outer * scale - visibleFrom);
+      if (arcPx / widthPx < worstRatio) {
+        worstRatio = arcPx / widthPx;
+        worstType = type;
+        worstArcPx = arcPx;
+        worstWidthPx = widthPx;
+      }
+    });
+    expect(
+      worstArcPx,
+      `najkrótszy łuk (${worstType}) jest krótszy, niż obręcz szeroka — obręcz przestaje być obręczą`,
+    ).toBeGreaterThanOrEqual(worstWidthPx);
+    // Kontrola na przyrząd: łuk NAPRAWDĘ jest mierzony, a nie wychodzi z pustej listy.
+    expect(arcs.length).toBeGreaterThan(0);
+    expect(Math.min(...arcs)).toBeGreaterThan(0);
+    console.log(
+      `[KANAŁ] najkrótszy łuk obręczy: ${worstArcPx.toFixed(2)} px przy szerokości ` +
+        `${worstWidthPx.toFixed(2)} px (${worstType}), stosunek ${worstRatio.toFixed(2)}`,
+    );
+
+    // ## PARA MUTACJI przy samej granicy — kąt liczony z MIERZONYCH wielkości
+    const scale0 = basisColumn(matrixAt(layer.alert, 0), 0).length();
+    const shell0 = basisColumn(matrixAt(layer.shell, 0), 0).length();
+    const visible0 = Math.max(inner * scale0, shell0);
+    const sector = (Math.PI * 2) / ALERT_BREAK_COUNT;
+    // Łuk = szerokość obręczy ⇒ kąt łuku = szerokość / promień wewnętrzny widocznej części.
+    const thresholdArc = (outer * scale0 - visible0) / visible0;
+    const measure = (arcAngle: number): { arcPx: number; widthPx: number } => {
+      const spans = alertSpans(ALERT_BREAK_COUNT, (sector - arcAngle) / (Math.PI * 2));
+      const geometry = buildAlertGeometry(spans.broken, 24);
+      const arcPx = px(Math.min(...ringArcs(geometry)) * visible0);
+      geometry.dispose();
+      return { arcPx, widthPx: px(outer * scale0 - visible0) };
+    };
+    const justUnder = measure(thresholdArc * 0.99);
+    const justOver = measure(thresholdArc * 1.01);
+    expect(justUnder.arcPx, 'połówka „ma OBLAĆ": łuk o 1 % krótszy od szerokości').toBeLessThan(
+      justUnder.widthPx,
+    );
+    expect(justOver.arcPx, 'połówka „ma PRZEJŚĆ": łuk o 1 % dłuższy od szerokości').toBeGreaterThanOrEqual(
+      justOver.widthPx,
+    );
+    // Obie połówki NAPRAWDĘ leżą przy granicy — w przeciwnym razie para dowodziłaby tylko,
+    // że przyrząd reaguje na zmiany o rząd wielkości.
+    expect(justUnder.arcPx / justUnder.widthPx).toBeCloseTo(0.99, 2);
+    expect(justOver.arcPx / justOver.widthPx).toBeCloseTo(1.01, 2);
+    layer.dispose();
+  });
+
+  it('26c. [PARA MUTACJI, PRÓG] przerwy nie dają się wygasić WSZYSTKIE naraz skośnym spojrzeniem', () => {
+    // Drugie pół dziury z przeglądu: `ALERT_BREAK_COUNT = 1` przechodziło 686/686, choć
+    // doc-comment modułu odrzuca jedno wcięcie wprost („czyta się jak artefakt rasteryzacji
+    // albo przesłonięcie przez sąsiada"). Jedyna asercja o liczbie przerw porównywała ją ze
+    // STAŁĄ, którą testuje — czyli z samą sobą.
+    //
+    // Własność zamiast liczby: obręcz leży płasko na kuli, więc budynek z dala od środka
+    // tarczy widać skośnie i koło rzutuje się na elipsę. Przerwa leżąca na osi ściśnięcia
+    // znika. **Jedna przerwa znika zawsze przy pewnym ustawieniu kamery, dwie naprzeciw
+    // siebie — również.** Wiązane jest więc to, ile zostaje z NAJLEPIEJ zachowanej przerwy
+    // w najgorszym azymucie, przemnożone przez jej zmierzoną szerokość w pikselach.
+    const layer = createBuildingLayer(planet, geo);
+    const list = emptyBuildings();
+    place(list, 300, 'PYLON', { powered: false }); // najgorszy członek populacji (test 26)
+    layer.update(list);
+    const { inner } = alertBandRadii(layer);
+    const scale = basisColumn(matrixAt(layer.alert, 0), 0).length();
+    const shellRadius = basisColumn(matrixAt(layer.shell, 0), 0).length();
+    const visibleFrom = Math.max(inner * scale, shellRadius);
+
+    const survivingPx = (geometry: BufferGeometry): number =>
+      px(Math.min(...ringGaps(geometry)) * visibleFrom) * worstGapSurvival(geometry);
+
+    expect(
+      survivingPx(layer.alert.geometry),
+      'istnieje ustawienie kamery, w którym znikają WSZYSTKIE przerwy naraz',
+    ).toBeGreaterThanOrEqual(MIN_VISIBLE_PX);
+    console.log(
+      `[KANAŁ] najgorszy azymut: zostaje ${survivingPx(layer.alert.geometry).toFixed(2)} px ` +
+        `z przerwy (${(worstGapSurvival(layer.alert.geometry) * 100).toFixed(1)} % szerokości), próg ${MIN_VISIBLE_PX} px`,
+    );
+
+    // PARA po liczbie przerw, przy samej granicy: DWIE leżą naprzeciw siebie i gasną razem,
+    // TRZY już nie. Mierzone tym samym przyrządem, na geometriach z tego samego budowniczego.
+    const build = (count: number): BufferGeometry =>
+      buildAlertGeometry(alertSpans(count, ALERT_BREAK_FRACTION).broken, 24);
+    const two = build(2);
+    const three = build(3);
+    expect(survivingPx(two), 'połówka „ma OBLAĆ": dwie przerwy gasną razem').toBeLessThan(MIN_VISIBLE_PX);
+    expect(survivingPx(three), 'połówka „ma PRZEJŚĆ": trzy przerwy już nie').toBeGreaterThanOrEqual(
+      MIN_VISIBLE_PX,
+    );
+    // …i jedna przerwa jest przypadkiem skrajnym tej samej własności, nie osobną regułą.
+    const one = build(1);
+    expect(survivingPx(one)).toBeLessThan(MIN_VISIBLE_PX);
+    for (const g of [one, two, three]) g.dispose();
     layer.dispose();
   });
 

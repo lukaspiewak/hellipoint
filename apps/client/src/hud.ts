@@ -73,6 +73,21 @@ export interface MenuRow {
   readonly type: BuildingType;
   readonly costOre: number;
   /**
+   * Pobór energii budynku, w jednostkach na sekundę (0 = nie pobiera).
+   *
+   * Dołożone w rundzie naprawczej 1 Zadania 4 i to **nie jest ozdoba, tylko domknięcie
+   * łańcucha Q3**. Przegląd zmierzył, że z ekranu nie dało się dojść do sprawcy brownoutu,
+   * bo brakowało JEDNEJ danej: gracz widział „z 48,0/s potrzebnych" i nie miał gdzie
+   * przeczytać, że jeden laser bierze 12/s. `energyDrain` siedział wyłącznie w `defs.ts`
+   * i nie miał ani jednego wyjścia na ekran, więc krok „to lasery zjadły prąd" nie był
+   * wnioskiem, tylko eksperymentem (rozbierz jeden i zobacz, czy popyt spadnie).
+   *
+   * Menu jest już tabelą, a liczba jest już w `BUILDINGS` — to jest najtańsze możliwe
+   * miejsce. Alternatywa (rozbicie poboru na typy w linii bilansu) kosztuje czwartą liczbę
+   * w linii, która i tak nie mieści się w szerokości panelu.
+   */
+  readonly energyDrain: number;
+  /**
    * Czy stać gracza na ten budynek — liczone NIEZALEŻNIE od `check`, a nie z niego
    * wyprowadzone. `canBuild` zwraca PIERWSZY powód odmowy, więc na komórce zajętej
    * dostaje się `CELL_OCCUPIED` niezależnie od stanu skarbca: pozycja kosztująca 300 przy
@@ -117,8 +132,8 @@ export function buildMenuRows(s: SimState, cellId: number | null): MenuRow[] {
   // ktoś ją zobaczy w debuggerze.
   const id = cellId ?? -1;
   return MENU_TYPES.map((type) => {
-    const costOre = BUILDINGS[type].costOre;
-    return { type, costOre, affordable: s.ore >= costOre, check: canBuild(s, id, type) };
+    const { costOre, energyDrain } = BUILDINGS[type];
+    return { type, costOre, energyDrain, affordable: s.ore >= costOre, check: canBuild(s, id, type) };
   });
 }
 
@@ -318,11 +333,24 @@ export function shortfallLine(power: PowerReport): string {
     ? `brakuje ${rateText(missingTenths)}`
     : '';
   if (power.shedTypes.length > 0) {
-    // Kolejność `shedTypes` JEST kolejnością gaszenia (`BROWNOUT_ORDER`) — nie sortować.
-    // To ona mówi graczowi, że ekstraktory padają PIERWSZE, czyli dlaczego po brownoucie
-    // nie ma z czego odbudować obrony.
-    const shed = `zgaszono: ${power.shedTypes.join(', ')}`;
-    return missing === '' ? shed : `${missing} — ${shed}`;
+    // ## Kolejność GASZENIA nie jest kolejnością CZYTANIA (runda naprawcza 1)
+    //
+    // Do tej rundy zdanie brzmiało `zgaszono: EXTRACTOR, LASER_TURRET` — kolejność
+    // poprawna, bo taka jest kolejność gaszenia, ale **pierwszym nazwanym typem była
+    // OFIARA**. Przegląd zmierzył skutek: najprostszy wniosek gracza brzmi „dobuduj
+    // kopalnie", czyli dokładnie odwrotnie, niż trzeba — funkcja, która miała pokazać
+    // przyczynę, wskazywała palcem na skutek.
+    //
+    // Zdanie rozdziela teraz jedno od drugiego: PIERWSZY jest niedobór (przyczyna), a lista
+    // stoi za spójnikiem „więc", czyli jest oznaczona jako NASTĘPSTWO. `BROWNOUT_ORDER`
+    // zostaje nietknięta — zmienia się prezentacja, nie mechanika; kolejność w liście dalej
+    // jest kolejnością gaszenia i dalej mówi, że kopalnie padają pierwsze.
+    //
+    // Czego to zdanie NADAL nie mówi: KTÓRY typ zjada prąd. Tę daną niesie od tej rundy
+    // menu (`MenuRow.energyDrain`) — tam jest miejsce na kolumnę, tutaj nie ma na czwartą
+    // liczbę (linia i tak stoi blisko szerokości panelu).
+    const shed = `więc gasną: ${power.shedTypes.join(', ')}`;
+    return missing === '' ? shed : `${missing}, ${shed}`;
   }
   return missing === '' ? '' : `${missing} — magazyn pokrywa niedobór`;
 }
@@ -389,6 +417,12 @@ export interface HudView {
 /** Szerokości kolumn monospace w menu. [WYGLĄD] */
 const NAME_WIDTH = 18; // [WYGLĄD] najdłuższy typ to EVACUATION_MODULE (17 znaków) + spacja
 const COST_WIDTH = 4; // [WYGLĄD] najdroższy budynek kosztuje 300
+/**
+ * `[WYGLĄD]` Szerokość kolumny poboru energii: `  12,0/s` to 7 znaków, a najwięcej bierze
+ * `LASER_TURRET` (12/s). Stała, także dla budynków bez poboru — kolumna trzyma wyrównanie
+ * zdań odmowy, które stoją za nią.
+ */
+const DRAIN_WIDTH = 7; // [WYGLĄD]
 
 /**
  * Maksymalna liczba pozycji, jaką unosi maska dostępności w bramce świeżości.
@@ -467,30 +501,60 @@ export function createHudView(
   const doc = root.ownerDocument;
   root.style.pointerEvents = 'none';
 
-  const resources = doc.createElement('div');
+  /**
+   * ## DWA wiersze, cztery napisy — i to jest naprawa, nie oszczędność miejsca
+   *
+   * Pierwsza wersja Zadania 4 dołożyła bilans i jego skutek jako OSOBNE wiersze blokowe,
+   * czyli podniosła panel o dwie linie. Przegląd zmierzył skutek na żywej grze przy oknie
+   * odniesienia 800×482: górna krawędź panelu przesunęła się z `y = 260` na `y = 224`,
+   * a skrót „wróć do Core" parkuje Core **w środku płótna, `y = 241`**. Czyli w chwili
+   * brownoutu — jedynej, w której nowy kanał w świecie cokolwiek znaczy — Core i jego
+   * czterej sąsiedzi leżeli pod 82-procentowo krytą płachtą, tuż obok wiersza mówiącego
+   * „gasną: …".
+   *
+   * Panel ma więc dokładnie tyle wierszy, co po Zadaniu 3: zasoby + wskazanie w jednym,
+   * bilans + jego skutek w drugim. Wysokość wraca do wartości sprzed tego zadania, więc
+   * Core jest widoczny dokładnie tak samo, jak był.
+   *
+   * **Napisy są w SPANACH, a wiersz jest pustym pojemnikiem** — i to nie jest kosmetyka:
+   * w prawdziwym DOM-ie `element.textContent = x` KASUJE dzieci, więc wpisanie tekstu do
+   * wiersza, który ma zagnieżdżony napis, usunęłoby go z ekranu. Atrapa (`fakeCanvas.ts`)
+   * trzyma `textContent` jako zwykłe pole i tego nie odtwarza, więc żaden test by tego nie
+   * złapał. Tekst ustawiany jest wyłącznie na LIŚCIACH.
+   */
+  const resourceRow = doc.createElement('div');
+  resourceRow.className = 'hud-line';
+  root.appendChild(resourceRow);
+
+  const resources = doc.createElement('span');
   resources.className = 'hud-resources';
-  root.appendChild(resources);
+  resourceRow.appendChild(resources);
 
-  // Bilans energii i jego SKUTEK — dwa elementy, nie jeden napis: skutek jest ostrzeżeniem
-  // i ma własny kolor, a bilans stoi zawsze, także gdy wszystko jest w porządku. Zlepienie
-  // ich w jedną linię kazałoby malować całość na czerwono albo nie malować wcale.
-  const power = doc.createElement('div');
-  power.className = 'hud-power';
-  root.appendChild(power);
-
-  const shortfall = doc.createElement('div');
-  shortfall.className = 'hud-shortfall';
-  root.appendChild(shortfall);
-
-  const headline = doc.createElement('div');
+  const headline = doc.createElement('span');
   headline.className = 'hud-headline';
-  root.appendChild(headline);
+  resourceRow.appendChild(headline);
+
+  const powerRow = doc.createElement('div');
+  powerRow.className = 'hud-line hud-line--power';
+  root.appendChild(powerRow);
+
+  // Bilans i jego SKUTEK — dwa napisy, nie jeden: skutek jest ostrzeżeniem i ma własny
+  // kolor, a bilans stoi zawsze, także gdy wszystko jest w porządku. Jeden napis kazałby
+  // malować całość na bursztyn albo nie malować wcale.
+  const power = doc.createElement('span');
+  power.className = 'hud-power';
+  powerRow.appendChild(power);
+
+  const shortfall = doc.createElement('span');
+  shortfall.className = 'hud-shortfall';
+  powerRow.appendChild(shortfall);
 
   // Elementy wierszy powstają RAZ. Przemalowanie ustawia `textContent`/`className` na
   // istniejących — inaczej każda zmiana rudy kasowałaby i odtwarzała dziewięć elementów
   // DOM-u w pętli renderu, razem z ich nasłuchami.
   const rowElements: ElementLike[] = [];
   const pickElements: ElementLike[] = [];
+  const drainElements: ElementLike[] = [];
   const whyElements: ElementLike[] = [];
   const listeners: [ElementLike, string, (event: never) => void][] = [];
   for (let i = 0; i < MENU_TYPES.length; i++) {
@@ -506,6 +570,14 @@ export function createHudView(
     listeners.push([pick, 'click', listener]);
     row.appendChild(pick);
 
+    // Pobór energii — POZA „łapką", czyli poza jedynym elementem panelu, który łapie
+    // wskaźnik. Dopisanie tej kolumny do łapki poszerzyłoby dziurę w sterowaniu o kolejne
+    // ~50 px (zmierzone przy oknie 600×400: łapka sięga wtedy lewej krawędzi tarczy), a ta
+    // liczba jest do CZYTANIA, nie do klikania — kliknięcie w nią ma przechodzić na planetę.
+    const drain = doc.createElement('span');
+    drain.className = 'hud-drain';
+    row.appendChild(drain);
+
     const why = doc.createElement('span');
     why.className = 'hud-why';
     row.appendChild(why);
@@ -513,6 +585,7 @@ export function createHudView(
     root.appendChild(row);
     rowElements.push(row);
     pickElements.push(pick);
+    drainElements.push(drain);
     whyElements.push(why);
   }
 
@@ -597,12 +670,12 @@ export function createHudView(
 
       resources.textContent = resourceLine(s);
       power.textContent = powerLine(report);
-      // Zdanie o skutku pojawia się WYŁĄCZNIE wtedy, gdy jest skutek — pusty napis daje
-      // element o zerowej wysokości, więc panel nie trzyma rezerwy na ostrzeżenie, którego
-      // nie ma. Klasa niesie ODDZIELNIE fakt zgaszenia (kolor alarmu) od samego niedoboru
-      // (magazyn jeszcze go pokrywa), bo to dwie różne pilności.
+      // Zdanie o skutku pojawia się WYŁĄCZNIE wtedy, gdy jest skutek — a że stoi w TYM SAMYM
+      // wierszu co bilans, jego brak nie kosztuje ani jednej linii wysokości panelu (patrz
+      // `createHudView`). Klasa niesie ODDZIELNIE fakt zgaszenia (kolor alarmu) od samego
+      // niedoboru (magazyn jeszcze go pokrywa), bo to dwie różne pilności.
       const shed = shortfallLine(report);
-      shortfall.textContent = shed;
+      shortfall.textContent = shed === '' ? '' : ` · ${shed}`;
       shortfall.className =
         shed === ''
           ? 'hud-shortfall'
@@ -613,7 +686,7 @@ export function createHudView(
       // już nie było widać.
       const accepted = commandsAccepted(s);
       headline.textContent =
-        `komórka: ${cellId === null ? '—' : cellId}` +
+        ` · komórka: ${cellId === null ? '—' : cellId}` +
         (accepted ? '' : ` · komendy nie są przyjmowane — run zakończony (${s.phase})`);
       headline.className = accepted ? 'hud-headline' : 'hud-headline hud-headline--over';
 
@@ -625,6 +698,12 @@ export function createHudView(
         // od panelu bez numerów, bo gracz wciska to, co przeczytał.
         pickElements[i].textContent =
           `${i + 1} ${row.type.padEnd(NAME_WIDTH)}${String(row.costOre).padStart(COST_WIDTH)}`;
+        // Pobór CZYTANY z `BUILDINGS` (przez `buildMenuRows`), nie przepisany — jedna tabela.
+        // Budynek bez poboru zostawia puste miejsce zamiast „0/s": zero jest tu szumem,
+        // a kolumna ma zostać na miejscu, żeby zdania odmowy dalej się wyrównywały.
+        drainElements[i].textContent = row.energyDrain > 0
+          ? rateText(shownRateTenths(row.energyDrain)).padStart(DRAIN_WIDTH)
+          : ' '.repeat(DRAIN_WIDTH);
         whyElements[i].textContent = row.check.ok ? '' : `  ${refusalMessage(row.check.reason)}`;
         // Klasy, nie style w linii: liczby wyglądu mieszkają w `index.html`, gdzie da się
         // je oglądać razem z resztą układu panelu. Wyjątkiem jest `pointerEvents`, ustawiany

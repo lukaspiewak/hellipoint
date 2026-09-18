@@ -300,41 +300,74 @@ function functionBody(source: string, name: string): string {
   return source.slice(start, end);
 }
 
-const REASON_SOURCES: readonly (readonly [string, string])[] = [
-  ['commands.ts', readFileSync(new URL('../../../packages/sim/src/sim/commands.ts', import.meta.url), 'utf8')],
-  // WYŁĄCZNIE ciało `refusalReason`, nie cały plik: `input.ts` zwraca literały także
-  // z `keyCode` (`'Space'`), a skan po całym pliku wziąłby je za powód odmowy i wywalił się
-  // na własnej straży literału. Wycinek jest tu granicą skanu, nie jego osłabieniem —
-  // brak funkcji o tej nazwie RZUCA.
-  ['input.ts:refusalReason', functionBody(readFileSync(new URL('../src/input.ts', import.meta.url), 'utf8'), 'refusalReason')],
+/**
+ * Dwa źródła powodów i DWA kształty, w których powody z nich wychodzą — stąd osobny wzorzec
+ * do każdego, a nie jeden szerszy do obu.
+ *
+ * `commands.ts` zwraca OBIEKT (`{ ok: false, reason: '…' }`), więc skanowany jest po
+ * WARTOŚCI odmowy. `refusalReason` zwraca sam powód, więc skanowany jest po KAŻDYM
+ * `return …;` — i to jest naprawa F3: wzorzec ograniczony do zwrotu ZACYTOWANEGO
+ * przepuszczał dziesiąty powód oddany stałą.
+ *
+ * Z `input.ts` bierzemy WYŁĄCZNIE ciało `refusalReason`, nie cały plik: `keyCode` zwraca
+ * tam literały (`'Space'`), a skan po całym pliku wziąłby je za powody i wywalił się na
+ * własnej straży. Wycinek jest granicą skanu, nie jego osłabieniem — brak funkcji o tej
+ * nazwie RZUCA.
+ */
+const REASON_SOURCES: readonly { name: string; source: string; pattern: RegExp }[] = [
+  {
+    name: 'commands.ts',
+    source: readFileSync(new URL('../../../packages/sim/src/sim/commands.ts', import.meta.url), 'utf8'),
+    pattern: /ok:\s*false,\s*reason:\s*([^,}\n]+)/g,
+  },
+  {
+    name: 'input.ts:refusalReason',
+    source: functionBody(readFileSync(new URL('../src/input.ts', import.meta.url), 'utf8'), 'refusalReason'),
+    pattern: /\breturn\s+([^;]+);/g,
+  },
 ];
+
+/**
+ * Wyrażenia, którymi `refusalReason` wolno wyjść BEZ podania powodu literałem — i tylko one.
+ *
+ * `null` znaczy „symulacja to przyjmie", a `check.ok ? null : check.reason` PRZEKAZUJE dalej
+ * powód `canBuild`, czyli ten sam zbiór, który skan czyta z `commands.ts`. Wszystko inne jest
+ * dziesiątym powodem podanym stałą — dokładnie ta mutacja przechodziła 686/686 w przeglądzie,
+ * a gracz dostawał na ekranie `brak opisu odmowy: <IDENTYFIKATOR>`.
+ *
+ * Lista jest WYMIENIONA, nie opisana wzorcem, bo ma być wąska: dopisanie do niej jest
+ * świadomą decyzją, a nie skutkiem ubocznym poszerzenia regexu.
+ */
+const DELEGUJACE_ZWROTY: readonly string[] = ['null', 'check.ok ? null : check.reason'];
 
 /**
  * Powody ZADEKLAROWANE w źródłach wyżej, wyjęte z literałów.
  *
- * **Granica skanu, domknięta GŁOŚNO, a nie po cichu:** rozpoznaje wyłącznie literał. Powód
- * podany stałą (`reason: EIGHTH`) byłby dla niego niewidzialny i test przeszedłby mimo
- * braku komunikatu — zmierzone w przeglądzie rundy 1 jako 53/53 zielone. Zamiast udawać,
- * że skan to rozumie, rzuca: odejście od stylu domowego ma zatrzymać test z komunikatem,
- * co poszerzyć, a nie przepuścić powód bez opisu.
+ * **Granica skanu, domknięta GŁOŚNO, a nie po cichu.** Do rundy naprawczej 1 wzorzec łapał
+ * wyłącznie ZACYTOWANY zwrot (`return 'X';`), więc powód oddany stałą był dla niego
+ * NIEWIDZIALNY — nie policzony i nie zgłoszony. Zmierzone w przeglądzie: `return
+ * EVAC_UNDEMOLISHABLE;` w `input.ts` przechodziło 686/686, a ten sam zabieg w `commands.ts`
+ * rzucał. Czyli: ta sama dziura, którą Zadanie 3 już raz łatało, załatana na JEDNYM
+ * z dwóch źródeł.
  *
- * Dwa wzorce, bo powody powstają w dwóch kształtach: `commands.ts` zwraca `{ ok: false,
- * reason: '…' }`, a `refusalReason` — samo `return '…'`. Oba są zakotwiczone w WARTOŚCI,
- * nie w deklaracji typu (`{ ok: false; reason: string }` ma średnik, więc tam nie wpada).
+ * Teraz skan czyta KAŻDY `return <cokolwiek>;` z ciała `refusalReason` i rzuca na wszystkim,
+ * co nie jest ani literałem `'[A-Z_]+'`, ani jednym z `DELEGUJACE_ZWROTY`. `commands.ts`
+ * skanowany jest po WARTOŚCI odmowy (`ok: false, reason: …`), a nie po deklaracji typu
+ * (`{ ok: false; reason: string }` ma średnik, więc tam nie wpada).
  */
 function declaredReasons(): Set<string> {
   const out = new Set<string>();
-  for (const [name, source] of REASON_SOURCES) {
-    const wartosci = [
-      ...[...source.matchAll(/ok:\s*false,\s*reason:\s*([^,}\n]+)/g)].map((m) => m[1].trim()),
-      ...[...source.matchAll(/return\s+('[A-Z_]+'|'[^']*')\s*;/g)].map((m) => m[1].trim()),
-    ];
+  for (const { name, source, pattern } of REASON_SOURCES) {
+    const wartosci = [...source.matchAll(pattern)]
+      .map((m) => m[1].trim())
+      .filter((v) => !DELEGUJACE_ZWROTY.includes(v));
     const nieliteraly = wartosci.filter((v) => !/^'[A-Z_]+'$/.test(v));
     if (nieliteraly.length > 0) {
       throw new Error(
         `declaredReasons: w ${name} jest powód podany INACZEJ niż literałem — ` +
           `${JSON.stringify(nieliteraly)}. Ten skan rozumie wyłącznie literały, więc taki ` +
-          'powód przeszedłby bez komunikatu. Poszerz skan albo wróć do literału.',
+          'powód przeszedłby bez komunikatu na ekran gracza. Wróć do literału albo — jeśli ' +
+          'to wyrażenie NIE jest powodem — dopisz je świadomie do DELEGUJACE_ZWROTY.',
       );
     }
     for (const v of wartosci) out.add(v.slice(1, -1));
@@ -376,6 +409,51 @@ function observedReasons(): Set<string> {
   collect(canBuild(s, hex, 'LASER_TURRET'));
   return seen;
 }
+
+describe('menu niesie POBÓR ENERGII — brakująca dana łańcucha Q3', () => {
+  it('7b. [PARA] pobór jest CZYTANY z BUILDINGS i dociera NA PANEL, a budynek bez poboru nie kłamie zerem', () => {
+    // Przegląd zmierzył, że z ekranu nie dało się dojść do SPRAWCY brownoutu, bo brakowało
+    // jednej danej: gracz widział „z 48,0/s potrzebnych" i nie miał gdzie przeczytać, że
+    // jeden laser bierze 12/s. `energyDrain` nie miał ANI JEDNEGO wyjścia na ekran, więc
+    // krok „to lasery zjadły prąd" nie był wnioskiem, tylko eksperymentem.
+    const { s } = richRun();
+    const cell = freeHexagonNear(s);
+
+    // POŁOWA „CZYTANE, NIE PRZEPISANE" — ta sama forma, co dla kosztu w teście 5: własność
+    // mierzona na ŹRÓDLE PRAWDY, nie asercją „laser bierze 12".
+    const original = BUILDINGS.LASER_TURRET.energyDrain;
+    try {
+      BUILDINGS.LASER_TURRET.energyDrain = 37; // [STROJENIE] w teście: wartość nie do pomylenia
+      expect(row(buildMenuRows(s, cell), 'LASER_TURRET').energyDrain).toBe(37);
+      const panel = makePanel();
+      panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+      expect(rowText(panel, 'LASER_TURRET')).toContain(rateText(shownRateTenths(37)));
+    } finally {
+      BUILDINGS.LASER_TURRET.energyDrain = original;
+    }
+
+    // POŁOWA „NA PANELU" przy wartości produkcyjnej — bez niej kolumna mogłaby istnieć
+    // w `MenuRow` i nigdy nie dotrzeć na ekran.
+    const panel = makePanel();
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+    expect(rowText(panel, 'LASER_TURRET')).toContain(rateText(shownRateTenths(BUILDINGS.LASER_TURRET.energyDrain)));
+    expect(rowText(panel, 'PYLON')).toContain(rateText(shownRateTenths(BUILDINGS.PYLON.energyDrain)));
+
+    // POŁOWA „NIE KŁAMIE ZEREM": budynek bez poboru zostawia puste miejsce, a nie „0,0/s" —
+    // zero jest tu szumem w kolumnie, w której gracz szuka winowajcy.
+    expect(BUILDINGS.BARRICADE.energyDrain).toBe(0); // kontrola na fiksturę
+    expect(rowText(panel, 'BARRICADE')).not.toContain('/s');
+    // …a kolumna zostaje NA MIEJSCU, więc zdania odmowy dalej się wyrównują: wiersz bez
+    // poboru jest tak samo długi jak wiersz z poborem, aż do zdania odmowy.
+    const withDrain = allText(panel.rows()[playerBuildableTypes().indexOf('LASER_TURRET')]);
+    const without = allText(panel.rows()[playerBuildableTypes().indexOf('BARRICADE')]);
+    expect(withDrain.indexOf('wskaż')).toBe(without.indexOf('wskaż'));
+
+    // Łapka (jedyny element łapiący wskaźnik) NIE urosła o tę kolumnę — inaczej naprawa
+    // trafialności z Zadania 3 zapłaciłaby za tę daną szerokością dziury w sterowaniu.
+    expect(allText(panel.picks()[playerBuildableTypes().indexOf('LASER_TURRET')])).not.toContain('/s');
+  });
+});
 
 describe('refusalMessage — każdy powód odmowy mówi po ludzku', () => {
   it('8. [WŁASNOŚĆ] KAŻDY powód z commands.ts ma komunikat po polsku, nieniosący identyfikatora', () => {
@@ -544,6 +622,14 @@ describe('bilans energii — HUD mówi, CZEGO brakuje i CO przez to zgasło', ()
     // KOLEJNOŚĆ gaszenia jest treścią: to ona mówi, że kopalnie padają PIERWSZE, czyli
     // dlaczego po brownoucie nie ma z czego odbudować obrony.
     expect(shed.indexOf('EXTRACTOR')).toBeLessThan(shed.indexOf('KINETIC_TURRET'));
+    // …ale kolejność GASZENIA nie jest kolejnością CZYTANIA: pierwszy w zdaniu jest
+    // NIEDOBÓR (przyczyna), a lista stoi za spójnikiem następstwa. Bez tego zdanie stawiało
+    // na początku OFIARĘ i podpowiadało „dobuduj kopalnie" — dokładnie odwrotnie, niż trzeba.
+    expect(shed.indexOf('brakuje')).toBeLessThan(shed.indexOf('więc gasną'));
+    expect(shed.indexOf('więc gasną')).toBeLessThan(shed.indexOf('EXTRACTOR'));
+    // Para: zdanie bez niedoboru (kaskada od samego odcięcia produkcji) nadal NIE zaczyna
+    // się od ofiary — zaczyna się od spójnika następstwa.
+    expect(shortfallLine(powerWith(10, 10, ['EXTRACTOR']))).toMatch(/^więc gasną: EXTRACTOR$/);
 
     // POŁOWA „MA ZNIKNĄĆ": sieć z nadwyżką nie mówi nic. Bez niej ostrzeżenie mogłoby stać
     // na ekranie zawsze i nie znaczyć nic.
@@ -591,14 +677,21 @@ describe('bilans energii — HUD mówi, CZEGO brakuje i CO przez to zgasło', ()
 
     // 1. LICZBA, której brakuje — bez niej gracz widzi skutek, nie przyczynę.
     expect(text).toContain(rateText(shownRateTenths(power.rawDemand) - shownRateTenths(power.supply)));
-    // 2. CO zgasło.
-    expect(text).toContain('zgaszono');
+    // 2. CO zgasło — i to jako NASTĘPSTWO niedoboru, nie jako nagłówek. Spójnik jest tu
+    //    asercją, a nie ozdobą: bez niego pierwszym nazwanym typem jest OFIARA i najprostszy
+    //    wniosek gracza brzmi „dobuduj kopalnie", czyli odwrotnie, niż trzeba.
+    expect(text).toContain('więc gasną');
     expect(text).toContain('EXTRACTOR');
+    expect(text.indexOf('brakuje')).toBeLessThan(text.indexOf('EXTRACTOR'));
     // 3. …oraz OBIE strony bilansu, żeby dało się zobaczyć, że to POBÓR urósł, a nie
     //    produkcja spadła. To jest zdanie, które odróżnia „dobuduj panele" od „rozbierz laser".
     expect(text).toContain(rateText(shownRateTenths(power.supply)));
     expect(text).toContain(rateText(shownRateTenths(power.rawDemand)));
     expect(power.rawDemand).toBeGreaterThan(4 * BUILDINGS.LASER_TURRET.energyDrain);
+    // 4. …i POBÓR POJEDYNCZEGO lasera — druga z dwóch liczb, z których gracz wylicza
+    //    sprawcę (4 × 12 = 48). Bez niej krok „to lasery" nie jest czytaniem, tylko
+    //    eksperymentem: rozbierz jeden i zobacz, czy popyt spadnie.
+    expect(text).toContain(rateText(shownRateTenths(BUILDINGS.LASER_TURRET.energyDrain)));
 
     console.log(`[Q3] panel mówi: ${panel.text().split('\\n').join(' | ')}`);
   });
@@ -618,6 +711,22 @@ describe('bilans energii — HUD mówi, CZEGO brakuje i CO przez to zgasło', ()
     expect(panel.view.update(s, powerWith(10.001, 20, []), cell, 'BARRICADE')).toBe(false);
     // …a zmiana widoczna na ekranie — przemalowuje. Para przy samej granicy dziesiątej.
     expect(panel.view.update(s, powerWith(10.06, 20, []), cell, 'BARRICADE')).toBe(true);
+
+    // ## DRUGA POŁOWA BRAMKI: sam POPYT, przy nieruchomej podaży (naprawa F5)
+    //
+    // Usunięcie `demandTenths` z bramki przechodziło 686/686, bo ten test ruszał wyłącznie
+    // podażą i listą zgaszonych. Kiedy to boli: w trakcie brownoutu magazyn stoi na zerze,
+    // ekstraktory są zgaszone, więc podłoga rudy i podłoga magazynu się NIE zmieniają —
+    // a gdy wróg zniszczy jeden laser, `rawDemand` spada 48 → 36 i nic innego w bramce nie
+    // drgnie. Panel pokazywałby dalej „z 48,0/s potrzebnych" DOKŁADNIE w chwili, w której
+    // ta liczba ma znaczenie.
+    expect(panel.view.update(s, powerWith(10.06, 36, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(true);
+    expect(panel.view.update(s, powerWith(10.06, 36, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(false);
+    // Para przy samej granicy dziesiątej, tak jak dla podaży wyżej.
+    expect(panel.view.update(s, powerWith(10.06, 36.001, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(false);
+    expect(panel.view.update(s, powerWith(10.06, 36.06, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(true);
+    // …i pokazana liczba NAPRAWDĘ poszła za popytem, a nie tylko bramka drgnęła.
+    expect(panel.text()).toContain(rateText(shownRateTenths(36.06)));
 
     // Sama LISTA zgaszonych typów jest osobnym kanałem: te same liczby, inny skutek.
     expect(panel.view.update(s, powerWith(10.06, 20, ['EXTRACTOR']), cell, 'BARRICADE')).toBe(true);
@@ -846,12 +955,18 @@ describe('HudView — panel zasobów i budowy', () => {
     // Dokładnie jedna łapka na pozycję menu — ani jednej więcej.
     expect(lapiace).toEqual(panel.picks());
     expect(lapiace.length).toBe(playerBuildableTypes().length);
-    // Zdanie z powodem odmowy jest SZEROKIE i leży na planecie — nie wolno mu łapać.
+    // Wszystko w wierszu POZA łapką przepuszcza wskaźnik — zdanie odmowy jest szerokie
+    // i leży na planecie, a kolumna poboru (runda naprawcza 1) jest do czytania, nie do
+    // klikania. Pętla po WSZYSTKICH dzieciach poza pierwszym, nie po jednym wskazanym
+    // indeksie: dołożenie kolejnej kolumny ma przejść przez ten test, a nie obok niego.
     for (const wiersz of panel.rows()) {
-      expect({ klasa: wiersz.className, pe: wiersz.children[1].style.pointerEvents }).toEqual({
-        klasa: wiersz.className,
-        pe: '',
-      });
+      expect(wiersz.children.length).toBeGreaterThan(1);
+      for (const dziecko of wiersz.children.slice(1)) {
+        expect({ klasa: dziecko.className, pe: dziecko.style.pointerEvents }).toEqual({
+          klasa: dziecko.className,
+          pe: '',
+        });
+      }
     }
     // Łapka niesie numer, nazwę i koszt; powód odmowy leży POZA nią, bo jest szeroki.
     expect(allText(panel.picks()[0])).toContain('BARRICADE');
@@ -1230,7 +1345,7 @@ describe('wireClient — panel na ekranie gracza', () => {
 
     const power = rig.sim.lastPower;
     expect(power.shedTypes.length, 'fikstura: kaskada NAPRAWDĘ zadziałała').toBeGreaterThan(0);
-    expect(rig.text()).toContain('zgaszono');
+    expect(rig.text()).toContain('więc gasną');
     expect(rig.text()).toContain(
       rateText(shownRateTenths(power.rawDemand) - shownRateTenths(power.supply)),
     );

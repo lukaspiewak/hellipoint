@@ -534,6 +534,26 @@ export const ALERT_BREAK_COUNT = 4; // [WYGLĄD]
  * rozdzielczości, więc wartość leżąca tuż nad nim byłaby wartością leżącą tuż nad
  * OSZACOWANIEM. Para mutacji na samej granicy stoi w teście 26.
  *
+ * ## PRZY JAKIM PŁÓTNIE — bo „2,01 px" bez tej informacji jest nieprawdą
+ *
+ * Wszystkie piksele w tym pliku liczą się przy **płótnie 900 px wysokości**
+ * (`CANVAS_HEIGHT_PX` w `test/support/pixelScale.ts`) — i to jest odniesienie CAŁEJ fazy,
+ * nie wybór tego kanału. Skala jest wprost proporcjonalna do wysokości płótna, więc
+ * w oknie podglądu 800×482, w którym uruchamia się bramkę, KAŻDA liczba pikselowa tej fazy
+ * kurczy się o czynnik 482/900 = 0,536:
+ *
+ *   | wielkość                          | przy 900 px | przy 482 px |
+ *   |-----------------------------------|-------------|-------------|
+ *   | obwódka rdzenia (`CORE_RIM`)      | 1,19        | **0,64**    |
+ *   | pas obręczy alarmu (najwęższy)    | 1,76        | **0,94**    |
+ *   | **przerwa obręczy (ten kanał)**   | **2,01**    | **1,08**    |
+ *
+ * Czyli: przy oknie podglądu ten kanał leży **na progu**, a nie dwa razy nad nim — ale jest
+ * przy tym NAJHOJNIEJSZY z trzech, bo dwa starsze są już pod progiem. Wniosek nie brzmi
+ * „poszerzyć przerwę", tylko: **werdykt wzrokowy o czymkolwiek w tej fazie zapada na
+ * płótnie ≥ 900 px, nie w oknie podglądu.** Przestrojenie tego założenia unieważnia
+ * wszystkie progi Fazy 2B naraz i jest decyzją o metodologii, nie o tej stałej.
+ *
  * ## Dlaczego przerwa, a nie kolor
  *
  * Bo przerwa jest DARMOWA pod względem kontrastu. `global-constraints.md`: żaden pojedynczy

@@ -52,6 +52,17 @@ import { FIELD_OF_VIEW_DEGREES, INITIAL_DISTANCE_FACTOR } from '../../src/camera
  * (`apps/client`, okno pełnoekranowe na maszynie właściciela projektu). Płótno wyższe daje
  * WIĘCEJ pikseli na jednostkę, więc wszystkie progi tej fazy są przy nim spełnione z
  * zapasem; ta liczba jest zachowawczym dołem, nie pomiarem konkretnej sesji.
+ *
+ * **To NIE jest dół dla okna podglądu w panelu przeglądarki (800×482).** Skala jest wprost
+ * proporcjonalna do wysokości płótna, więc przy 482 px każda liczba pikselowa tej fazy
+ * kurczy się o czynnik 0,536 — obwódka rdzenia schodzi z 1,19 na 0,64 px, najwęższy pas
+ * obręczy alarmu z 1,76 na 0,94 px, przerwa obręczy z 2,01 na 1,08 px. Czyli **dwie
+ * wielkości starsze niż ta faza są w oknie podglądu POD progiem**, a nie tylko bliżej niego.
+ *
+ * Wniosek, zapisany tutaj, żeby nie musiał być odkrywany przy każdej bramce: **werdykt
+ * wzrokowy zapada na płótnie co najmniej tej wysokości, nie w oknie podglądu.** Obniżenie
+ * tej stałej nie jest zestrojeniem jednego progu — unieważnia wszystkie progi Fazy 2B naraz
+ * i jest decyzją o metodologii.
  */
 export const CANVAS_HEIGHT_PX = 900;
 

@@ -213,6 +213,11 @@ describe('updatePower', () => {
 
     const r = updatePower(s, noLight);
     expect(r.demand).toBeCloseTo(15, 9); // popyt PYLON-ów NAPRAWDĘ policzony, nie pominięty
+    // …i TO SAMO dla `rawDemand`, bo to on idzie na ekran. PYLON jest JEDYNYM odbiorcą spoza
+    // `BROWNOUT_ORDER`, więc akumulator ograniczony do typów gaszalnych gubi CAŁĄ tę pozycję
+    // i nic innego — panel pokazywałby wtedy „z 0,0/s potrzebnych" przy sieci drenującej
+    // magazyn. Zmierzone w przeglądzie: taka mutacja przechodziła 686/686.
+    expect(r.rawDemand).toBeCloseTo(15, 9);
     expect(r.shedTypes).toEqual([]);
     expect(r.shedTypes).not.toContain('PYLON'); // ani teraz, ani przy dalszym drenażu niżej
     expect(s.storedEnergy).toBe(0); // od razu na zerze, nie poniżej
@@ -251,6 +256,38 @@ function fourLaserRun(): Sim {
 }
 
 describe('rawDemand — zapotrzebowanie SPRZED kaskady', () => {
+  it('0. [KLASA] rawDemand to suma po WSZYSTKICH podłączonych odbiorcach — gaszalnych i nie', () => {
+    // Przypadek MIESZANY: w jednym raporcie stoi odbiorca gaszalny (laser, `BROWNOUT_ORDER`)
+    // i odbiorca NIEGASZALNY (pylony — gaszenie ich rozspójniłoby sieć, §5.1). Bez niego
+    // własność „suma po wszystkich podłączonych" była związana wyłącznie dla `LASER_TURRET`,
+    // a wyrzucenie `PYLON` z akumulatora przechodziło komplet testów. Sieć z pylonami to
+    // DOKŁADNIE sieć Q4 — ta, której pylony zjada DISRUPTOR.
+    const s = base();
+    // Laser PIERWSZY, pylony po nim i z pominięciem jego komórki: oba zasięgi (1-2 i 1-3
+    // kroku od startu) zachodzą na siebie, więc odwrotna kolejność po cichu połykała laser
+    // na `CELL_OCCUPIED` i test mierzył same pylony.
+    const [laserCell] = nearbyHexes(1);
+    applyCommand(s, { kind: 'BUILD', cellId: laserCell, type: 'LASER_TURRET' });
+    const pylons = nearbyHexesForPylons(31).filter((id) => id !== laserCell).slice(0, 30);
+    for (const cellId of pylons) applyCommand(s, { kind: 'BUILD', cellId, type: 'PYLON' });
+    s.storedEnergy = 0;
+
+    // Kontrola na fiksturę: tyle budynków NAPRAWDĘ stanęło, ile test zakłada.
+    expect(s.buildings.filter((b) => b?.type === 'PYLON').length).toBe(30);
+    expect(s.buildings[laserCell]?.type).toBe('LASER_TURRET');
+    const pylonDrain = 30 * BUILDINGS.PYLON.energyDrain;
+    const r = updatePower(s, noLight);
+    // Suma OBU rodzajów, nie jednego: 30 × 0,5 + 12 = 27/s.
+    expect(r.rawDemand).toBeCloseTo(pylonDrain + LASER_DRAIN, 9);
+    // …a kaskada gasi WYŁĄCZNIE laser, więc `demand` zostaje na samych pylonach. Ta para
+    // rozstrzyga, że `rawDemand` i `demand` liczą się po RÓŻNYCH zbiorach, a nie że jeden
+    // jest kopią drugiego przemnożoną przez cokolwiek.
+    expect(r.shedTypes).toEqual(['LASER_TURRET']);
+    expect(r.demand).toBeCloseTo(pylonDrain, 9);
+    expect(r.outage[laserCell]).toBe(OUTAGE_SHED);
+    for (const cellId of pylons) expect(r.outage[cellId]).toBe(OUTAGE_NONE);
+  });
+
   it('1. rawDemand niesie zapotrzebowanie PRZED gaszeniem, demand — po nim', () => {
     const sim = fourLaserRun();
     sim.state.storedEnergy = 0; // wyczerpany magazyn: kaskada musi zadziałać

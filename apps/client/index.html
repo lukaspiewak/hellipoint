@@ -68,11 +68,37 @@
         font-weight: 700;
       }
       /*
+        DWA WIERSZE NAGŁÓWKA, nie cztery — i to jest naprawa czytelności, nie oszczędność
+        miejsca. Runda naprawcza 1 Zadania 4: bilans i jego skutek jako osobne wiersze
+        podniosły górną krawędź panelu z `y = 260` na `y = 224` przy oknie 800×482, a skrót
+        „wróć do Core" parkuje Core w środku płótna (`y = 241`). W chwili brownoutu — jedynej,
+        w której nowy kanał w świecie coś znaczy — Core leżał pod tą płachtą.
+
+        Napisy są SPANAMI wewnątrz wiersza (patrz `createHudView`), więc każda para dzieli
+        jedną linię: zasoby + wskazana komórka, bilans + jego skutek.
+      */
+      #hud .hud-line {
+        margin: 0;
+      }
+      /*
         BILANS ENERGII (Faza 2C, Zadanie 4). Produkcja i pobór to wielkości NA SEKUNDĘ, więc
-        stoją w osobnym wierszu niż zapasy — czytane razem z „rudą" wyglądałyby jak zapas.
+        stoją w innym wierszu niż zapasy — czytane razem z „rudą" wyglądałyby jak zapas.
       */
       #hud .hud-power {
         color: #cbd7e8;
+      }
+      /* Ten sam odstęp przed menu, który do Zadania 4 niósł wiersz wskazania. */
+      #hud .hud-line--power {
+        margin-bottom: 4px;
+      }
+      /*
+        POBÓR ENERGII przy pozycji menu (runda naprawcza 1 Zadania 4) — druga z dwóch liczb,
+        z których gracz wylicza sprawcę brownoutu (4 × 12/s = 48/s). Przygaszony wobec nazwy
+        i kosztu, bo to dana do SPRAWDZENIA, a nie do wyboru: koszt gracz czyta przy każdym
+        kliknięciu, pobór — wtedy, gdy szuka, co zjada prąd.
+      */
+      #hud .hud-drain {
+        color: #9fb2cc;
       }
       /*
         SKUTEK niedoboru. Bursztyn jest TEN SAM, co jasny pas pierścienia alarmu w świecie
@@ -90,7 +116,6 @@
       }
       #hud .hud-headline {
         color: #9fb2cc;
-        margin-bottom: 4px;
       }
       /* Faza inna niż RUNNING: symulacja kasuje kolejkę komend, więc sterowanie NAPRAWDĘ
          przestaje działać. Ostrzegawczy kolor, żeby nikt nie szukał usterki w myszy. */
