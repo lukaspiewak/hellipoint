@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   BROWNOUT_ORDER,
@@ -59,6 +58,7 @@ import {
   refusalReason,
   type RayCamera,
   type Report,
+  type RefusalReason,
 } from '../src/input.js';
 import { wireClient, type Client, type ClientScene } from '../src/client.js';
 import {
@@ -288,52 +288,7 @@ function typeWithCost(s: SimState, cell: number, cost: number): BuildingType {
 // własność obejmuje teraz OBA źródła powodów.
 // =========================================================================================
 
-/**
- * Oba miejsca, w których powstaje powód odmowy: `canBuild` (siedem powodów budowy) oraz
- * `refusalReason` (dwa powody rozbiórki, plus `NO_SUCH_CELL` wspólny z tamtym).
- *
- * Drugi plik jest tu od Zadania 4 i to jest cała różnica wobec Zadania 3: dopóki skan
- * czytał wyłącznie `commands.ts`, słownik mógł nie mieć `NOTHING_TO_DEMOLISH`
- * i `CORE_INDESTRUCTIBLE`, a test był zielony.
- */
-function functionBody(source: string, name: string): string {
-  const start = source.indexOf(`export function ${name}(`);
-  const end = source.indexOf('\n}', start);
-  if (start < 0 || end < 0) {
-    throw new Error(
-      `functionBody: nie znalazłem ciała funkcji ${name} — skan powodów czytałby pusty ` +
-        'napis i przechodził, nie mierząc niczego.',
-    );
-  }
-  return source.slice(start, end);
-}
 
-/**
- * Dwa źródła powodów i DWA kształty, w których powody z nich wychodzą — stąd osobny wzorzec
- * do każdego, a nie jeden szerszy do obu.
- *
- * `commands.ts` zwraca OBIEKT (`{ ok: false, reason: '…' }`), więc skanowany jest po
- * WARTOŚCI odmowy. `refusalReason` zwraca sam powód, więc skanowany jest po KAŻDYM
- * `return …;` — i to jest naprawa F3: wzorzec ograniczony do zwrotu ZACYTOWANEGO
- * przepuszczał dziesiąty powód oddany stałą.
- *
- * Z `input.ts` bierzemy WYŁĄCZNIE ciało `refusalReason`, nie cały plik: `keyCode` zwraca
- * tam literały (`'Space'`), a skan po całym pliku wziąłby je za powody i wywalił się na
- * własnej straży. Wycinek jest granicą skanu, nie jego osłabieniem — brak funkcji o tej
- * nazwie RZUCA.
- */
-const REASON_SOURCES: readonly { name: string; source: string; pattern: RegExp }[] = [
-  {
-    name: 'commands.ts',
-    source: readFileSync(new URL('../../../packages/sim/src/sim/commands.ts', import.meta.url), 'utf8'),
-    pattern: /ok:\s*false,\s*reason:\s*([^,}\n]+)/g,
-  },
-  {
-    name: 'input.ts:refusalReason',
-    source: functionBody(readFileSync(new URL('../src/input.ts', import.meta.url), 'utf8'), 'refusalReason'),
-    pattern: /\breturn\s+([^;]+);/g,
-  },
-];
 
 /**
  * Wyrażenia, którymi `refusalReason` wolno wyjść BEZ podania powodu literałem — i tylko one.
@@ -348,40 +303,6 @@ const REASON_SOURCES: readonly { name: string; source: string; pattern: RegExp }
  */
 const DELEGUJACE_ZWROTY: readonly string[] = ['null', 'check.ok ? null : check.reason'];
 
-/**
- * Powody ZADEKLAROWANE w źródłach wyżej, wyjęte z literałów.
- *
- * **Granica skanu, domknięta GŁOŚNO, a nie po cichu.** Do rundy naprawczej 1 wzorzec łapał
- * wyłącznie ZACYTOWANY zwrot (`return 'X';`), więc powód oddany stałą był dla niego
- * NIEWIDZIALNY — nie policzony i nie zgłoszony. Zmierzone w przeglądzie: `return
- * EVAC_UNDEMOLISHABLE;` w `input.ts` przechodziło 686/686, a ten sam zabieg w `commands.ts`
- * rzucał. Czyli: ta sama dziura, którą Zadanie 3 już raz łatało, załatana na JEDNYM
- * z dwóch źródeł.
- *
- * Teraz skan czyta KAŻDY `return <cokolwiek>;` z ciała `refusalReason` i rzuca na wszystkim,
- * co nie jest ani literałem `'[A-Z_]+'`, ani jednym z `DELEGUJACE_ZWROTY`. `commands.ts`
- * skanowany jest po WARTOŚCI odmowy (`ok: false, reason: …`), a nie po deklaracji typu
- * (`{ ok: false; reason: string }` ma średnik, więc tam nie wpada).
- */
-function declaredReasons(): Set<string> {
-  const out = new Set<string>();
-  for (const { name, source, pattern } of REASON_SOURCES) {
-    const wartosci = [...source.matchAll(pattern)]
-      .map((m) => m[1].trim())
-      .filter((v) => !DELEGUJACE_ZWROTY.includes(v));
-    const nieliteraly = wartosci.filter((v) => !/^'[A-Z_]+'$/.test(v));
-    if (nieliteraly.length > 0) {
-      throw new Error(
-        `declaredReasons: w ${name} jest powód podany INACZEJ niż literałem — ` +
-          `${JSON.stringify(nieliteraly)}. Ten skan rozumie wyłącznie literały, więc taki ` +
-          'powód przeszedłby bez komunikatu na ekran gracza. Wróć do literału albo — jeśli ' +
-          'to wyrażenie NIE jest powodem — dopisz je świadomie do DELEGUJACE_ZWROTY.',
-      );
-    }
-    for (const v of wartosci) out.add(v.slice(1, -1));
-  }
-  return out;
-}
 
 /**
  * Powody, które `canBuild` NAPRAWDĘ zwraca — każdy sprowokowany osobnym wejściem.
@@ -391,9 +312,9 @@ function declaredReasons(): Set<string> {
  * miejscu), więc jest tu zestawiony z zachowaniem: wyrażenie, które przestanie łapać powód,
  * wyjdzie na jaw jako powód WIDZIANY, a nie zadeklarowany.
  */
-function observedReasons(): Set<string> {
+function observedReasons(): Set<RefusalReason> {
   const { s } = richRun();
-  const seen = new Set<string>();
+  const seen = new Set<RefusalReason>();
   const collect = (check: BuildCheck): void => {
     if (!check.ok) seen.add(check.reason);
   };
@@ -453,9 +374,20 @@ describe('menu niesie POBÓR ENERGII — brakująca dana łańcucha Q3', () => {
     expect(rowText(panel, 'BARRICADE')).not.toContain('/s');
     // …a kolumna zostaje NA MIEJSCU, więc zdania odmowy dalej się wyrównują: wiersz bez
     // poboru jest tak samo długi jak wiersz z poborem, aż do zdania odmowy.
+    // Wyrównanie mierzone na stanie, w którym OBA wiersze NIOSĄ zdanie odmowy — bo inaczej
+    // asercja pustoszeje. Pierwsza wersja porównywała `indexOf` na wierszach dla komórki
+    // BUDOWALNEJ, gdzie zdania nie ma: obie strony dawały `-1`, więc `-1 === -1` przechodziło
+    // niezależnie od tego, czy kolumna trzyma szerokość. Znalazł to ponowny przegląd Zadania 4
+    // sondą wypisującą oba indeksy.
+    panel.view.update(s, IDLE_POWER, null, 'BARRICADE');
     const withDrain = allText(panel.rows()[playerBuildableTypes().indexOf('LASER_TURRET')]);
     const without = allText(panel.rows()[playerBuildableTypes().indexOf('BARRICADE')]);
-    expect(withDrain.indexOf('wskaż')).toBe(without.indexOf('wskaż'));
+    const at = withDrain.indexOf('wskaż');
+    // Strażnik na samą asercję: gdyby zdanie odmowy zniknęło z obu wierszy, `-1 === -1`
+    // znów przeszłoby bez związania czegokolwiek.
+    expect(at).toBeGreaterThan(0);
+    expect(at).toBe(without.indexOf('wskaż'));
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
 
     // Łapka (jedyny element łapiący wskaźnik) NIE urosła o tę kolumnę — inaczej naprawa
     // trafialności z Zadania 3 zapłaciłaby za tę daną szerokością dziury w sterowaniu.
@@ -465,7 +397,19 @@ describe('menu niesie POBÓR ENERGII — brakująca dana łańcucha Q3', () => {
 
 describe('refusalMessage — każdy powód odmowy mówi po ludzku', () => {
   it('8. [WŁASNOŚĆ] KAŻDY powód z commands.ts ma komunikat po polsku, nieniosący identyfikatora', () => {
-    const declared = declaredReasons();
+    // **Źródłem prawdy jest TYP, nie skan źródła** (runda naprawcza 1 Zadania 4).
+    //
+    // Do tej rundy zbiór powodów budował lekser czytający `commands.ts` i `input.ts`.
+    // Padł dwukrotnie: raz na powodzie oddanym stałą zamiast literałem, raz na odwróconej
+    // kolejności pól (`{ reason, ok: false }`). Poszerzanie wyrażenia rozpoznającego
+    // kształt jest wyścigiem nie do wygrania — ta sama lekcja, co przy strażniku mutacji
+    // stanu w Zadaniu 2, gdzie odpowiedzią było SKASOWANIE skanu.
+    //
+    // `REFUSAL_MESSAGES` ma typ `Record<RefusalReason, string>`, więc jego klucze to
+    // DOKŁADNIE unia: brak wpisu nie kompiluje się, nadmiarowy też nie (nadmiar pola
+    // w literale obiektu). Czyli `Object.keys` jest tu wyczerpujące z gwarancji
+    // kompilatora, a nie z jakości wyrażenia regularnego.
+    const declared = new Set(Object.keys(REFUSAL_MESSAGES) as RefusalReason[]);
     const observed = observedReasons();
 
     // Kontrola na przyrząd — bez niej pusta pętla przeszłaby na zielono. DZIEWIĘĆ, nie
@@ -476,14 +420,16 @@ describe('refusalMessage — każdy powód odmowy mówi po ludzku', () => {
     // …i są wśród nich DOKŁADNIE te dwa, których Zadanie 3 nie umiało objąć. Asercja
     // z nazwy, nie tylko po liczbie: podniesiona granica byłaby spełniona także przez dwa
     // powody dowolne inne.
-    for (const reason of ['NOTHING_TO_DEMOLISH', 'CORE_INDESTRUCTIBLE']) {
+    for (const reason of ['NOTHING_TO_DEMOLISH', 'CORE_INDESTRUCTIBLE'] as const) {
       expect({ reason, declared: declared.has(reason), observed: observed.has(reason) }).toEqual({
         reason, declared: true, observed: true,
       });
     }
-    // Ta połowa pilnuje SAMEGO SKANU: każdy powód, który `canBuild` naprawdę zwraca, musi
-    // dać się w źródle znaleźć. Gdyby wyrażenie przestało łapać którykolwiek, wyjdzie to tu,
-    // a nie dopiero wtedy, gdy graczowi pokaże się napis zastępczy.
+    // Ta połowa pilnuje, że UNIA NIE ODKLEIŁA SIĘ OD ZACHOWANIA: każdy powód, który
+    // `canBuild`/`refusalReason` naprawdę zwracają, musi być w słowniku. Kompilator
+    // gwarantuje, że słownik pokrywa unię — ale nie gwarantuje, że unia pokrywa to, co
+    // kod faktycznie produkuje (powód dopisany do `if`-a i zwrócony bez rozszerzenia typu
+    // dałby błąd kompilacji dopiero w miejscu zwrotu, a nie tutaj). To jest druga noga.
     //
     // Zawieranie, a nie równość zbiorów: powód zadeklarowany, którego ta próbka nie
     // prowokuje, ma dalej mieć komunikat (pętla niżej go obejmuje) — ale nie ma powodu
@@ -512,13 +458,17 @@ describe('refusalMessage — każdy powód odmowy mówi po ludzku', () => {
 
   it('9. słownik WOLNO mieć nadmiarowy, a napis zastępczy krzyczy identyfikatorem zamiast wywalać grę', () => {
     // Druga połowa pary z kroku 6 briefu: wpis dla nieistniejącego powodu nikomu nie szkodzi.
-    expect(Object.keys(REFUSAL_MESSAGES).length).toBeGreaterThanOrEqual(declaredReasons().size);
+    expect(Object.keys(REFUSAL_MESSAGES).length).toBeGreaterThanOrEqual(9);
     // Powód spoza słownika nie rzuca (pętla renderu gracza nie ma prawa paść, bo
     // `packages/sim` dostał ósmy powód) — ale wynik NIESIE identyfikator, więc wada jest
     // widoczna i na ekranie, i w teście wyżej.
-    const unknown = refusalMessage('CZWARTY_KSIĘŻYC');
+    // Rzutowanie jest tu UZASADNIONE, nie wygodne: po zamknięciu `RefusalReason` w unię
+    // powód spoza niej nie może już powstać w kodzie — ale MOŻE przyjść z zewnątrz
+    // (Faza 5: komenda z sieci, starszy zapis). Dokładnie ten przypadek broni gałąź
+    // zastępcza, więc test musi go udawać, a typ nie ma jak go wyrazić.
+    const unknown = refusalMessage('CZWARTY_KSIĘŻYC' as RefusalReason);
     expect(unknown).toContain('CZWARTY_KSIĘŻYC');
-    expect(declaredReasons().has('CZWARTY_KSIĘŻYC')).toBe(false);
+    expect(Object.keys(REFUSAL_MESSAGES)).not.toContain('CZWARTY_KSIĘŻYC');
   });
 });
 
@@ -566,7 +516,7 @@ describe('reportMessage — meldunek strukturalny staje się zdaniem w JEDNYM mi
       { kind: 'FOCUS_CORE', cellId: planet.startCell },
       { kind: 'TYPE_CHOSEN', type: 'PYLON' },
       { kind: 'SHADING', mode: 'threshold' },
-      ...[...declaredReasons()].map(
+      ...(Object.keys(REFUSAL_MESSAGES) as RefusalReason[]).map(
         (reason): Report => ({ kind: 'REFUSED', intent: { kind: 'BUILD', cellId: 7, type: 'PYLON' }, reason }),
       ),
     ];
@@ -1542,7 +1492,7 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
 
   function longestRefusal(): string {
     let worst = '';
-    for (const reason of Object.keys(REFUSAL_MESSAGES)) {
+    for (const reason of Object.keys(REFUSAL_MESSAGES) as RefusalReason[]) {
       const msg = refusalMessage(reason);
       if (msg.length > worst.length) worst = msg;
     }
@@ -1629,5 +1579,56 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
     // eslint-disable-next-line no-console
     console.log(`[UKŁAD] najdłuższa linia zasobów: ${line.length} znaków z ${MAX_HUD_LINE_CHARS}`);
     expect(line.length).toBeLessThanOrEqual(MAX_HUD_LINE_CHARS);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// 32. Separatory — segmenty w jednym wierszu nie mogą się zlewać
+// ---------------------------------------------------------------------------------------
+describe('32. [SEPARATOR] segmenty składane w jeden wiersz są rozdzielone', () => {
+  /**
+   * Trzy wiersze panelu składają się z KILKU segmentów w osobnych elementach (bilans +
+   * zdanie o skutku; zasoby + nagłówek + ostrzeżenie o końcu runu). Rozdziela je `' · '`
+   * dopisywane przy składaniu — i nie miało żadnego testu: ponowny przegląd Zadania 4
+   * pokazał, że jego usunięcie daje `…potrzebnychbrakuje 38,0/s…` i przechodzi 690/690,
+   * bo atrapa DOM-u nie ma układu, a treść segmentów z osobna pozostaje poprawna.
+   *
+   * Własność jest tu prostsza niż kotwica na same słowa: **złożony wiersz nie może być
+   * zwykłą konkatenacją swoich segmentów.** Jeśli jest — separator zniknął. Asercja nie
+   * wymienia ani separatora, ani sąsiadujących wyrazów, więc przeżyje zmianę jednego
+   * i drugiego.
+   */
+  const SHED_POWER: PowerReport = {
+    supply: 10,
+    demand: 10,
+    rawDemand: 48,
+    shedTypes: ['EXTRACTOR', 'LASER_TURRET'],
+    outage: new Uint8Array(0),
+  };
+
+  it('32a. bilans i zdanie o skutku nie zlewają się w jeden ciąg', () => {
+    const { s } = richRun();
+    const panel = makePanel();
+    panel.view.update(s, SHED_POWER, freeHexagonNear(s), 'BARRICADE');
+
+    const glued = powerLine(SHED_POWER) + shortfallLine(SHED_POWER);
+    // Kontrola na fiksturę: oba segmenty MUSZĄ być niepuste, inaczej test nic nie mierzy.
+    expect(powerLine(SHED_POWER).length).toBeGreaterThan(0);
+    expect(shortfallLine(SHED_POWER).length).toBeGreaterThan(0);
+    expect(panel.text()).not.toContain(glued);
+    // …a oba segmenty z osobna na panelu są — czyli brak sklejki nie bierze się z ich braku.
+    expect(panel.text()).toContain(powerLine(SHED_POWER));
+    expect(panel.text()).toContain(shortfallLine(SHED_POWER));
+  });
+
+  it('32b. zasoby i nagłówek z numerem komórki nie zlewają się w jeden ciąg', () => {
+    const { s } = richRun();
+    const panel = makePanel();
+    const cell = freeHexagonNear(s);
+    panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
+
+    expect(panel.text()).not.toContain(`${resourceLine(s)}komórka:`);
+    expect(panel.text()).toContain(resourceLine(s));
+    expect(panel.text()).toContain(`komórka: ${cell}`);
   });
 });

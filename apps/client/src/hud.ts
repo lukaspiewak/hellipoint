@@ -7,7 +7,7 @@ import {
   type PowerReport,
   type SimState,
 } from '@heliopolis/sim';
-import { playerBuildableTypes, type Report } from './input.js';
+import { playerBuildableTypes, type RefusalReason, type Report } from './input.js';
 
 /**
  * # HUD zasobów i budowy (Faza 2C, Zadanie 3)
@@ -155,7 +155,7 @@ export function buildMenuRows(s: SimState, cellId: number | null): MenuRow[] {
  * połowa rozjazdu, którą naprawia Krok 0 tego zadania. Po zmianie meldunków na
  * strukturalne KAŻDY powód idzie tą samą drogą, więc słownik obejmuje wszystkie dziewięć.
  */
-export const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
+export const REFUSAL_MESSAGES: Readonly<Record<RefusalReason, string>> = {
   NO_SUCH_CELL: 'wskaż komórkę — kursor jest poza planetą',
   CELL_OCCUPIED: 'komórka zajęta — najpierw rozbierz (prawy przycisk)',
   NOT_PLAYER_BUILDABLE: 'tego nie stawia gracz — zasiewa to symulacja',
@@ -183,7 +183,22 @@ export const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
  *
  * Trzecie jest jedyne, które nie handluje widoczności wady za spokój.
  */
-export function refusalMessage(reason: string): string {
+/**
+ * Komunikat dla gracza. Sygnatura przyjmuje **domkniętą unię**, nie `string` — i to jest
+ * cała gwarancja kompletności tego słownika.
+ *
+ * Do rundy naprawczej 1 Zadania 4 pilnował jej SKAN ŹRÓDŁA `commands.ts` i `input.ts`,
+ * i padł dwukrotnie: raz na powodzie oddanym stałą zamiast literałem, raz na odwróconej
+ * kolejności pól. Odpowiedzią nie było poszerzenie wzorca — poszerzanie kształtu jest
+ * wyścigiem nie do wygrania — tylko **przeniesienie gwarancji do kompilatora**:
+ * `Record<RefusalReason, string>` jest wyczerpujący z definicji, więc ósmy powód dopisany
+ * bez komunikatu nie przejdzie `tsc -b`, niezależnie od tego, jak go zapisano.
+ *
+ * Gałąź zastępcza zostaje mimo to. TypeScript nie broni runtime'u: powód może przyjść
+ * z sieci (Faza 5) albo ze starszego zapisu, a `undefined` w `textContent` byłoby gorsze
+ * od widocznego napisu, który mówi, czego brakuje.
+ */
+export function refusalMessage(reason: RefusalReason): string {
   return REFUSAL_MESSAGES[reason] ?? `brak opisu odmowy: ${reason}`;
 }
 

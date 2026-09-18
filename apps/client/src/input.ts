@@ -1,5 +1,5 @@
 import { cameraRay, pickCell, type OrbitCamera } from '@heliopolis/render';
-import { BUILDINGS, canBuild, type BuildingType, type Command, type Planet, type SimState, type Vec3 } from '@heliopolis/sim';
+import { BUILDINGS, canBuild, type BuildingType, type BuildRefusalReason, type Command, type Planet, type SimState, type Vec3 } from '@heliopolis/sim';
 
 /**
  * # Wejście gracza jako KOMENDY (Faza 2C, Zadanie 2)
@@ -232,7 +232,18 @@ export function pointedCell(
  * Dla `DEMOLISH` `canBuild` nie ma zastosowania, więc powtórzone są tu dwa warunki, na
  * których `applyCommand` po cichu wychodzi: pusta komórka i CORE.
  */
-export function refusalReason(s: SimState, intent: Intent): string | null {
+/**
+ * Powody, które dokłada SAM KLIENT dla rozbiórki — `canBuild` ich nie zna, bo nie dotyczy
+ * rozbiórki. Osobna unia, nie dopisek do `BuildRefusalReason`: to są dwa różne źródła
+ * i mają zostać rozróżnialne w typie, żeby słownik komunikatów w `hud.ts` pokrywał oba
+ * jawnie, a nie przez przypadek.
+ */
+export type DemolishRefusalReason = 'NOTHING_TO_DEMOLISH' | 'CORE_INDESTRUCTIBLE';
+
+/** Wszystko, co może trafić do `refusalMessage` — suma obu źródeł. */
+export type RefusalReason = BuildRefusalReason | DemolishRefusalReason;
+
+export function refusalReason(s: SimState, intent: Intent): RefusalReason | null {
   if (intent.kind === 'BUILD') {
     const check = canBuild(s, intent.cellId, intent.type);
     return check.ok ? null : check.reason;
@@ -276,7 +287,7 @@ export type Report =
   /** Komenda poszła do kolejki (klient NIE jest bramkarzem — patrz `refusalReason`). */
   | { readonly kind: 'QUEUED'; readonly intent: Intent }
   /** Komenda też poszła do kolejki, ale symulacja ją odrzuci — i oto dlaczego. */
-  | { readonly kind: 'REFUSED'; readonly intent: Intent; readonly reason: string }
+  | { readonly kind: 'REFUSED'; readonly intent: Intent; readonly reason: RefusalReason }
   /** Promień minął planetę: gracz kliknął w tło. */
   | { readonly kind: 'MISSED' }
   /** Skrót „wróć do Core" — kamera leci nad komórkę startową. */
