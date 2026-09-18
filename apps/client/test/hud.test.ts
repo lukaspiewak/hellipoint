@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   BROWNOUT_ORDER,
@@ -47,8 +48,10 @@ import {
   shownRateTenths,
   type ElementLike,
   type MenuRow,
+  MIN_WINDOW_HEIGHT_PX,
   MIN_WINDOW_WIDTH_PX,
   HUD_CHAR_WIDTH_PX,
+  HUD_FONT_SIZE_PX,
   HUD_HORIZONTAL_CHROME_PX,
   MAX_HUD_LINE_CHARS,
   NAME_WIDTH,
@@ -294,18 +297,6 @@ function typeWithCost(s: SimState, cell: number, cost: number): BuildingType {
 
 
 
-/**
- * Wyrażenia, którymi `refusalReason` wolno wyjść BEZ podania powodu literałem — i tylko one.
- *
- * `null` znaczy „symulacja to przyjmie", a `check.ok ? null : check.reason` PRZEKAZUJE dalej
- * powód `canBuild`, czyli ten sam zbiór, który skan czyta z `commands.ts`. Wszystko inne jest
- * dziesiątym powodem podanym stałą — dokładnie ta mutacja przechodziła 686/686 w przeglądzie,
- * a gracz dostawał na ekranie `brak opisu odmowy: <IDENTYFIKATOR>`.
- *
- * Lista jest WYMIENIONA, nie opisana wzorcem, bo ma być wąska: dopisanie do niej jest
- * świadomą decyzją, a nie skutkiem ubocznym poszerzenia regexu.
- */
-const DELEGUJACE_ZWROTY: readonly string[] = ['null', 'check.ok ? null : check.reason'];
 
 
 /**
@@ -460,9 +451,21 @@ describe('refusalMessage — każdy powód odmowy mówi po ludzku', () => {
     expect(new Set(messages).size).toBe(declared.size);
   });
 
-  it('9. słownik WOLNO mieć nadmiarowy, a napis zastępczy krzyczy identyfikatorem zamiast wywalać grę', () => {
-    // Druga połowa pary z kroku 6 briefu: wpis dla nieistniejącego powodu nikomu nie szkodzi.
-    expect(Object.keys(REFUSAL_MESSAGES).length).toBeGreaterThanOrEqual(9);
+  /**
+   * Tytuł do rundy naprawczej 2 brzmiał „słownik WOLNO mieć nadmiarowy" — czyli twierdził
+   * coś, czego **zabrania i kompilator (`Record<RefusalReason, string>`), i ostatnia asercja
+   * tego samego testu**. Był resztką po czasach skanu źródła, gdy nadmiarowy wpis faktycznie
+   * był dopuszczalny (N15).
+   *
+   * Co ten test naprawdę pilnuje: gałęzi zastępczej dla powodu, który przyszedł SPOZA typu.
+   * Wewnątrz kodu taki powód nie może już powstać, ale może przyjść z zewnątrz (Faza 5:
+   * komenda z sieci, starszy zapis) — i wtedy pętla renderu nie ma prawa paść.
+   *
+   * Liczności słownika ten test już NIE sprawdza: `Record<RefusalReason, string>` daje
+   * komplet przy kompilacji, a asercja „co najmniej 9" była kotwicą na dzisiejszą liczbę
+   * powodów przebraną za próg.
+   */
+  it('9. powód spoza typu (sieć, stary zapis) nie wywala gry — napis zastępczy krzyczy identyfikatorem', () => {
     // Powód spoza słownika nie rzuca (pętla renderu gracza nie ma prawa paść, bo
     // `packages/sim` dostał ósmy powód) — ale wynik NIESIE identyfikator, więc wada jest
     // widoczna i na ekranie, i w teście wyżej.
@@ -1697,5 +1700,81 @@ describe('32. [SEPARATOR] segmenty składane w jeden wiersz są rozdzielone', ()
     const panel = makePanel();
     panel.view.update(s, IDLE_POWER, cell, 'BARRICADE');
     expect(panel.text()).toContain(finished);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// 33. Stałe układu a ARKUSZ — dwie kopie tej samej liczby muszą się zgadzać
+// ---------------------------------------------------------------------------------------
+describe('33. [UKŁAD] liczby układu w kodzie zgadzają się z arkuszem', () => {
+  /**
+   * **Czym to jest, a czym nie jest.** To NIE jest skan kształtu kodu — klasa, którą ta faza
+   * usuwała trzykrotnie. Tu czytana jest DEKLARACJA: ta sama liczba stoi w dwóch miejscach
+   * (arkusz `index.html` i stała w `hud.ts`), bo przeglądarka czyta pierwsze, a budżet znaków
+   * wypada z drugiego. Test pilnuje, że się nie rozjadą. Nie orzeka o zachowaniu kodu.
+   *
+   * Zawężony przegląd rundy naprawczej Zadania 4 zmierzył, czego brak kosztował:
+   * - **N10**: `HUD_CHAR_WIDTH_PX` opisywał czcionkę z arkusza i nie był z nią związany
+   *   niczym poza zdaniem w komentarzu. `font: 12px` → `18px` przechodziło 699/699,
+   *   a `HUD_CHAR_WIDTH_PX = 3.0` przechodziło 43/43 — asercja mająca tego pilnować
+   *   porównywała stałą z wyrażeniem zawierającym tę samą stałą.
+   * - **N14**: `MIN_WINDOW_HEIGHT_PX` nie miał ANI JEDNEGO konsumenta, a `MIN_WINDOW_WIDTH_PX`
+   *   nie był nigdzie wyegzekwowany — panel kurczył się bez dna, choć cały budżet znaków
+   *   stoi na założeniu, że nie schodzi poniżej deklarowanego minimum.
+   */
+  const css = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+
+  /** Reguła `#hud` — żeby liczby z innych reguł nie wchodziły w rachunek. */
+  function hudRule(): string {
+    const at = css.indexOf('#hud {');
+    expect(at, 'reguła #hud w arkuszu').toBeGreaterThan(-1);
+    return css.slice(at, css.indexOf('}', at));
+  }
+
+  function numberFrom(pattern: RegExp, what: string): number {
+    const m = pattern.exec(hudRule());
+    expect(m, `${what} w regule #hud`).not.toBeNull();
+    return Number(m![1]);
+  }
+
+  it('33a. rozmiar czcionki w arkuszu zgadza się z HUD_FONT_SIZE_PX', () => {
+    expect(numberFrom(/font:\s*(\d+(?:\.\d+)?)px\//, 'font')).toBe(HUD_FONT_SIZE_PX);
+  });
+
+  it('33b. arkusz EGZEKWUJE minimalną szerokość okna, a nie tylko ją deklarujemy', () => {
+    expect(numberFrom(/max-width:\s*calc\(max\(100vw,\s*(\d+)px\)/, 'max-width')).toBe(
+      MIN_WINDOW_WIDTH_PX,
+    );
+  });
+
+  it('33c. arkusz EGZEKWUJE minimalną wysokość okna', () => {
+    expect(numberFrom(/max-height:\s*calc\(max\(100vh,\s*(\d+)px\)/, 'max-height')).toBe(
+      MIN_WINDOW_HEIGHT_PX,
+    );
+  });
+
+  /**
+   * Krój MONOSPACE'OWY jest przesłanką całej metody: gdyby panel dostał font proporcjonalny,
+   * „szerokość wiersza = liczba znaków × stała" przestałoby być prawdą i budżet z testów 31
+   * mierzyłby wielkość bez związku z ekranem. Z deklaracji to widać, więc jest wiązane.
+   *
+   * **Czego ten blok NIE wiąże i nie ma jak związać:** samego `HUD_CHAR_ADVANCE_RATIO`.
+   * To liczba ZMIERZONA w przeglądarce (szerokość znaku jako ułamek rozmiaru czcionki), a w
+   * Vitest nie ma silnika układu, więc `= 0.3` przejdzie tu wszystko. Wiązane są jej dwie
+   * przesłanki — rozmiar czcionki i to, że krój jest monospace'owy — i na tym kończy się
+   * zasięg tego pakietu. Sprawdzenie samego ułamka wymaga przeglądarki.
+   */
+  it('33e. krój panelu jest monospace\'owy — przesłanka całego budżetu znaków', () => {
+    const font = /font:[^;]*;/.exec(hudRule());
+    expect(font, 'deklaracja font w regule #hud').not.toBeNull();
+    expect(font![0]).toMatch(/monospace\s*;$/);
+  });
+
+  it('33d. obramowanie poziome w arkuszu zgadza się z HUD_HORIZONTAL_CHROME_PX', () => {
+    // Budżet znaków liczy SZEROKOŚĆ TREŚCI: okno minus marginesy (odjęte w `calc`) minus
+    // wyściółka (`padding`, po obu stronach). Suma obu musi być tym, co odejmuje `hud.ts`.
+    const margins = numberFrom(/max-width:\s*calc\(max\(100vw,\s*\d+px\)\s*-\s*(\d+)px\)/, 'margines');
+    const padding = numberFrom(/padding:\s*\d+px\s+(\d+)px/, 'padding');
+    expect(margins + padding * 2).toBe(HUD_HORIZONTAL_CHROME_PX);
   });
 });

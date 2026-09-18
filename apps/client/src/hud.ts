@@ -457,18 +457,43 @@ export const MIN_WINDOW_WIDTH_PX = 840; // [WYGLĄD]
 export const MIN_WINDOW_HEIGHT_PX = 480; // [WYGLĄD]
 
 /**
- * `[WYGLĄD]` Szerokość znaku panelu w pikselach — **zmierzona, nie założona**.
+ * `[WYGLĄD]` Rozmiar czcionki panelu — **odbicie `font:` z `apps/client/index.html`**.
  *
- * Panel jest monospace'owy (`12px/1.5 ui-monospace`, `apps/client/index.html`), więc szerokość
- * wiersza to czysta funkcja LICZBY ZNAKÓW. To jest jedyny powód, dla którego układ tego panelu
- * da się związać testem: `jsdom` nie liczy układu i nigdy nie policzy, ale liczyć znaki umie.
+ * Stoi tu, a nie tylko w arkuszu, bo budżet znaków jest z niego WYPROWADZONY. Zgodność obu
+ * kopii pilnuje test 33: zmiana rozmiaru w arkuszu oblewa, zamiast po cichu unieważnić
+ * wszystkie liczby układu.
+ */
+export const HUD_FONT_SIZE_PX = 12; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Szerokość znaku jako UŁAMEK rozmiaru czcionki — jedyna wielkość tu **zmierzona**.
  *
  * Zmierzone na żywej stronie (`getBoundingClientRect` stu znaków podzielone przez sto):
- * **7,225 px**. Zmiana kroju albo rozmiaru czcionki w `index.html` unieważnia tę liczbę —
- * i dlatego test `31` sprawdza ją osobno wobec `MAX_HUD_LINE_CHARS`, zamiast ufać, że ktoś
- * zauważy.
+ * 7,225 px przy 12 px czcionki, czyli **0,60208**. To jest własność KROJU (`ui-monospace`
+ * i zamienniki), nie rozmiaru — dlatego zapisana jako ułamek, a nie jako gotowe piksele.
  */
-export const HUD_CHAR_WIDTH_PX = 7.225; // [WYGLĄD]
+export const HUD_CHAR_ADVANCE_RATIO = 0.60208; // [WYGLĄD]
+
+/**
+ * `[WYGLĄD]` Szerokość znaku panelu w pikselach — **wyprowadzona, nie wpisana**.
+ *
+ * Panel jest monospace'owy, więc szerokość wiersza to czysta funkcja LICZBY ZNAKÓW. To jest
+ * jedyny powód, dla którego układ tego panelu da się w ogóle związać testem: `jsdom` nie liczy
+ * układu i nigdy nie policzy, ale liczyć znaki umie.
+ *
+ * **Do rundy naprawczej 2 stało tu `7.225` jako literał, a doc-comment twierdził, że „test 31
+ * sprawdza ją osobno".** Zawężony przegląd zmierzył, że nie sprawdzał: asercja porównywała
+ * `MAX_HUD_LINE_CHARS` z wyrażeniem zawierającym tę samą stałą po obu stronach, więc była
+ * matematycznie NIEFALSYFIKOWALNA — `HUD_CHAR_WIDTH_PX = 3.0` przechodziło 43/43, a zmiana
+ * `font: 12px` na `18px` w arkuszu przechodziła 699/699 (N10). Liczba opisująca CSS nie była
+ * z CSS-em związana niczym poza zdaniem w komentarzu.
+ *
+ * Teraz łańcuch jest jawny: arkusz → `HUD_FONT_SIZE_PX` (wiązane testem 33) →
+ * `HUD_CHAR_WIDTH_PX` → `MAX_HUD_LINE_CHARS` → budżety wierszy. Zmiana rozmiaru czcionki
+ * w arkuszu oblewa test 33; zrównanie stałej z arkuszem przeliczy budżet i oblewa testy 31,
+ * bo dzisiejsze wiersze przestaną się mieścić.
+ */
+export const HUD_CHAR_WIDTH_PX = HUD_FONT_SIZE_PX * HUD_CHAR_ADVANCE_RATIO; // [WYGLĄD]
 
 /** `[WYGLĄD]` Wyściółka panelu (2 × 8) plus margines od krawędzi okna (2 × 8). */
 export const HUD_HORIZONTAL_CHROME_PX = 32; // [WYGLĄD]

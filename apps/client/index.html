@@ -38,8 +38,16 @@
         left: 8px;
         bottom: 8px;
         z-index: 10;
-        max-width: calc(100vw - 16px);
-        max-height: calc(100vh - 16px);
+        /*
+          MINIMUM OKNA WYEGZEKWOWANE, nie tylko zadeklarowane (`MIN_WINDOW_WIDTH_PX` /
+          `MIN_WINDOW_HEIGHT_PX` w `hud.ts`, wiązane testem 33). Do rundy naprawczej 2 stało
+          tu samo `100vw` i panel kurczył się bez dna — deklaracja minimalnego okna nie miała
+          ANI JEDNEGO konsumenta, a budżet znaków, który z niej wypada, opierał się na
+          szerokości, której nic nie broniło. Poniżej minimum panel trzyma swoją szerokość
+          i pojawia się przewijanie, zamiast zawijać wiersze policzone na 111 znaków.
+        */
+        max-width: calc(max(100vw, 840px) - 16px);
+        max-height: calc(max(100vh, 480px) - 16px);
         overflow: auto;
         padding: 6px 8px;
         border-radius: 4px;
