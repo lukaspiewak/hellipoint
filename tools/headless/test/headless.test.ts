@@ -132,16 +132,36 @@ describe('ScriptedPolicy', () => {
 });
 
 describe('formatReport', () => {
-  // Domyślny timeout vitest (5000 ms) nie starcza: 20 runów × 2 wywołania batch() to
-  // 40 przebiegów do 50 000 ticków. Zmierzone: ~15,5 s na tej maszynie — sam JS jest
-  // synchroniczny, więc domyślny timeout (asynchroniczny mechanizm) i tak nie przerwałby
-  // pętli w środku, tylko zgłosiłby przekroczenie PO jej zakończeniu. Defekt brief-u:
-  // podany dosłownie test wywala się na własnym timeoucie, nie na złej wartości.
+  /**
+   * Domyślny timeout vitest (5000 ms) nie starcza: 20 runów × 2 wywołania `batch()` to
+   * 40 pełnych przebiegów. Sam JS jest synchroniczny, więc timeout (mechanizm asynchroniczny)
+   * i tak nie przerwie pętli w środku — zgłosi przekroczenie PO jej zakończeniu.
+   *
+   * ## Skąd 120 s, skoro zmierzony czas to ~15,5 s
+   *
+   * **Bo poprzedni limit (30 s) był wyprowadzony z pomiaru na BEZCZYNNEJ maszynie**, a
+   * definicja ukończenia Fazy 2C wymaga sześciu przebiegów pakietu **pod obciążeniem**.
+   * Zmierzone przy dwukrotnym przeciążeniu rdzeni (20 procesów palących CPU na 10 rdzeniach):
+   *
+   * | | bezczynnie | pod obciążeniem | czynnik |
+   * |---|---|---|---|
+   * | sonda arytmetyczna | 1807 ms | 5171 ms | 2,9× |
+   * | ten plik testowy | 25,5 s | 79–84 s | 3,2× |
+   *
+   * Ten test to ~15,5 s bezczynnie, czyli **~50 s pod obciążeniem** — czyli 30 s oblewało
+   * **we wszystkich sześciu** przebiegach. 120 s daje 2,4× zapasu nad zmierzonym najgorszym
+   * przypadkiem obciążeniowym.
+   *
+   * **Czego NIE zrobiono i dlaczego:** nie skrócono partii z 20 runów. Test mierzy, że
+   * RAPORT ZBIORCZY jest powtarzalny, a zmniejszanie próby po to, żeby zmieścić się
+   * w zegarze, jest osłabianiem strażnika pod pretekstem wydajności. Zmieniona została
+   * przesłanka progu, nie treść testu.
+   */
   it('partia 20 runów na tych samych seedach daje identyczny raport', () => {
     const batch = () =>
       formatReport(Array.from({ length: 20 }, (_, i) => simulateRun(i, DEFAULT_RUN, 50_000)));
     expect(batch()).toBe(batch());
-  }, 30_000);
+  }, 120_000);
 
   it('raport zawiera pozycje wymagane przez §8.3 specu', () => {
     const text = formatReport(
