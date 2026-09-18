@@ -471,6 +471,14 @@ export const HUD_FONT_SIZE_PX = 12; // [WYGLĄD]
  * Zmierzone na żywej stronie (`getBoundingClientRect` stu znaków podzielone przez sto):
  * 7,225 px przy 12 px czcionki, czyli **0,60208**. To jest własność KROJU (`ui-monospace`
  * i zamienniki), nie rozmiaru — dlatego zapisana jako ułamek, a nie jako gotowe piksele.
+ *
+ * **Powtórzony pomiar, 2026-09-18, `localhost:5185`, ta sama metoda: 7,224609 px → 0,602051.**
+ * Rozbieżność 0,005 % i w stronę zachowawczą (stała jest odrobinę WIĘKSZA, więc budżet
+ * odrobinę mniejszy); `MAX_HUD_LINE_CHARS` wychodzi 111 przy obu wartościach. Pomiar
+ * potwierdził też, po co jest `max()` w arkuszu: linia 111-znakowa ma **801,9 px**, więc
+ * przy oknie 800 px mieści się w wyegzekwowanych 824 px treści, a w 784 px sprzed naprawy
+ * NIE mieściłaby się — czyli budżet był nieegzekwowalny dokładnie w tym oknie, w którym
+ * zapadały wszystkie pomiary układu tej fazy.
  */
 export const HUD_CHAR_ADVANCE_RATIO = 0.60208; // [WYGLĄD]
 
