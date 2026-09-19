@@ -186,21 +186,40 @@ describe('walka: wieże kontra jednostki', () => {
     expect(s.units.map((u) => u.hp)).toEqual(before);
   });
 
-  it('SINGLE trafia dokładnie jedną jednostkę, AOE trafia wszystkie', () => {
-    const single = turretAndUnit('KINETIC_TURRET', 1);
-    updateCombat(single.s, buildAllFlowFields(single.s), 1);
-    expect(single.s.units.filter((u) => u.hp < ENEMIES.SWARM.hp)).toHaveLength(1);
-
-    const aoe = turretAndUnit('LASER_TURRET', 1);
-    updateCombat(aoe.s, buildAllFlowFields(aoe.s), 1);
-    expect(aoe.s.units.every((u) => u.hp < ENEMIES.SWARM.hp)).toBe(true);
+  it('AOE trafia WSZYSTKIE jednostki w zasięgu, nie jedną', () => {
+    for (const wieza of ['LASER_TURRET', 'KINETIC_TURRET'] as const) {
+      const { s } = turretAndUnit(wieza, 1);
+      updateCombat(s, buildAllFlowFields(s), 1);
+      expect(s.units.every((u) => u.hp < ENEMIES.SWARM.hp), `${wieza}`).toBe(true);
+      expect(s.units.length, 'fikstura musi mieć KILKA jednostek, inaczej „wszystkie" = „jedna"')
+        .toBeGreaterThan(1);
+    }
   });
 
-  it('SINGLE wybiera cel deterministycznie — najniższe id', () => {
-    const { s } = turretAndUnit('KINETIC_TURRET', 1);
-    updateCombat(s, buildAllFlowFields(s), 1);
-    const hit = s.units.filter((u) => u.hp < ENEMIES.SWARM.hp);
-    expect(hit[0].id).toBe(Math.min(...s.units.map((u) => u.id)));
+  /**
+   * **`SINGLE` nie ma dziś ANI JEDNEGO użytkownika** — gałąź w `updateCombat` (razem
+   * z deterministycznym wyborem celu po najniższym id, który był osobną naprawą) jest
+   * nieosiągalna z gry.
+   *
+   * Stało się to w Fazie 3, gdy `KINETIC_TURRET` dostała `AOE`: pomiar pokazał, że
+   * w cyklu 1 fala to same SWARM-y, więc pojedynczy cel nie ma tam żadnej niszy, a żadne
+   * `dps` tego nie nadrabia — przewaga AOE równa się liczebności tłumu. Nisza pojedynczego
+   * celu (ARMOR, 250 hp) otwiera się dopiero w cyklu 5, czyli długo po tym, jak run się
+   * rozstrzyga.
+   *
+   * Ten test NIE kasuje tamtych asercji, tylko zamienia je w strażnika: dopóki nikt nie
+   * używa `SINGLE`, martwa gałąź jest ZAPISANA, a nie przemilczana. Gdy ktoś doda budynek
+   * z tym trybem, test oblewa i wskazuje, że trzeba przywrócić pokrycie — razem
+   * z asercją o najniższym id.
+   */
+  it('martwa gałąź `SINGLE` jest ZAPISANA, nie przemilczana', () => {
+    const uzywajace = (Object.keys(BUILDINGS) as Array<keyof typeof BUILDINGS>)
+      .filter((t) => BUILDINGS[t].targeting === 'SINGLE');
+    expect(
+      uzywajace,
+      'ktoś dodał budynek z SINGLE — przywróć testy trafienia jednej jednostki i wyboru ' +
+        'celu po najniższym id (były w tym pliku do Fazy 3, patrz historia)',
+    ).toEqual([]);
   });
 
   it('wieża nie sięga poza swój zasięg', () => {

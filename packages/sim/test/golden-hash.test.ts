@@ -138,7 +138,7 @@ describe('złoty hasz determinizmu', () => {
  * Podmiana tej liczby, żeby „testy przeszły", kasuje jedyny strażnik, jaki ta własność ma.
  */
 const GOLDEN_RUN_TICKS = 1200;
-const GOLDEN_RUN_SHA256 = '8a0345bbb82f65b2a85f76c0027c0f5f544eab545ed57836adefbe965d495b37';
+const GOLDEN_RUN_SHA256 = '5ddf6c648302ba6b1c778204c322c1818152c9d1e4bb446fc10a10ceb5807784';
 
 /**
  * Konfiguracja przebiegu — **ZAMROŻONY LITERAŁ, nie `DEFAULT_RUN`**.
@@ -213,7 +213,7 @@ const GOLDEN_RUN_CONFIG: RunConfig = {
  * Przestawienie pól bez zmiany wartości zgłosi „balans się zmienił" — kierunek zachowawczy
  * (każe spojrzeć), nie przeoczenie.
  */
-const GOLDEN_BALANCE_SHA256 = '750307ed5f9ad1532fd526c448bc1804fba1c31029a343071223215a5fd63ec4';
+const GOLDEN_BALANCE_SHA256 = '2ad9822ce8fbdbb936fe61453ad8e509bf9aa593370b3122a0fcc59a769fd496';
 
 function balanceFingerprint(): string {
   return createHash('sha256')
@@ -225,6 +225,18 @@ function balanceFingerprint(): string {
  * Skrypt budowy — stały, nie losowy, i dobrany tak, żeby przebieg **dotykał wszystkich
  * systemów**: ekonomii (EXTRACTOR), sieci (PYLON), walki (wieże) i kaskady (cztery lasery
  * przy produkcji 10/s wymuszają brownout, gdy magazyn siądzie).
+ *
+ * ## Dwa panele doszły, bo bez nich strażnik BYŁ ŚLEPY na kinetyczną
+ *
+ * Zmierzone w Fazie 3: podmiana `KINETIC_TURRET.dps` na **999** nie zmieniała trajektorii
+ * ani o bit. Powód: `BROWNOUT_ORDER` zrzuca kinetyczną PRZED laserami, a przy produkcji
+ * 10/s i popycie 51,5 zrzucane było wszystko — kinetyczna nie oddała ani jednego strzału
+ * przez 1200 ticków. Cała jej ścieżka walki była dla złotego haszu niewidoczna, a hasz
+ * twierdził, że strzeże silnika.
+ *
+ * Panele naprawiają to, NIE usuwając kaskady: w dzień podaż rośnie do ~90 i wszystko
+ * działa, w nocy spada do 10 i zrzut wraca. Scenariusz ćwiczy teraz OBIE strony.
+ * Kontrola tej naprawy jest w teście niżej — mutacja `dps` MUSI ruszyć trajektorię.
  */
 const GOLDEN_RUN_SCRIPT: readonly (readonly [number, BuildingType])[] = [
   [0, 'BARRICADE'],
@@ -234,6 +246,8 @@ const GOLDEN_RUN_SCRIPT: readonly (readonly [number, BuildingType])[] = [
   [4, 'LASER_TURRET'],
   [5, 'LASER_TURRET'],
   [6, 'LASER_TURRET'],
+  [7, 'SOLAR_PANEL'],
+  [8, 'SOLAR_PANEL'],
 ];
 
 /**
@@ -254,11 +268,22 @@ const GOLDEN_RUN_SCRIPT: readonly (readonly [number, BuildingType])[] = [
 function goldenRunHashes(): string[] {
   const planet = createPlanet({ seed: GOLDEN_SEED });
   const sim = new Sim(planet, GOLDEN_RUN_CONFIG);
-  const free = planet.cells[planet.startCell].neighbors.filter(
-    (c) => planet.cells[c].cellType === 'HEXAGON',
-  );
+  // Pula: sąsiedzi CORE ORAZ ich sąsiedzi. Sami sąsiedzi to najwyżej sześć komórek,
+  // więc `slot % free.length` ZAWIJAŁO się już przy siódmej pozycji skryptu i kolejne
+  // budowy trafiały w zajęte komórki, gdzie `canBuild` je po cichu odrzucał. Skrypt
+  // deklarował siedem budynków, a stawiał sześć — i nikt tego nie widział, bo odrzucona
+  // komenda niczego nie zgłasza. Każdy slot musi mieć WŁASNĄ komórkę.
+  const sasiedzi = planet.cells[planet.startCell].neighbors;
+  const free = [...new Set([...sasiedzi, ...sasiedzi.flatMap((c) => planet.cells[c].neighbors)])]
+    .filter((c) => c !== planet.startCell && planet.cells[c].cellType === 'HEXAGON')
+    .sort((a, b) => a - b);
+  if (free.length < GOLDEN_RUN_SCRIPT.length) {
+    throw new Error(
+      `złoty scenariusz: ${GOLDEN_RUN_SCRIPT.length} pozycji, a wolnych heksów ${free.length}`,
+    );
+  }
   for (const [slot, type] of GOLDEN_RUN_SCRIPT) {
-    const cellId = free[slot % free.length];
+    const cellId = free[slot];
     if (BUILDINGS[type].allowedCells === 'HEXAGON') {
       sim.enqueue({ kind: 'BUILD', cellId, type });
     }

@@ -56,13 +56,19 @@ const ONE_RUN_MS = 60_000; // 1 przebieg: 6,4 × 3,2 × 2 ≈ 41 s, zaokrąglone
 const FIVE_RUNS_MS = 240_000; // 5 przebiegów: 32 × 3,2 × 2 ≈ 205 s, zaokrąglone w górę
 
 describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie', () => {
-  it('1a. SkilledPolicy wygrywa na seedzie odniesienia, BeginnerPolicy na tym samym ginie w cyklu 1', () => {
+  it('1a. na seedzie odniesienia wprawna WYGRYWA, a początkująca ginie wcześnie', () => {
     const skilled = simulateRun(REF_SEED, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim));
     const beginner = simulateRun(REF_SEED, DEFAULT_RUN, WIN_CAP, (sim) => new BeginnerPolicy(sim));
 
+    // Teza: to są DWA różne przyrządy na tej samej planecie.
     expect(skilled.phase).toBe('VICTORY');
     expect(beginner.phase).toBe('DEFEAT');
-    expect(beginner.cycle).toBe(1);
+    // Cykl PRZYPIĘTY, ale nie na sztywno do jedynki: po zmianie `KINETIC_TURRET` na AOE
+    // początkująca (która stawia wieże wcześnie) przeżywa dłużej i ginie tu w cyklu 2,
+    // nie 1. To jest SKUTEK ZAMIERZONY tej zmiany, więc asercja opisuje „ginie wcześnie",
+    // a nie konkretny cykl — z górną granicą, żeby nie przepuściła regresji w drugą stronę.
+    expect(beginner.cycle).toBeGreaterThanOrEqual(1);
+    expect(beginner.cycle, 'początkująca nie ma dochodzić do połowy runu').toBeLessThanOrEqual(3);
   }, ONE_RUN_MS);
 
   /**

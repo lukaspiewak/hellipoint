@@ -389,3 +389,94 @@ Cztery hipotezy padły z czterech różnych powodów i wszystkie prowadzą do te
 Wspólny mianownik: **w tej grze istnieje jedno źródło pieniędzy (nagrody za zabicie)
 i jeden budynek, który je otwiera (laser).** Dopóki tak jest, wariantów otwarcia nie będzie,
 niezależnie od tego, jak ustawione są liczby.
+
+
+---
+
+# Druga wieża: urwisko AOE (Zadanie 3, runda naprawcza)
+
+**Nastawa:** `KINETIC_TURRET` — `SINGLE`, zasięg 2, dps 25 → **`AOE`, zasięg 3, dps 20**.
+Koszt (50) i pobór (3) bez zmian. Odcisk `321c77c8`, 1 000 przebiegów na politykę.
+
+```
+H1  OK    zwycięstw polityki wprawnej: 37.7% ±3.0 (n=1000 runów), próg 25–60%
+H2  BŁĄD  zwycięstw polityki początkującej: 0.0% ±0.2 (n=1000 runów), próg >2% i <18.9% (połowa H1 = 37.7%)
+H3  OK    mediana runu wygranego POLITYKI WPRAWNEJ: 27.4 min ±0.04 (n=377 zwycięstw), próg 25–35 min
+H4  BŁĄD  runów POLITYKI POCZĄTKUJĄCEJ ginących w cyklu 1: 37.2% ±3.0 (n=1000 runów), próg <15%
+H5  BŁĄD  otwarć wygrywających ≥20% seedów: 2, próg ≥3
+H6  NIEZMIERZONE  wymaga wyników z pulą i bez niej — Zadanie 5
+```
+
+| | baza | po strojeniu liczb | po starcie w nocy | **po drugiej wieży** | próg |
+|---|---|---|---|---|---|
+| **H1** sufit | 76,0 % | 35,5 % | 37,7 % | **37,7 % ±3,0** | 25–60 ✓ |
+| **H3** mediana runu | 20,2 min | 27,3 | 27,4 | **27,4 min ±0,04** | 25–35 ✓ |
+| **H4** porażki w cyklu 1 | 94,2 % | 82,5 % | 59,8 % | **37,2 % ±3,0** | <15 |
+| **H5** wygrywające otwarcia | 1 | 1 | 1 | **2** | ≥3 |
+| H2 podłoga | 0,0 % | 0,0 % | 0,0 % | 0,0 % | >2 % |
+
+## Diagnoza „rozstrzyga zasięg" była BŁĘDNA
+
+Poprzednia sekcja tego dokumentu twierdziła, że wąskim gardłem jest zasięg. **Pomiar to
+obalił:** podniesienie zasięgu kinetycznej z 2 na 3 przy zachowanym `SINGLE` dało dalej
+**0,0 %** zwycięstw. Zmierzone wszystkie cztery rogi:
+
+```
+  SINGLE zasięg 2 (stara nastawa)   0,0 %        AOE zasięg 1    0,0 %
+  SINGLE zasięg 3                   0,0 %        AOE zasięg 2    0,0 %
+                                                 AOE zasięg 3   80,4 %  (przy dps 25)
+```
+
+**To urwisko, nie zbocze.** Potrzeba AOE **i** zasięgu 3 naraz; każde z osobna daje zero.
+Powód jest w `updateCombat`: `AOE` zadaje obrażenia KAŻDEJ jednostce w zasięgu, `SINGLE`
+dokładnie jednej. W cyklu 1 fala to same SWARM-y (`armorFromCycle: 5`), więc przeciw tłumowi
+przewaga AOE równa się liczebności tłumu — **żadna wartość `dps` tego nie nadrabia**.
+
+## Kalibracja do PARYTETU, nie do dominacji
+
+Przy dps 25 druga linia wygrywała 80,4 %, czyli ponad dwa razy więcej niż laserowa — to nie
+alternatywa, tylko zastąpienie. Zmierzone po 250 przebiegów na punkt, **z linią laserową
+jako kontrolą** (nie używa tej wieży, więc nie ma prawa drgnąć):
+
+```
+  dps 12 → kinetyczne  0,0 %   laserowe 36,8 %
+  dps 20 → kinetyczne 35,2 %   laserowe 36,8 %   ← wybrane
+  dps 25 → kinetyczne 80,4 %   laserowe 36,8 %
+```
+
+Kontrola trzymała na wszystkich trzech punktach. 35,2 % wobec 37,7 % przy przedziałach
+±6 pp to **parytet**, czyli dokładnie to, czym druga linia ma być.
+
+## Skutek uboczny, którego nie planowałem: H4 spadło o 22 punkty
+
+`BeginnerPolicy` stawia wieże wcześnie, więc dostała tę poprawę za darmo. `moment porażki`
+początkującej: p10 **154,6 s**, p50 **190,5 s** — **mediana zgonu przekroczyła granicę
+cyklu 1** (180 s), i stąd spadek H4 z 59,8 na 37,2 %.
+
+Cała droga tego kryterium przez Zadanie 3: **94,2 → 82,5 → 59,8 → 37,2 %**, przy czym każdy
+krok pochodził z innej klasy zmiany — strojenie liczb, mechanika startu, projekt budynku.
+
+## Cena: tryb `SINGLE` nie ma już ANI JEDNEGO użytkownika
+
+Obie wieże są teraz AOE i różnią się wyłącznie liczbami (tania, słaba, oszczędna w energii
+wobec drogiej, mocnej, prądożernej). Gałąź `SINGLE` w `updateCombat` — razem z deterministycznym
+wyborem celu po najniższym id, który był osobną naprawą — stała się **nieosiągalna z gry**.
+Nie jest skasowana: `combat.test.ts` niesie strażnika, który oblewa w dniu, w którym ktoś
+doda budynek z tym trybem, i wskazuje, jakie pokrycie trzeba przywrócić.
+
+Alternatywą było zostawić `SINGLE` i dać mu niszę — ale nisza pojedynczego celu (ARMOR,
+250 hp) otwiera się dopiero w cyklu 5, czyli długo po tym, jak run się rozstrzyga.
+**To jest decyzja projektowa do rewizji, nie zamknięta sprawa.**
+
+## Przy okazji: złoty hasz był ŚLEPY na kinetyczną
+
+Kontrola pozytywna, której wcześniej nie było: podmiana `KINETIC_TURRET.dps` na **999**
+nie zmieniała trajektorii ani o bit. `BROWNOUT_ORDER` zrzuca kinetyczną przed laserami,
+a złoty scenariusz miał popyt 51,5 przy produkcji 10 — wieża nie oddała ani jednego strzału
+przez 1200 ticków, a hasz twierdził, że strzeże silnika.
+
+Znalazły się przy tym dwie rzeczy naraz: skrypt deklarował siedem pozycji, a stawiał sześć,
+bo `slot % free.length` zawijało się na puli sześciu sąsiadów CORE i nadmiarowe budowy
+trafiały w zajęte komórki, gdzie `canBuild` odrzucał je **po cichu**. Naprawione: każdy slot
+ma własną komórkę, doszły dwa panele (kaskada brownoutu zostaje — w dzień podaż rośnie,
+w nocy zrzut wraca). Po naprawie mutacja `dps → 999` trajektorię rusza.

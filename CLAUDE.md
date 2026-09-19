@@ -68,6 +68,10 @@ Z konkretów, każdy z przebytej wpadki:
   potrafią nie dopasować wzorca i nie krzyknąć.
 - Kontrola musi **czytać** to, co sprawdza. Napis „mutacja na dysku" wypisany bezwarunkowo
   wygląda jak kontrola, a jest napisem.
+- **Podmiana wzorcem regularnym bez asercji na LICZBĘ dopasowań** zmieniła nie ten budynek,
+  co trzeba: wzorzec bez zakotwiczenia pasował do czterech wpisów w `defs.ts` i zrobił
+  z panelu słonecznego wieżę AOE. Wykryło to dopiero to, że liczba, która **nie miała
+  prawa drgnąć**, drgnęła. Każda podmiana: dokładny ciąg, `count == 1`, odczyt z dysku.
 - Nie łączyć kontroli z przebiegiem przez `&&` — `grep -c` zwracające 0 urywa łańcuch,
   testy nie ruszają, wygląda na „przeszło".
 - Pomiar pod obciążeniem ma mieć **sondę pokazującą, że obciążenie gryzie**. 5 procesów
