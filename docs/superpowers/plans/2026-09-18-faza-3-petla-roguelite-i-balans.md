@@ -39,7 +39,7 @@ Kamień milowy §9 brzmi „rozkłady z 10 000 runów są zdrowe". To nie jest k
 | **H1** | odsetek zwycięstw polityki WPRAWNEJ | **25–60 %** | roguelite: ani „przechodzi się samo", ani „nie da się" |
 | **H2** | odsetek zwycięstw polityki POCZĄTKUJĄCEJ | **> 2 % i < H1/2** | gra musi być do nauczenia, a umiejętność musi mieć znaczenie |
 | **H3** | mediana długości runu WYGRANEGO | **25–35 min** (30 000–42 000 ticków) | D4 wprost |
-| **H4** | odsetek porażek w cyklu 1 | **< 15 %** | dziś jest ~100 % (§11.1) — run kończący się przed pierwszą decyzją nie jest runem |
+| **H4** | odsetek RUNÓW polityki POCZĄTKUJĄCEJ ginących w cyklu 1 | **< 15 %** | dziś jest ~100 % (§11.1) — run kończący się przed pierwszą decyzją nie jest runem |
 | **H5** | liczba RÓŻNYCH otwarć wygrywających ≥ 20 % seedów | **≥ 3** | §11.1: „otwarcie dopuszcza dokładnie jedną linię" jest dziś główną wadą |
 | **H6** | dla każdego ulepszenia z puli: zmiana H1 po jego USUNIĘCIU | **< 10 punktów proc.** | ulepszenie zmieniające wynik o więcej nie jest wyborem, tylko wymogiem |
 
@@ -98,6 +98,24 @@ tą klasą, która w tym projekcie wracała: ktoś porówna ją potem z 84 % i z
 której nie ma.
 
 ---
+
+### R5. Sufit ticków WYPROWADZONY z progu H3, nie wpisany ręcznie
+
+Zadanie 2 miało `MAX_TICKS = 40 000` z uzasadnieniem „~1,65× zmierzonej długości zwycięskiego
+przebiegu". Liczba wzięta z **dzisiejszego** balansu, podczas gdy H3 celuje w 25–35 min, czyli
+30 000–42 000 ticków. **Sufit leżał więc WEWNĄTRZ pasma własnego kryterium:** run trwający
+36 minut kończyłby w fazie `RUNNING`, wypadał ze zwycięstw i obniżał H1 — a werdykt brzmiałby
+„H3 za krótko, H1 za nisko", czyli kazałby stroić w stronę **przeciwną** do prawdy.
+
+Od rundy naprawczej Zadania 2 sufit to `2 × HEALTH_THRESHOLDS.H3.maxMinutes`, policzone
+w `batch.ts`. **Konsekwencja dla Zadania 3:** przesunięcie pasma H3 przesuwa sufit samo,
+więc nie da się już wystroić balansu przeciwko granicy, której arytmetyka nie osiąga.
+Koszt: przebiegi obcięte trwają teraz do 2× dłużej, co przy 3,7 % takich runów podnosi
+czas partii o kilka procent.
+
+**Co to może obalić:** gdyby po strojeniu odsetek obciętych przekroczył ~10 %, mnożnik 2×
+przestaje wystarczać i trzeba go podnieść albo uznać, że run bez końca jest porażką
+projektową, a nie pomiarową.
 
 ## Stan wyjściowy — co JUŻ istnieje i czego nie wolno budować od nowa
 

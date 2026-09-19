@@ -2,7 +2,7 @@ import { fork } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { cpus } from 'node:os';
 import { DEFAULT_RUN } from '@heliopolis/sim';
-import { mergeBatches, runBatch, splitRange } from './batch.js';
+import { MAX_TICKS, mergeBatches, runBatch, splitRange } from './batch.js';
 import { BeginnerPolicy } from './policy.js';
 import { SkilledPolicy } from './skilledPolicy.js';
 import { formatReport } from './report.js';
@@ -29,8 +29,7 @@ const POLICIES: Record<string, PolicyFactory> = {
   skilled: (sim) => new SkilledPolicy(sim),
 };
 
-/** [STROJENIE] Sufit ticków. 40 000 to ~1,65× zmierzonej długości zwycięskiego przebiegu. */
-const MAX_TICKS = 40_000;
+
 
 function arg(name: string, fallback?: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -50,6 +49,18 @@ if (process.argv.includes('--combine')) {
   const i = process.argv.indexOf('--combine');
   const skilled = JSON.parse(readFileSync(process.argv[i + 1], 'utf8')) as RunResult[];
   const beginner = JSON.parse(readFileSync(process.argv[i + 2], 'utf8')) as RunResult[];
+
+  // `formatReport` pilnuje jednorodności odcisku WEWNĄTRZ partii (naprawa Z5 z Zadania 1),
+  // ale tutaj woła się go dwa razy, na dwóch osobnych partiach — dwa różne odciski
+  // przeszłyby bez jednego ostrzeżenia, a H2 porównywałoby wtedy sufit z jednej nastawy
+  // z podłogą z drugiej. Zadanie 3 przemiata właśnie nastawy, więc to uderzy tam.
+  const odciski = new Set([...skilled, ...beginner].map((r) => r.configFingerprint));
+  if (odciski.size > 1) {
+    throw new Error(
+      `batchCli --combine: partie policzono na RÓŻNYCH konfiguracjach (${[...odciski].join(', ')}). ` +
+        'H2 porównywałoby sufit jednej nastawy z podłogą drugiej.',
+    );
+  }
   const lines = [
     '# Raport bazowy Fazy 3 — dwie polityki, sześć kryteriów zdrowia',
     '',
@@ -82,7 +93,15 @@ if (makePolicy === undefined) {
 const sliceArg = process.argv.indexOf('--slice');
 if (sliceArg >= 0) {
   // PROCES POTOMNY: policz swój kawałek i oddaj przez stdout jako JSON.
+  //
+  // Walidacja, bo bez niej `--slice abc:def` dawało `NaN`, pętla `for (seed = NaN; NaN < NaN)`
+  // nie wykonywała się ani razu, dziecko zapisywało `[]` i **wychodziło z kodem 0**.
+  // Rodzic przyjmował pusty kawałek bez słowa — partia zamówiona na 10 000 runów wracała
+  // jako 8 750 z rzetelnie policzonym przedziałem ufności dla złego `n`.
   const [from, to] = process.argv[sliceArg + 1].split(':').map(Number);
+  if (!Number.isInteger(from) || !Number.isInteger(to) || to < from) {
+    throw new Error(`batchCli: --slice ${process.argv[sliceArg + 1]} nie jest zakresem liczb całkowitych`);
+  }
   const results = runBatch({ from, to }, DEFAULT_RUN, MAX_TICKS, makePolicy);
   writeFileSync(arg('out'), JSON.stringify(results));
   process.exit(0);
@@ -119,6 +138,24 @@ const done = await Promise.all(
 );
 
 const results = mergeBatches(done);
+
+// `mergeBatches` łapie ZAKŁADKI (ten sam seed dwa razy), nie łapie LUK. Lukę widać dopiero
+// tutaj, gdzie znana jest zamówiona liczba runów — i musi być widać GŁOŚNO, bo partia
+// niepełna daje liczby wyglądające całkowicie prawdopodobnie.
+if (results.length !== runs) {
+  throw new Error(
+    `batchCli: zamówiono ${runs} runów, wróciło ${results.length}. Partia niepełna — ` +
+      'raport z niej byłby prawdopodobnie wyglądającą liczbą policzoną na złym n.',
+  );
+}
+const brak = results.findIndex((r, i) => r.seed !== i);
+if (brak >= 0) {
+  throw new Error(
+    `batchCli: na pozycji ${brak} stoi seed ${results[brak].seed}, a miał ${brak} — ` +
+      'zbiór seedów nie jest ciągły, mimo poprawnej liczby wyników.',
+  );
+}
+
 const minutes = ((Date.now() - started) / 60_000).toFixed(1);
 
 const lines = [

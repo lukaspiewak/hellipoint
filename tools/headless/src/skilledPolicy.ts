@@ -131,8 +131,11 @@ function ordersFor(planet: Planet): Command[] {
   });
 }
 
+/** Nazwa, pod którą polityka wprawna podpisuje każdy wynik. Patrz `BEGINNER_POLICY_NAME`. */
+export const SKILLED_POLICY_NAME = 'skilled';
+
 export class SkilledPolicy implements Policy {
-  readonly name = 'skilled';
+  readonly name = SKILLED_POLICY_NAME;
 
   /**
    * Decyzja W KAŻDYM TICKU — tak jak `playPlan`, z którego ta polityka pochodzi.

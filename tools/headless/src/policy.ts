@@ -43,6 +43,16 @@ const EXTRACTOR_EXEMPT_FROM_RESERVE = false;
  * **`name` jest częścią interfejsu, nie ozdobą**: wynik bez nazwy polityki nie da się
  * potem przypisać do pytania, na które odpowiadał.
  */
+/**
+ * Nazwa, pod którą polityka początkująca podpisuje KAŻDY swój wynik (`RunResult.policy`).
+ *
+ * Stała, a nie napis w dwóch miejscach, bo `assessHealth` weryfikuje nią **populację**:
+ * H2 i H4 są pomiarami tej polityki i wolno im liczyć wyłącznie jej przebiegi. Napis
+ * przepisany w drugim pliku rozjechałby się cicho — a cicho rozjechana populacja to
+ * dokładnie ta wada, którą H4 już raz przepuściło.
+ */
+export const BEGINNER_POLICY_NAME = 'beginner';
+
 export interface Policy {
   readonly name: string;
   /**
@@ -92,7 +102,7 @@ export type PolicyFactory = (sim: Sim) => Policy;
  * pieniędzy, dopóki nie mam czym strzelać."
  */
 export class BeginnerPolicy implements Policy {
-  readonly name = 'beginner';
+  readonly name = BEGINNER_POLICY_NAME;
 
   /**
    * `[STROJENIE]` Bot początkujący decyduje RAZ NA SEKUNDĘ, nie co tick — inaczej stawiałby

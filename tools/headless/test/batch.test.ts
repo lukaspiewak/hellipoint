@@ -1,6 +1,12 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RUN } from '@heliopolis/sim';
-import { mergeBatches, runBatch, splitRange } from '../src/batch.js';
+import { MAX_TICKS, mergeBatches, runBatch, splitRange } from '../src/batch.js';
+import { BeginnerPolicy } from '../src/policy.js';
 
 /**
  * Zrównoleglenie sprowadza się do PODZIAŁU ZAKRESU SEEDÓW. Testowany jest niezmiennik,
@@ -74,4 +80,72 @@ describe('2. [PARTIA] podział jest szczelny', () => {
     expect(() => splitRange({ from: 0, to: 10 }, 0)).toThrow(/dodatnią/);
     expect(() => splitRange({ from: 10, to: 0 }, 2)).toThrow(/od tyłu/);
   });
+});
+
+describe('3. [SZEW] partia RÓWNOLEGŁA daje to samo, co sekwencyjna', () => {
+  /**
+   * ## Dlaczego ten opis jest dłuższy niż test
+   *
+   * Testy 1a–1c sprawdzają `splitRange` + `mergeBatches` — **w jednym procesie**. To jest
+   * asercja o arytmetyce podziału, nie o zrównolegleniu. Produkcyjną ścieżką każdego
+   * pomiaru balansu w tej fazie jest `batchCli.js` z `fork`, a ta dokłada szwy, których
+   * arytmetyka nie widzi: round-trip `RunResult` przez JSON, przekazanie `--policy`
+   * do dziecka, ponowny import `DEFAULT_RUN` i `MAX_TICKS` po stronie potomka, parsowanie
+   * `--slice`, kompletność zbioru seedów.
+   *
+   * Raport bazowy na 20 000 przebiegów powstał **wyłącznie tą ścieżką**, a jedyne, co ją
+   * strzegło, to przekonanie, że musi działać. CLAUDE.md §4 nazywa dokładnie ten układ:
+   * gdyby dziecko dostało inną politykę albo inny sufit ticków, partia wróciłaby jako
+   * prawdopodobnie wyglądające liczby, a wszystkie testy zostałyby zielone.
+   *
+   * Test chodzi po `dist/`, nie po źródłach — bo `fork` uruchamia plik, a nie moduł.
+   * `pretest` buduje `dist` przed przebiegiem, więc plik istnieje.
+   */
+  const CLI = fileURLToPath(new URL('../dist/batchCli.js', import.meta.url));
+  const RUNS = 8;
+
+  it('3a. 2 procesy na 8 seedach = jeden proces na 8 seedach, run po runie', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'heliopolis-partia-'));
+    try {
+      execFileSync(process.execPath, [
+        CLI, '--runs', String(RUNS), '--policy', 'beginner',
+        '--workers', '2', '--out', join(dir, 'raport.txt'),
+      ], { stdio: 'pipe' });
+      const rownolegle = JSON.parse(
+        readFileSync(join(dir, 'raport.txt.json'), 'utf8'),
+      ) as ReturnType<typeof runBatch>;
+
+      const sekwencyjnie = runBatch(
+        { from: 0, to: RUNS },
+        DEFAULT_RUN,
+        MAX_TICKS,
+        (sim) => new BeginnerPolicy(sim),
+      );
+
+      // Kontrola na fiksturę: gdyby wszystkie przebiegi były identyczne, porównanie
+      // przepuściłoby też losowy podział. Patrz CLAUDE.md §2.
+      expect(new Set(sekwencyjnie.map((r) => `${r.ticks}:${r.seed}`)).size).toBe(RUNS);
+      expect(rownolegle).toEqual(sekwencyjnie);
+      expect(rownolegle.map((r) => r.seed)).toEqual([...Array(RUNS).keys()]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('3b. dziecko z zepsutym --slice UMIERA, zamiast oddać pusty kawałek', () => {
+    // Zmierzone przed naprawą: `--slice abc:def` dawało `NaN`, pętla nie wykonywała się
+    // ani razu, dziecko zapisywało `[]` i wychodziło z kodem 0. Rodzic przyjmował to
+    // bez słowa — i partia na 10 000 runów wracała jako 8 750 z rzetelnym przedziałem
+    // ufności policzonym dla złego `n`.
+    const dir = mkdtempSync(join(tmpdir(), 'heliopolis-slice-'));
+    try {
+      expect(() =>
+        execFileSync(process.execPath, [
+          CLI, '--slice', 'abc:def', '--policy', 'beginner', '--out', join(dir, 'k.json'),
+        ], { stdio: 'pipe' }),
+      ).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

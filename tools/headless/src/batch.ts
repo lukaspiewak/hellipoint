@@ -1,4 +1,5 @@
-import type { RunConfig } from '@heliopolis/sim';
+import { TICK_SECONDS, type RunConfig } from '@heliopolis/sim';
+import { HEALTH_THRESHOLDS } from './health.js';
 import { simulateRun, type RunResult } from './run.js';
 import type { PolicyFactory } from './policy.js';
 
@@ -23,6 +24,24 @@ import type { PolicyFactory } from './policy.js';
  * ZAKOŃCZENIA procesów dawałaby przy każdym uruchomieniu inny plik raportu przy tych samych
  * danych — i nikt nie wiedziałby, czy zmienił się balans, czy harmonogram systemu.
  */
+
+/**
+ * Sufit ticków przebiegu — **wyprowadzony z górnej granicy H3**, nie wpisany ręcznie.
+ *
+ * Pierwsza wersja miała 40 000 „bo to ~1,65× zmierzonej długości zwycięskiego przebiegu".
+ * Liczba wzięta z DZISIEJSZEGO balansu, podczas gdy H3 celuje w 25–35 min, czyli
+ * 30 000–42 000 ticków (plan, R1). **Sufit leżał WEWNĄTRZ pasma własnego kryterium:**
+ * run trwający 36 minut kończyłby w fazie `RUNNING`, wypadał ze zwycięstw i obniżał H1,
+ * a werdykt brzmiałby „H3 za krótko, H1 za nisko" — czyli kazałby stroić w stronę
+ * PRZECIWNĄ do prawdy. To jest klasa z CLAUDE.md §1: granica, której arytmetyka nie osiąga.
+ *
+ * Mnożnik 2× nad górną granicą zostawia zapas na ogon rozkładu: przy medianie w paśmie
+ * runy dłuższe od sufitu są ogonem, nie centrum, więc mediana zostaje policzalna.
+ *
+ * Mieszka TU, a nie w `batchCli.ts`, bo czyta ją także test szwu procesowego — a sufit
+ * przepisany w dwóch plikach rozjechałby się dokładnie wtedy, gdy Zadanie 3 ruszy H3.
+ */
+export const MAX_TICKS = Math.ceil((2 * HEALTH_THRESHOLDS.H3.maxMinutes * 60) / TICK_SECONDS);
 
 /** Zakres seedów `[from, to)` — półotwarty, tak jak wszystko inne w tym repozytorium. */
 export interface SeedRange {
