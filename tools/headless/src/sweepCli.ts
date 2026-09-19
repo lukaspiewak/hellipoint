@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { cpus } from 'node:os';
 import { dirname, join } from 'node:path';
-import { AXES, formatSweep, isAxisName, sweepPoint, type SweepPoint } from './sweep.js';
+import { AXES, formatSweep, isAxisName, parseFixed, sweepPoint, type SweepPoint } from './sweep.js';
 import type { RunResult } from './run.js';
 
 /**
@@ -45,6 +45,13 @@ if (values.length === 0 || values.some((v) => !Number.isFinite(v))) {
   throw new Error(`sweepCli: --values ${arg('values')} nie jest listą liczb skończonych`);
 }
 
+/** `--fix nazwa=wartość`, powtarzalne: osie trzymane na stałe podczas przemiatania innej. */
+const fixSpecs: string[] = [];
+for (let i = 0; i < process.argv.length; i++) {
+  if (process.argv[i] === '--fix' && process.argv[i + 1] !== undefined) fixSpecs.push(process.argv[i + 1]);
+}
+const fixed = parseFixed(fixSpecs); // rzuca tu, zanim ruszy pierwsza partia
+
 const skilledRuns = Number(arg('skilled', '250'));
 const beginnerRuns = Number(arg('beginner', '1000'));
 const workers = Number(arg('workers', String(Math.max(1, cpus().length - 2))));
@@ -63,6 +70,7 @@ function partia(policy: string, runs: number, value: number, plik: string): RunR
       '--axis', axisName,
       '--value', String(value),
       '--out', plik,
+      ...fixSpecs.flatMap((f) => ['--fix', f]),
     ],
     { stdio: 'inherit' },
   );
@@ -82,7 +90,7 @@ const minutes = ((Date.now() - started) / 60_000).toFixed(1);
 writeFileSync(
   out,
   [
-    formatSweep(axis, punkty),
+    formatSweep(axis, punkty, fixed),
     '',
     `czas przemiatania: ${minutes} min, ${workers} procesów, ` +
       `${skilledRuns} przebiegów wprawnej i ${beginnerRuns} początkującej na punkt`,

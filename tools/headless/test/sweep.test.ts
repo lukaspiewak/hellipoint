@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RUN } from '@heliopolis/sim';
-import { AXES, formatSweep, isAxisName, sweepPoint, type AxisName } from '../src/sweep.js';
+import {
+  applyFixed,
+  AXES,
+  formatSweep,
+  isAxisName,
+  parseFixed,
+  sweepPoint,
+  type AxisName,
+} from '../src/sweep.js';
 import { BEGINNER_POLICY_NAME } from '../src/policy.js';
 import { SKILLED_POLICY_NAME } from '../src/skilledPolicy.js';
 import type { RunResult } from '../src/run.js';
@@ -94,5 +102,42 @@ describe('2. [OŚ] tabela odróżnia punkt w progu od punktu poza nim', () => {
   it('2d. kryterium niezmierzone daje kreskę, nie zero', () => {
     const pusty = sweepPoint(0.25, [], []);
     expect(formatSweep(AXES.killRewardScale, [pusty])).toMatch(/—\s+—\s+—\s+—/);
+  });
+});
+
+describe('3. [OŚ] osie TRZYMANE na stałe podczas przemiatania innej', () => {
+  /**
+   * Istnieją, bo osie się przenikają: stopa nagród rusza wyłącznie sufit (zmierzone —
+   * H2 i H4 identyczne co do dziesiątej przy stawkach 0,2…0,7), więc podłogę trzeba
+   * przemiatać inną osią, ale na stawce WYBRANEJ, nie dzisiejszej.
+   */
+  it('3a. [PARA] `nazwa=wartość` parsuje się, śmieć rzuca GŁOŚNO', () => {
+    expect(parseFixed(['killRewardScale=0.35'])).toEqual([
+      { name: 'killRewardScale', value: 0.35 },
+    ]);
+    expect(() => parseFixed(['evacEnergyRequired=1000'])).toThrow(/nieznana oś/);
+    expect(() => parseFixed(['killRewardScale=dużo'])).toThrow(/nie jest liczbą/);
+    expect(() => parseFixed(['killRewardScale'])).toThrow(/nie jest liczbą/);
+  });
+
+  it('3b. trzymane osie NAKŁADAJĄ SIĘ, a przemiatana idzie na wierzch', () => {
+    const baza = applyFixed(DEFAULT_RUN, parseFixed(['killRewardScale=0.35', 'startingOre=600']));
+    expect(baza.killRewardScale).toBe(0.35);
+    expect(baza.startingOre).toBe(600);
+    // Oś przemiatana nakłada się na TRZYMANE, nie na DEFAULT_RUN — inaczej przemiatanie
+    // rudy startowej wracałoby po cichu na dzisiejszą stawkę nagród.
+    const punkt = AXES.startingOre.apply(baza, 900);
+    expect(punkt.startingOre).toBe(900);
+    expect(punkt.killRewardScale, 'trzymana stawka MUSI przeżyć').toBe(0.35);
+  });
+
+  it('3c. tabela mówi, co było trzymane — bez tego liczby nikt nie odtworzy', () => {
+    const punkt = sweepPoint(600, batch(100, 40), batch(100, 10, BEGINNER_POLICY_NAME));
+    const z = formatSweep(AXES.startingOre, [punkt], parseFixed(['killRewardScale=0.35']));
+    expect(z).toContain('trzymane: killRewardScale=0.35');
+    const bez = formatSweep(AXES.startingOre, [punkt]);
+    expect(bez, 'brak trzymanych też ma być NAPISANY, nie przemilczany').toContain(
+      'trzymane: nic',
+    );
   });
 });

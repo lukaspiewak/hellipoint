@@ -183,6 +183,18 @@ describe('3. [SZEW] partia RÓWNOLEGŁA daje to samo, co sekwencyjna', () => {
       // różnica nie wystarczy — dziecko mogłoby nałożyć oś inną wartością.
       expect(zOsia).toBe(configFingerprint(AXES.killRewardScale.apply(DEFAULT_RUN, 0.25)));
       expect(bezOsi).toBe(configFingerprint(DEFAULT_RUN));
+
+      // To samo dla osi TRZYMANEJ: `--fix` pominięte przy rozwidleniu dałoby partię
+      // policzoną na dzisiejszej stawce nagród mimo wyraźnego polecenia przeciwnego.
+      const zTrzymana = odciskPartii([
+        '--axis', 'startingOre', '--value', '600',
+        '--fix', 'killRewardScale=0.35',
+      ]);
+      expect(zTrzymana).toBe(
+        configFingerprint(
+          AXES.startingOre.apply(AXES.killRewardScale.apply(DEFAULT_RUN, 0.35), 600),
+        ),
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

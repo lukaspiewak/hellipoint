@@ -7,7 +7,7 @@ import { BeginnerPolicy } from './policy.js';
 import { SkilledPolicy } from './skilledPolicy.js';
 import { formatReport } from './report.js';
 import { assessHealth } from './health.js';
-import { AXES, isAxisName } from './sweep.js';
+import { applyFixed, AXES, isAxisName, parseFixed } from './sweep.js';
 import type { PolicyFactory } from './policy.js';
 import type { RunResult } from './run.js';
 
@@ -93,9 +93,19 @@ if (process.argv.includes('--combine')) {
  * konfigurację, a dziecko ją parsowało, powstałby drugi opis tej samej rzeczy; tak
  * jest jeden, a `configFingerprint` i tak wyłapałby rozjazd.
  */
+/** Wszystkie `--fix nazwa=wartość` z wiersza poleceń, w kolejności podania. */
+function fixArgs(): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < process.argv.length; i++) {
+    if (process.argv[i] === '--fix' && process.argv[i + 1] !== undefined) out.push(process.argv[i + 1]);
+  }
+  return out;
+}
+
 function konfiguracja(): RunConfig {
+  const baza = applyFixed(DEFAULT_RUN, parseFixed(fixArgs()));
   const i = process.argv.indexOf('--axis');
-  if (i < 0) return DEFAULT_RUN;
+  if (i < 0) return baza;
   const nazwa = process.argv[i + 1];
   if (nazwa === undefined || !isAxisName(nazwa)) {
     throw new Error(`batchCli: nieznana oś ${nazwa} (jest: ${Object.keys(AXES).join(', ')})`);
@@ -104,7 +114,7 @@ function konfiguracja(): RunConfig {
   if (!Number.isFinite(wartosc)) {
     throw new Error(`batchCli: --value ${arg('value')} nie jest liczbą skończoną`);
   }
-  return AXES[nazwa].apply(DEFAULT_RUN, wartosc);
+  return AXES[nazwa].apply(baza, wartosc);
 }
 
 const cfg = konfiguracja();
@@ -155,6 +165,9 @@ const done = await Promise.all(
           // partię policzoną na DEFAULT_RUN mimo `--axis` — czyli przemiatanie, w którym
           // wszystkie punkty są tym samym punktem, a tabela wygląda wiarygodnie.
           ...(osArg >= 0 ? ['--axis', process.argv[osArg + 1], '--value', arg('value')] : []),
+          // Trzymane osie idą tą samą drogą i z tego samego powodu: pominięte tutaj
+          // dałyby partię policzoną na DEFAULT_RUN mimo `--fix`.
+          ...fixArgs().flatMap((f) => ['--fix', f]),
         ], { stdio: 'inherit' });
         child.on('exit', (code) => {
           if (code !== 0) {

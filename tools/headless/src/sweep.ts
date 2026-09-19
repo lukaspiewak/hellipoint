@@ -70,6 +70,42 @@ export type AxisName = keyof typeof AXES;
 export const isAxisName = (name: string): name is AxisName =>
   Object.prototype.hasOwnProperty.call(AXES, name);
 
+/**
+ * Oś TRZYMANA na stałej wartości, podczas gdy przemiatana jest inna.
+ *
+ * Istnieje, bo osie się **przenikają**: stopa nagród rusza wyłącznie sufit (zmierzone:
+ * H2 i H4 identyczne co do dziesiątej przy stawkach od 0,2 do 0,7), więc podłogę trzeba
+ * przemiatać inną osią — ale nie na dzisiejszej stawce nagród, tylko na wybranej.
+ *
+ * Trzymane wartości MUSZĄ trafiać do nagłówka tabeli. Przemiatanie bez zapisu, co przy
+ * nim stało, jest liczbą, której nikt nie odtworzy — a Zadanie 3 produkuje właśnie takie
+ * tabele jako uzasadnienia dla liczb wpisywanych na stałe.
+ */
+export interface FixedAxis {
+  readonly name: AxisName;
+  readonly value: number;
+}
+
+/** Parsuje `nazwa=wartość`; rzuca GŁOŚNO, bo cichy błąd dałby przemiatanie na złej bazie. */
+export function parseFixed(specs: readonly string[]): FixedAxis[] {
+  return specs.map((spec) => {
+    const [name, raw] = spec.split('=');
+    if (name === undefined || !isAxisName(name)) {
+      throw new Error(`--fix ${spec}: nieznana oś ${name} (jest: ${Object.keys(AXES).join(', ')})`);
+    }
+    const value = Number(raw);
+    if (raw === undefined || !Number.isFinite(value)) {
+      throw new Error(`--fix ${spec}: ${raw} nie jest liczbą skończoną`);
+    }
+    return { name, value };
+  });
+}
+
+/** Nakłada trzymane osie w podanej kolejności. Ostatnia wygrywa, gdy nazwa się powtórzy. */
+export function applyFixed(base: RunConfig, fixed: readonly FixedAxis[]): RunConfig {
+  return fixed.reduce((cfg, f) => AXES[f.name].apply(cfg, f.value), base);
+}
+
 /** Jeden punkt przemiatania: wartość osi i to, co o niej mówi sześć kryteriów. */
 export interface SweepPoint {
   readonly value: number;
@@ -116,8 +152,16 @@ const komorka = (v: HealthVerdict | undefined): string => {
  * **Wykrzyknik znaczy „poza progiem".** Punkt bez wykrzyknika przy H1 to kandydat;
  * kandydatów porównuje się dopiero potem, i to po całym wierszu, nie po jednej liczbie.
  */
-export function formatSweep(axis: Axis, points: readonly SweepPoint[]): string {
-  const naglowek = `oś: ${axis.name} [${axis.unit}]`;
+export function formatSweep(
+  axis: Axis,
+  points: readonly SweepPoint[],
+  fixed: readonly FixedAxis[] = [],
+): string {
+  const trzymane =
+    fixed.length === 0
+      ? 'trzymane: nic — reszta na DEFAULT_RUN'
+      : `trzymane: ${fixed.map((f) => `${f.name}=${f.value}`).join(', ')}`;
+  const naglowek = `oś: ${axis.name} [${axis.unit}]\n${trzymane}`;
   const wiersze = points.map((p) => {
     const komorki = KOLUMNY.map((id) =>
       komorka(p.health.find((v) => v.id === id)).padStart(12),
