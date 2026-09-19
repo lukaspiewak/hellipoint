@@ -64,6 +64,39 @@ Powód nie jest estetyczny: przy gałęziach każde nowe ulepszenie dokłada śc
 
 **To jest jedna z możliwych dróg, nie wymóg.** Gdyby któreś ulepszenie z puli okazało się nieopisywalne mnożnikiem (np. „pentagony zaczynają erupować parami"), to jest sygnał do przemyślenia tego rozstrzygnięcia, a nie do wciśnięcia go na siłę.
 
+### R4. Wielkości prób — WYPROWADZONE Z POMIARU KOSZTU, nie z okrągłych liczb
+
+Dopisane po Zadaniu 1, gdy koszt przebiegu przestał być hipotezą. **Zmierzone:** polityka
+początkująca **165 ms/run** (ginie po 1 721 tickach), wprawna **3 065 ms/run** (23 290 ticków).
+Stąd 10 000 runów to 27 min dla jednej i **8,5 godziny** dla drugiej, na jednym rdzeniu.
+
+**Zrównoleglenie runnera jest warunkiem wstępnym Zadania 2**, nie ulepszeniem. Przebiegi są
+niezależne i deterministyczne per seed — to jest wzorcowo równoległe zadanie i daje ~8×
+za jedną zmianę. Bez niego reszta tej tabeli jest teoretyczna.
+
+| gdzie | próba | skąd ta liczba |
+|---|---|---|
+| **raport bazowy i bramka końcowa** | **10 000** (bez zmian) | liczba ze specu §8.3; po zrównolegleniu to ~1 h, raz |
+| **punkt przemiatania** (Zadanie 3) | **1 000** | przemiatanie szuka KSZTAŁTU krzywej, nie werdyktu |
+| **H6, jedno ramię** (Zadanie 5) | **400**, nie 2 000 | wyprowadzone z samego progu H6 |
+
+**Skąd 1 000 na punkt przemiatania.** Przy `p = 0,85` przedział ufności 95 % ma półszerokość
+**±2,2 pp** przy n = 1 000 i **±0,7 pp** przy n = 10 000. Pasmo H1 ma **35 punktów
+szerokości**, więc dziesięciokrotnie droższy pomiar daje precyzję, która **nie jest w stanie
+zmienić żadnego werdyktu**. Przy 10 000 na punkt przemiatanie ośmiu stóp nagród dwiema
+politykami to 16 godzin — i skończyłoby się przemiataniem trzech punktów zamiast ośmiu.
+
+**Skąd 400 na ramię w H6.** Plan mówił „2 000 runów", ale ta liczba nie była z niczego
+wyprowadzona. H6 wymaga odróżnienia różnicy **10 punktów procentowych** — to jest jego własna
+definicja. Dwie proporcje, α = 0,05, moc 0,80, najgorszy przypadek `p = 0,5`:
+`n = 16·p(1−p)/δ² = 16·0,25/0,01 =` **400 na ramię**. Przy dwudziestu kandydatach to
+16 000 przebiegów (1,7 h na ośmiu rdzeniach) zamiast 80 000 (68 h) — czyli różnica między
+pomiarem, który się zdarzy, a takim, który się nie zdarzy.
+
+**Każda liczba w raporcie niesie przedział ufności.** „85 %" bez „±2,2" obok jest dokładnie
+tą klasą, która w tym projekcie wracała: ktoś porówna ją potem z 84 % i zobaczy różnicę,
+której nie ma.
+
 ---
 
 ## Stan wyjściowy — co JUŻ istnieje i czego nie wolno budować od nowa
@@ -185,9 +218,9 @@ git commit -m "Faza 3/1: dwie polityki headless — poczatkujacy i wprawny, kazd
 ### Task 2: Sześć liczb zdrowia i raport bazowy na 10 000 runów
 
 **Pliki:**
-- Utwórz: `tools/headless/src/health.ts`
-- Modyfikuj: `tools/headless/src/report.ts`
-- Test: `tools/headless/test/health.test.ts`
+- Utwórz: `tools/headless/src/health.ts`, `tools/headless/src/parallel.ts`
+- Modyfikuj: `tools/headless/src/report.ts`, `tools/headless/src/run.ts`
+- Test: `tools/headless/test/health.test.ts`, `tools/headless/test/parallel.test.ts`
 - Utwórz: `docs/superpowers/specs/<data>-faza-3-balans-bazowy.md` (data dnia, w którym powstaje — tak jak wszystkie dokumenty w tym katalogu)
 
 **Interfejsy:**
@@ -228,7 +261,25 @@ Zadanie 3 będzie je czytać, a nie przepisywać.
 
 - [ ] **Krok 4: Uruchom — ma przejść.**
 
-- [ ] **Krok 5: Raport bazowy.** Przepuść **10 000 runów każdą polityką** na dzisiejszym balansie i zapisz wynik do dokumentu.
+- [ ] **Krok 4a: ZRÓWNOLEGLENIE — warunek wstępny, nie ulepszenie (R4).**
+
+Bez niego raport bazowy to dziewięć godzin na jednym rdzeniu. Przebiegi są niezależne
+i deterministyczne per seed, więc podział zakresu seedów na procesy robocze nie zmienia
+ANI JEDNEGO wyniku — i to jest asercja, nie założenie:
+
+```ts
+it('partia równoległa daje wynik IDENTYCZNY z sekwencyjną, run po runie', async () => {
+  const seq = [0, 1, 2, 3, 4, 5, 6, 7].map((s) => simulateRun(s, DEFAULT_RUN, 2_000));
+  const par = await runParallel({ seeds: 8, cfg: DEFAULT_RUN, maxTicks: 2_000, workers: 4 });
+  expect(par).toEqual(seq); // kolejność TEŻ, nie tylko zbiór
+});
+```
+
+**Kolejność wyników jest częścią kontraktu.** Partia, która wraca w kolejności zakończenia
+procesów, daje przy każdym uruchomieniu inny plik raportu przy tych samych danych — i nikt
+nie wie, czy to zmiana balansu, czy zmiana harmonogramu.
+
+- [ ] **Krok 5: Raport bazowy.** Przepuść **10 000 runów każdą polityką** na dzisiejszym balansie i zapisz wynik do dokumentu. **Każda liczba z przedziałem ufności** (R4).
 
 **Spodziewany wynik: większość kryteriów OBLANA.** To jest cel tego kroku — dokument jest **punktem odniesienia**, wobec którego mierzy się Zadanie 3. Raport, który tu wychodzi zdrowy, znaczy, że kryteria są za luźne.
 
@@ -261,7 +312,7 @@ git commit -m "Faza 3/2: szesc liczb zdrowia i raport bazowy — punkt odniesien
 
 **Rekomendacja specu:** nagrody ~0,25× i wyższa ruda startowa. **To jest hipoteza do sprawdzenia, nie wartość do wpisania.**
 
-- [ ] **Krok 1: Przemiataj stopę nagród** w zakresie 0,15×–0,5× przy dzisiejszej rudzie startowej, OBIEMA politykami. Zapisz H1–H4 dla każdego punktu.
+- [ ] **Krok 1: Przemiataj stopę nagród** w zakresie 0,15×–0,5× przy dzisiejszej rudzie startowej, OBIEMA politykami, **po 1 000 runów na punkt** (R4). Zapisz H1–H4 dla każdego punktu z przedziałem ufności.
 
 - [ ] **Krok 2: Przemiataj rudę startową** w zakresie 150–900 przy stopie wybranej w Kroku 1.
 
@@ -370,7 +421,7 @@ git commit -m "Faza 3/4: draft 1 z 3 o swicie — zbocze, nie stan; wybor komend
 
 - [ ] **Krok 1: Kandydaci.** Wypisz po 3–5 kandydatów na kategorię. Każdy jako **lista modyfikatorów** (R3), nie gałąź w kodzie. Kandydat nieopisywalny mnożnikiem → zapisz go jako sygnał do przemyślenia R3, nie wciskaj.
 
-- [ ] **Krok 2: Zmierz KAŻDEGO kandydata osobno.** Dla każdego: 2 000 runów `SkilledPolicy` z pulą zawierającą tego kandydata jako jedyną opcję, wobec 2 000 runów bez niego. Zapisz zmianę H1.
+- [ ] **Krok 2: Zmierz KAŻDEGO kandydata osobno.** Dla każdego: **400 runów** `SkilledPolicy` z pulą zawierającą tego kandydata jako jedyną opcję, wobec **400 runów** bez niego (R4 — wyprowadzone z progu 10 pp, który jest własną definicją H6). Zapisz zmianę H1 **z przedziałem ufności**.
 
 - [ ] **Krok 3: Odsiej dwie skrajności.**
   - **martwy** — zmiana H1 poniżej 2 punktów proc.: ulepszenie, którego wzięcie nic nie zmienia, jest szumem w wyborze
