@@ -118,15 +118,18 @@ Autoryzacja merge'a tej bramki nie znosi.
 
 - **Testy widzą źródło, nie `dist`.** Aliasy w `vitest.config.ts` celowo kierują nazwy
   pakietów na `src/index.ts`. Bez tego zielony test znaczyłby „ostatni build był poprawny".
-- **Niezmiennik serializowalności `SimState`** (30-linijkowy doc-comment w
+- **Niezmiennik serializowalności `SimState`** (doc-comment w
   [`packages/sim/src/sim/state.ts`](packages/sim/src/sim/state.ts)): nigdy `Infinity`/`NaN`,
   `TypedArray`, `Map`/`Set` — sentinel `-1` zamiast „brak", wyjście BFS/Dijkstry przeliczane
-  co tick, nie trzymane w stanie. Strażnik w `state.test.ts` pilnuje **wyłącznie pól
-  najwyższego poziomu** (`Object.keys(SimState)` plus wyczerpujący `switch` w `perturb` —
-  nowe pole daje TS2366, ale **tylko pod `tsc`**, nie pod `vitest`). Pole dołożone do
-  `Unit`/`Building`/`PentagonState` jest poza jego zasięgiem. Zmierzone: `Unit.pathDistance
-  = Infinity` przechodzi **744/744 testów i czysty typecheck**, a round-trip JSON zamienia je
-  na `null` w 24 z 24 jednostek. Pathfinding Fazy 3 celuje wprost w tę dziurę.
+  co tick, nie trzymane w stanie. Strzegą tego **trzy** rzeczy w `state.test.ts`, na trzech
+  różnych osiach: round-trip JSON (widzi tylko pola czytane przez `stateHash`), kompletność
+  `stateHash` (klucze NAJWYŻSZEGO POZIOMU, TS2366 przy nowym polu — ale **tylko pod `tsc`**,
+  nie pod `vitest`) i skaner strukturalny
+  [`test/support/serializable.ts`](packages/sim/test/support/serializable.ts), który chodzi
+  po WARTOŚCIACH rozegranego stanu i obejmuje pola zagnieżdżone w
+  `Unit`/`Building`/`PentagonState`. Świadomie poza zasięgiem skanera: `-0` (łapie je
+  round-trip, bo `stateHash` koduje przez `setFloat64`) i referencja współdzielona
+  (`JSON.stringify` radzi sobie z nią — zgłaszany jest tylko prawdziwy cykl).
 - **`noUncheckedIndexedAccess` wyłączone świadomie** (`tsconfig.base.json`) — kod geometryczny
   to gęste indeksowanie w pętlach o niezmiennych granicach.
 - **jsdom nie liczy layoutu.** Układ panelu nie jest strzeżony żadnym testem, a ta klasa wady
