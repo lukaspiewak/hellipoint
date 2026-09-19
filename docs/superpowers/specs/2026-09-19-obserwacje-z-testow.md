@@ -102,6 +102,41 @@ a nie interpolacją w kliencie.
 
 ---
 
+## Stan napraw (2026-09-19, po sesji 1)
+
+| | stan | uwaga |
+|---|---|---|
+| **O1** przepuszczalność światła | **odłożone** | decyzja właściciela o filarze |
+| **O2** odstęp w ataku | **naprawione** (`ee9f374`) | 1,37 → 0,51 rozstawu |
+| **O3** wygładzenie ruchu | **odłożone świadomie** | patrz niżej |
+
+### Dlaczego O3 czeka na O1, a nie odwrotnie
+
+Po naprawie O2 zostały dwa objawy skokowości: natychmiastowy obrót o 180° przy
+terminatorze i zatrzymanie bez hamowania pod murem. **Drugi jest już łagodny** —
+jednostka dochodzi do ściany zamiast zamarzać o jedną trzecią heksa od niej — więc
+dominującym objawem jest ten pierwszy. A on jest **wprost sterowany decyzją O1**:
+jeśli światło przestanie być ścianą, zmieni się to, *czy* i *kiedy* jednostka zawraca,
+więc każde wygładzenie zrobione teraz trzeba by przerabiać.
+
+**Jest przy tym droga, która rozwiązuje O1 i O3 naraz i nie wymaga nowego stanu.**
+`Unit.exposure` już istnieje i rośnie, dopóki jednostka stoi w świetle. Kierunek marszu
+można mieszać między celem z pola przepływu a ucieczką w cień **proporcjonalnie do
+ekspozycji**: jednostka wchodzi w światło dalej idąc do celu, a zawraca dopiero, gdy
+poparzenie narasta. To daje jednocześnie:
+
+- **pas śmierci z §4.4** — wejście w światło na głębokość zależną od `burnTime`, czyli
+  dokładnie to, co opisuje `D = burnTime · (v − v_term)`, a czego dziś nie ma;
+- **płynny obrót** zamiast skoku o 180°, bo mieszanie jest ciągłe;
+- **zero nowych pól w `SimState`**, więc bez ruszania niezmiennika serializowalności,
+  kompletności `stateHash` i skanera strukturalnego.
+
+**Nie wdrażam tego bez decyzji**, bo to zmienia filar: światło przestaje być ścianą.
+Zapisane tutaj, żeby przy rozstrzyganiu O1 była na stole razem z trzema drogami wyżej —
+jako czwarta, która wychodzi taniej niż każda z nich osobno.
+
+---
+
 ## Co z tego wynika dla Fazy 4
 
 Kamień milowy Fazy 4 to „wersja do pokazania", a jej zakres to m.in. **game feel**. O3 jest
