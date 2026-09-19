@@ -23,6 +23,26 @@ export function formatReport(results: RunResult[]): string {
   const truncated = results.filter((r) => r.phase === 'RUNNING');
 
   const lines: string[] = [];
+
+  // NAZWA POLITYKI wyprowadzona z samych wyników, nie podana parametrem — parametr dałoby
+  // się pomylić z zawartością, a to jest dokładnie ta pomyłka, która unieważniła tabelę
+  // ekstraktorów w §11.1 specu.
+  const policies = [...new Set(results.map((r) => r.policy))].sort();
+  if (policies.length > 1) {
+    // Partia z dwóch polityk nie opisuje ŻADNEJ z nich. Głośno i na samej górze, bo taki
+    // raport wygląda dokładnie jak poprawny — dwie liczby z dwóch botów są nierozróżnialne.
+    //
+    // KOLEJNOŚĆ: ostrzeżenia idą PRZED nazwą polityki i przed liczbami. Wstawienie tu
+    // wiersza kontekstowego zepchnęło ostrzeżenie o obcięciu z pierwszej linii i oblało
+    // test, który tamtej pozycji pilnuje — słusznie, bo „ostrzeżenie w pierwszej linii,
+    // nie schowane w środku tabeli" jest kontraktem tego raportu.
+    lines.push(
+      `!!! UWAGA: ta partia MIESZA ${policies.length} polityki (${policies.join(', ')}).`,
+    );
+    lines.push('!!! Rozkłady poniżej nie opisują żadnej z nich. Rozdziel partie.');
+    lines.push('');
+  }
+
   if (truncated.length > 0) {
     lines.push(
       `!!! UWAGA: ${truncated.length} z ${n} runów (${pct(truncated.length / n)}) NIE ZAKOŃCZYŁO SIĘ —`,
@@ -31,6 +51,7 @@ export function formatReport(results: RunResult[]): string {
     lines.push('!!! Rozkłady porażki niżej opisują wyłącznie runy zakończone, więc są NIEPEŁNE.');
     lines.push('');
   }
+  if (policies.length === 1) lines.push(`polityka: ${policies[0]}`);
   lines.push(`runów: ${n}`);
   lines.push(`  zwycięstw: ${wins} (${pct(wins / n)})`);
   lines.push(`  porażek:   ${defeats.length} (${pct(defeats.length / n)})`);

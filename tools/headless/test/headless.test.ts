@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createPlanet, DEFAULT_RUN, Sim, type RunConfig } from '@heliopolis/sim';
 import { simulateRun } from '../src/run.js';
 import { formatReport } from '../src/report.js';
-import { ScriptedPolicy } from '../src/policy.js';
+import { BeginnerPolicy } from '../src/policy.js';
 
 describe('simulateRun', () => {
   it('każdy run kończy się w skończonej liczbie ticków', () => {
@@ -66,7 +66,7 @@ describe('simulateRun', () => {
     // Run krótszy niż jeden tick mining-u: -1 nie może być pomylone z "wyczerpane w ticku 0".
     expect(simulateRun(1, DEFAULT_RUN, 1).firstDepletionTick).toBe(-1);
 
-    // Zmierzone OSOBNO (poza tym plikiem): DEFAULT_RUN + ScriptedPolicy nigdy nie
+    // Zmierzone OSOBNO (poza tym plikiem): DEFAULT_RUN + BeginnerPolicy nigdy nie
     // wyczerpuje ŻADNEGO złoża w 400 próbkowanych seedach — presja wroga zabija bazę
     // szybciej, niż jeden ekstraktor zdąży wydobyć 400 rudy z pojedynczej komórki.
     // Bez poniższego "wyczerpanie" w raporcie zawsze czytałoby "brak danych" dla
@@ -95,7 +95,7 @@ describe('simulateRun', () => {
   }, 30_000);
 });
 
-describe('ScriptedPolicy', () => {
+describe('BeginnerPolicy', () => {
   // Kontekst zadania: "jednorazowa lista budowy nie przeżywa pełnego runu — pierścień
   // barykad znika między cyklami 2 i 3... polityka, która dochodzi do zwycięstwa,
   // ODBUDOWUJE: każdy tick stawia pierwszą brakującą pozycję ze swojego planu." decide()
@@ -113,7 +113,7 @@ describe('ScriptedPolicy', () => {
     // więc "pierwsza brakująca pozycja z planu" musi wyjść identyczna.
     const planet = createPlanet({ seed: 1 });
     const sim = new Sim(planet, DEFAULT_RUN);
-    const policy = new ScriptedPolicy(sim);
+    const policy = new BeginnerPolicy(sim);
 
     const first = policy.decide();
     expect(first).toHaveLength(1);
@@ -205,7 +205,12 @@ describe('formatReport — rozróżnienie „przegrał" od „skończył się bu
 
     const text = formatReport(done);
     expect(text).not.toContain('UWAGA');
-    expect(text.split('\n')[0]).toBe('runów: 5');
+    // Pierwsza linia czystego raportu to od Fazy 3 NAZWA POLITYKI, a `runów:` zaraz pod nią.
+    // Kolejność jest kontraktem: ostrzeżenia (gdy są) — kontekst — liczby. Bez nazwy
+    // polityki dwa raporty z dwóch botów są nierozróżnialne (§11.1).
+    const [pierwsza, druga] = text.split('\n');
+    expect(pierwsza).toBe('polityka: beginner');
+    expect(druga).toBe('runów: 5');
     expect(text).toContain('porażek:   5 (100.0%)');
     expect(text).toContain('obciętych: 0 (0.0%)');
     expect(text).toContain('zwycięstw: 0 (0.0%)');

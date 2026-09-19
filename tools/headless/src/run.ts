@@ -6,7 +6,7 @@ import {
   type Phase,
   type RunConfig,
 } from '@heliopolis/sim';
-import { ScriptedPolicy } from './policy.js';
+import { BeginnerPolicy, type PolicyFactory } from './policy.js';
 import { formatReport } from './report.js';
 
 export interface RunResult {
@@ -26,6 +26,14 @@ export interface RunResult {
    * Czytany z `Sim`, nie ze stanu: to raport z ticku, nie wielkość, od której coś zależy.
    */
   coreDamager: EnemyType | null;
+  /**
+   * Nazwa polityki, na której ten wynik powstał (Faza 3, Zadanie 1).
+   *
+   * Przy KAŻDYM wyniku, nie tylko w nagłówku raportu: dwa wiersze z dwóch polityk wyglądają
+   * identycznie, a §11.1 ma gotowy przykład, co kosztuje ich pomylenie — tabela ekstraktorów
+   * powstała na słabszej polityce i jej progi bezwzględne nie są wiążące.
+   */
+  policy: string;
 }
 
 /**
@@ -35,10 +43,22 @@ export interface RunResult {
  */
 const DECISION_INTERVAL_TICKS = 20;
 
-export function simulateRun(seed: number, cfg: RunConfig, maxTicks: number): RunResult {
+/**
+ * Jeden przebieg.
+ *
+ * `makePolicy` jest OPCJONALNE i domyślnie daje politykę początkującą — bez tego wszystkie
+ * dotychczasowe pomiary (raport z 1000 runów, `pnpm bench`) po cichu zmieniłyby znaczenie.
+ * Fabryka, a nie gotowa polityka, bo polityka potrzebuje `Sim`, który powstaje tutaj.
+ */
+export function simulateRun(
+  seed: number,
+  cfg: RunConfig,
+  maxTicks: number,
+  makePolicy: PolicyFactory = (sim) => new BeginnerPolicy(sim),
+): RunResult {
   const planet = createPlanet({ seed });
   const sim = new Sim(planet, cfg);
-  const policy = new ScriptedPolicy(sim);
+  const policy = makePolicy(sim);
 
   const capacities = planet.cells.map((c) => c.oreCapacity);
   let peakBuildings = 0;
@@ -82,6 +102,7 @@ export function simulateRun(seed: number, cfg: RunConfig, maxTicks: number): Run
     killsByTurret: sim.state.killsByTurret,
     firstDepletionTick,
     coreDamager: sim.lastCoreDamager,
+    policy: policy.name,
   };
 }
 

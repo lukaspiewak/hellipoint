@@ -35,6 +35,23 @@ const RESERVE_ORE = Math.min(BUILDINGS.LASER_TURRET.costOre, BUILDINGS.KINETIC_T
 const EXTRACTOR_EXEMPT_FROM_RESERVE = false;
 
 /**
+ * Polityka headless: co bot chce postawić w tym ticku.
+ *
+ * Interfejs istnieje od Fazy 3, bo od tej fazy polityk są DWIE i każda odpowiada na inne
+ * pytanie (`BeginnerPolicy` — „czy początkujący ma szansę", `SkilledPolicy` — „gdzie jest
+ * sufit"). Mieszanie ich unieważniło już jedną tabelę pomiarową w §11.1 specu, więc
+ * **`name` jest częścią interfejsu, nie ozdobą**: wynik bez nazwy polityki nie da się
+ * potem przypisać do pytania, na które odpowiadał.
+ */
+export interface Policy {
+  readonly name: string;
+  decide(): Command[];
+}
+
+/** Fabryka polityki — `simulateRun` konstruuje ją po zbudowaniu `Sim`. */
+export type PolicyFactory = (sim: Sim) => Policy;
+
+/**
  * Deterministyczny, zachłanny bot. NIE ma być dobry — ma być powtarzalny
  * i reprezentować rozsądnego początkującego gracza, żeby rozkłady z runnera
  * mierzyły balans gry, a nie jakość bota.
@@ -56,7 +73,9 @@ const EXTRACTOR_EXEMPT_FROM_RESERVE = false;
  * przenosiło ten sam błąd na następną najtańszą opcję. "Nie wydaję ostatnich
  * pieniędzy, dopóki nie mam czym strzelać."
  */
-export class ScriptedPolicy {
+export class BeginnerPolicy implements Policy {
+  readonly name = 'beginner';
+
   constructor(private readonly sim: Sim) {}
 
   decide(): Command[] {
