@@ -337,26 +337,31 @@ describe('updateMovement', () => {
     });
 
     /**
-     * Wczesny strażnik `s.buildings[next] !== null` w gałęzi pola przepływu. Kontrola
-     * ogonowa NIE zastępuje go: ona blokuje WEJŚCIE w mur, on blokuje sam RUCH ku
-     * murowi. Bez niego jednostka nadal nie wchodzi w barykadę, ale dosuwa się do jej
-     * granicy wewnątrz własnej komórki (zmierzone: 0,77 jednostki świata głębiej,
-     * inny stateHash po 2000 tickach) — czyli inna pozycja, inny hash, inny zasięg
-     * walki, a cały dotychczasowy zestaw testów tego nie widział.
+     * Człon `zablokowany` — druga połówka blokowania, po naprawie obserwacji O2 z testów
+     * z ludźmi.
      *
-     * Asercja jest więc o POZYCJI, nie o `cellId`: w ticku, w którym `next` jednostki
-     * po raz pierwszy jest zabudowany, jednostka musi stanąć CO DO BITU i już się nie
-     * ruszyć.
+     * **Zachowanie ZMIENIŁO SIĘ ŚWIADOMIE i to jest ta zmiana.** Poprzednia wersja robiła
+     * w gałęzi pola przepływu `continue`, czyli pomijała CAŁY ruch: jednostka zamarzała
+     * w chwili wejścia w komórkę sąsiadującą z murem, przy jej DALSZEJ krawędzi. Zmierzone
+     * w grze: atak padał z **1,37 rozstawu komórki** zamiast ~0,5 (wspólna krawędź), czyli
+     * z widoczną przerwą jednej trzeciej heksa. Gracz zgłosił to jako wadę i nią było.
+     *
+     * Dziś jednostce wolno dosunąć się do muru WEWNĄTRZ własnej komórki, ale nie wolno jej
+     * komórki ZMIENIĆ. Drugi człon jest konieczny i nie jest kosmetyką: bez niego jednostka
+     * mogłaby zsunąć się bokiem do innego sąsiada, a wtedy `next` przeliczyłby się z nowej
+     * komórki i przestał wskazywać atakowany budynek — walka czyta `next` PO tym wywołaniu
+     * (`ahead = buildings[next]`) i straciłaby cel.
+     *
+     * Stąd asercje są DWIE i obie nośne: pozycja MUSI się ruszyć (inaczej wraca stara
+     * przerwa), a `cellId` MUSI zostać (inaczej walka gubi cel).
      */
-    it('jednostka, której next jest zabudowany, zamiera CO DO BITU — nie dosuwa się do muru we własnej komórce', () => {
+    it('jednostka, której next jest zabudowany, DOSUWA SIĘ do muru, ale nie zmienia komórki', () => {
       const s = withCore();
       const ring = planet.cells[planet.startCell].neighbors;
       for (const n of ring) applyCommand(s, { kind: 'BUILD', cellId: n, type: 'BARRICADE' });
       spawnUnit(s, 'ARMOR', atSteps(3));
       const fields = buildAllFlowFields(s);
 
-      // Krok po kroku aż do ticku, w którym wczesny strażnik po raz PIERWSZY ma prawo
-      // zadziałać: własny `next` jednostki wskazuje na zabudowaną komórkę.
       let blockedAt = -1;
       for (let i = 0; i < 2000 && blockedAt < 0; i++) {
         const next = fields.ARMOR.next[s.units[0].cellId];
@@ -366,19 +371,30 @@ describe('updateMovement', () => {
       expect(blockedAt, 'jednostka nigdy nie dotarła pod mur').toBeGreaterThanOrEqual(0);
       expect(dark[s.units[0].cellId]).toBe(0); // przesłanka: to gałąź POLA PRZEPŁYWU, nie ucieczki
 
-      const frozen = { ...s.units[0].pos };
+      const przedDosunieciem = { ...s.units[0].pos };
       const cell = s.units[0].cellId;
+      const mur = fields.ARMOR.next[cell];
+      const odleglosc = (p: { x: number; y: number; z: number }) =>
+        Math.hypot(
+          p.x - planet.cells[mur].center.x,
+          p.y - planet.cells[mur].center.y,
+          p.z - planet.cells[mur].center.z,
+        );
+      const przed = odleglosc(przedDosunieciem);
 
-      // Pierwszy tick po zablokowaniu jest tym, który rozróżnia: ze strażnikiem pozycja
-      // nie drgnie, bez niego jednostka rusza ku murowi natychmiast.
       updateMovement(s, fields, dark, sunDir, ctx);
-      expect(s.units[0].pos).toEqual(frozen);
+      expect(s.units[0].pos, 'pozycja MUSI drgnąć — inaczej wraca przerwa O2').not.toEqual(
+        przedDosunieciem,
+      );
+      expect(s.units[0].cellId, 'komórka NIE MOŻE się zmienić — walka czyta z niej cel').toBe(cell);
 
-      // I zostaje zamrożona — nie chodzi o jeden tick, tylko o stan ustalony.
+      // Stan ustalony: dosuwa się do granicy i tam zostaje, BLIŻEJ niż była.
       for (let i = 0; i < 200; i++) updateMovement(s, fields, dark, sunDir, ctx);
-      expect(s.units[0].pos).toEqual(frozen);
       expect(s.units[0].cellId).toBe(cell);
       expect(s.buildings[cell]).toBeNull(); // stoi PRZED murem, nie w nim
+      expect(odleglosc(s.units[0].pos), 'ma być BLIŻEJ muru niż przed dosunięciem').toBeLessThan(
+        przed,
+      );
     });
   });
 

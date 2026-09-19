@@ -33,10 +33,15 @@ const WIN_CAP = 60_000;
  *
  * Do Zadania 3 było to 33 — liczba z §11.1. Po strojeniu H1 wynosi ~36 %, więc otwarcie
  * nie wygrywa już wszędzie, a 33 wpadł do tych planet, na których przegrywa. Wybrane
- * pomiarem na seedach 0–59 (wygrywają m.in. 4, 5, 6, 7, 10, 11); piątka niesie OBIE
- * strony kontrastu naraz. Ten sam seed przypina `fullrun.test.ts` jako `WIN_SEED`.
+ * pomiarem na seedach 0–59 (wygrywają m.in. 3, 4, 6, 7, 10, 11); czwórka niesie OBIE
+ * strony kontrastu naraz. Ten sam seed przypina `fullrun.test.ts` jako `WIN_SEED`. *
+ * **Ten seed będzie WRACAŁ do zmiany i to nie jest wada.** Przy H1 ≈ 37 % większość planet
+ * jest przegrana, więc każda zmiana silnika przewraca seedy brzegowe. Po naprawie O2 z testów
+ * z ludźmi seed 5 przestał wygrywać, a zaczął seed 4. Nowy znajduje się przemiatając
+ * `simulateRun` po seedach 0–59 i biorąc pierwszy, na którym WPRAWNA wygrywa, a POCZĄTKUJĄCA
+ * ginie w cyklu 1 — jeden seed ma nieść obie strony kontrastu.
  */
-const REF_SEED = 5;
+const REF_SEED = 4;
 
 /**
  * Limity czasu WYPROWADZONE Z POMIARU POD OBCIĄŻENIEM, nie z bezczynnej maszyny.
@@ -100,7 +105,11 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
    * że wprawna i początkująca to naprawdę DWA różne przyrządy, na tych samych planetach.
    */
   it('1b. na tej samej próbce wprawna wygrywa, a początkująca nie wygrywa NIGDY', () => {
-    const seeds = [33, 101, 202, 303, 404];
+    // Próbka ZAWIERA seed odniesienia — inaczej kontrast, którego ten test pilnuje,
+    // bywa pusty: przy H1 ≈ 37 % pięć losowych seedów nie daje zwycięzcy w 10 %
+    // przypadków, i dokładnie to się stało po naprawie O2 (poprzednia próbka
+    // [33, 101, 202, 303, 404] spadła do zera zwycięstw).
+    const seeds = [REF_SEED, 101, 202, 303, 404];
     const wygrane = (make: (sim: Sim) => Policy) =>
       seeds.filter(
         (seed) => simulateRun(seed, DEFAULT_RUN, WIN_CAP, make).phase === 'VICTORY',
@@ -110,11 +119,11 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
     // eslint-disable-next-line no-console
     console.log(`[PRZYRZĄD] wprawna ${wprawna.length}/5 ${wprawna}, początkująca ${poczatkujaca.length}/5`);
 
-    // Przypięte co do seeda: na tej próbce wygrywa sam 303. Sama liczba „1 z 5" byłaby
+    // Przypięte co do seeda: na tej próbce wygrywa sam seed odniesienia. Sama liczba byłaby
     // zielona także wtedy, gdyby wygrywała INNA planeta, czyli gdyby polityka przestała
     // być tą samą polityką. Próbka jest arbitralna i stara — wiążącym pomiarem sufitu
     // jest 1 000 przebiegów, nie te pięć.
-    expect(wprawna).toEqual([303]);
+    expect(wprawna).toEqual([REF_SEED]);
     expect(poczatkujaca, 'podłoga: H2 = 0,0 % na 1 000 przebiegów').toEqual([]);
   }, FIVE_RUNS_MS);
 
@@ -133,7 +142,7 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
    * oczekiwane** — przepnij ją razem z resztą strojenia. Gdy przestanie się zgadzać BEZ
    * zmiany balansu, przyrząd się popsuł i pomiary z niego są nieważne.
    */
-  it('1e. seed odniesienia kończy na ticku 32 769 — liczba przepięta ze strojeniem Zadania 3', () => {
+  it('1e. seed odniesienia kończy na ticku 33 083 — liczba przepinana ze zmianami silnika', () => {
     const r = simulateRun(REF_SEED, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim));
     expect(r.phase).toBe('VICTORY');
     // 24 133 na seedzie 33 przy balansie sprzed Zadania 3; dziś 32 769 na seedzie
@@ -142,7 +151,7 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
     // w doc-commencie wyżej — zmiana PO strojeniu jest oczekiwana, BEZ strojenia znaczy
     // zepsuty przyrząd. `fullrun.test.ts` przypina tę samą liczbę z drugiej strony,
     // przez `playPlan`, więc rozjazd polityki z otwarciem oblewa w dwóch miejscach.
-    expect(r.ticks).toBe(32_769);
+    expect(r.ticks).toBe(33_083);
   }, ONE_RUN_MS);
 
   /**

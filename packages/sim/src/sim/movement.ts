@@ -173,11 +173,23 @@ export function updateMovement(
       targetDir = scale(sunDir, -1);
     } else {
       const next = fields[u.type].next[u.cellId];
-      // Brak celu, albo następna komórka jest zabudowana — stoimy.
-      // Zabudowa nie jest przeszkodą absolutną: zajmie się nią walka (Task 2).
-      // Ten wczesny `continue` musi zostać — Task 2 czyta `next` już PO tym
-      // wywołaniu (`ahead = buildings[next]`), żeby wybrać cel walki.
-      if (next < 0 || s.buildings[next] !== null) continue;
+      // Brak celu — stoimy.
+      //
+      // **Zabudowa NIE jest tu powodem do stania w miejscu — i to jest naprawa obserwacji
+      // O2 z testów z ludźmi.** Poprzednia wersja miała tu `|| s.buildings[next] !== null`,
+      // czyli pomijała CAŁY ruch, nie samo przejście między komórkami: jednostka zamarzała
+      // w chwili wejścia w komórkę sąsiadującą z budynkiem, przy jej DALSZEJ krawędzi.
+      // Zmierzone w grze: atak padał z **1,37 rozstawu komórki** zamiast ~0,5 (wspólna
+      // krawędź), czyli z widoczną przerwą jednej trzeciej heksa. Po naprawie: 0,51.
+      //
+      // Wejścia w mur broni kontrola ogonowa niżej i **to jej wystarcza**: ruch idzie
+      // prosto ku środkowi zabudowanej komórki, więc `nearestLocalCell` może zwrócić
+      // wyłącznie komórkę własną albo tę zabudowaną — nigdy trzeciej. Sprawdzone
+      // pomiarem, nie rozumowaniem: dołożony człon „a przy zablokowanym celu nie wolno
+      // zmieniać komórki wcale" dawał **identyczny `stateHash` na trzech seedach przez
+      // 2700 ticków**, czyli był martwym kodem udającym strażnika. Mutacja go wycinająca
+      // przeżyła i słusznie.
+      if (next < 0) continue;
       targetDir = cells[next].normal;
     }
 
@@ -187,6 +199,11 @@ export function updateMovement(
     // Zabudowa blokuje tak samo w ucieczce, jak w marszu do celu (D3). Warunek
     // `candidate !== u.cellId` jest konieczny: bez niego jednostka, pod którą ktoś
     // postawi budynek, zamarza na zawsze zamiast z niego zejść.
+    //
+    // Od naprawy O2 ta kontrola jest JEDYNYM strażnikiem wejścia w mur — wcześniej
+    // dublował ją wczesny `continue` w gałęzi wyżej. Walka czyta `next` PO tym wywołaniu
+    // (`ahead = buildings[next]`), więc `u.cellId` jednostki stojącej pod murem musi
+    // zostać nietknięty; zapewnia to sama odmowa przejścia.
     if (candidate !== u.cellId && s.buildings[candidate] !== null) continue;
     u.pos = scale(moved, ctx.radius);
     u.cellId = candidate;

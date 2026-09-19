@@ -138,7 +138,7 @@ describe('złoty hasz determinizmu', () => {
  * Podmiana tej liczby, żeby „testy przeszły", kasuje jedyny strażnik, jaki ta własność ma.
  */
 const GOLDEN_RUN_TICKS = 1200;
-const GOLDEN_RUN_SHA256 = '5ddf6c648302ba6b1c778204c322c1818152c9d1e4bb446fc10a10ceb5807784';
+const GOLDEN_RUN_SHA256 = 'bd751f934f6ad0bfc546ef039f727a61497117a5f6d44637b9ae7bde24a4467f';
 
 /**
  * Konfiguracja przebiegu — **ZAMROŻONY LITERAŁ, nie `DEFAULT_RUN`**.

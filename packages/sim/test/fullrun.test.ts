@@ -538,11 +538,16 @@ const WIN_CAP = 60_000;
  * asercji** — teza „broniony run dochodzi do ZWYCIĘSTWA" trzyma się nadal i dalej jest
  * sprawdzana w całości; zmienia się tylko planeta, na której się ją pokazuje.
  *
- * Wybrane pomiarem: na seedach 0–59 otwarcie wygrywa m.in. na 4, 5, 6, 7, 10, 11.
- * Piątka dlatego, że na niej początkująca ginie w CYKLU 1 — ten sam seed niesie więc
- * obie strony kontrastu, którego pilnuje `policy.test.ts`.
+ * Wybrane pomiarem: na seedach 0–59 otwarcie wygrywa m.in. na 3, 4, 6, 7, 10, 11.
+ * Czwórka dlatego, że na niej początkująca ginie w CYKLU 1 — ten sam seed niesie więc
+ * obie strony kontrastu, którego pilnuje `policy.test.ts`. *
+ * **Ten seed będzie WRACAŁ do zmiany i to nie jest wada.** Przy H1 ≈ 37 % większość planet
+ * jest przegrana, więc każda zmiana silnika przewraca seedy brzegowe. Po naprawie O2 z testów
+ * z ludźmi seed 5 przestał wygrywać, a zaczął seed 4. Nowy znajduje się przemiatając
+ * `simulateRun` po seedach 0–59 i biorąc pierwszy, na którym WPRAWNA wygrywa, a POCZĄTKUJĄCA
+ * ginie w cyklu 1 — jeden seed ma nieść obie strony kontrastu.
  */
-const WIN_SEED = 5;
+const WIN_SEED = 4;
 
 /**
  * Deliverable całego Taska 5 brzmi: run da się rozegrać OD STARTU DO ZWYCIĘSTWA
@@ -562,7 +567,7 @@ describe('broniony run dochodzi do ZWYCIĘSTWA', () => {
 
     // Bramka §5.6 NAPRAWDĘ działała w trakcie runu, nie tylko w teście jednostkowym:
     // plan prosi o Evac od pierwszego ticka, a moduł staje dopiero po progu.
-    // Zmierzone na `WIN_SEED`: próg 21 600, Evac postawiony na ticku 30 770.
+    // Zmierzone na `WIN_SEED`: próg 21 600, Evac postawiony na ticku 31 084.
     expect(a.evacBuiltTick).toBeGreaterThanOrEqual(a.sim.state.evacUnlockTick);
     expect(a.sim.cycle).toBeGreaterThanOrEqual(
       Math.ceil(DEFAULT_RUN.cyclesPerRun * DEFAULT_RUN.evacUnlockFraction),
@@ -571,9 +576,9 @@ describe('broniony run dochodzi do ZWYCIĘSTWA', () => {
     // Zwycięstwo WYWALCZONE, nie odczekane w pustce.
     //
     // Liczby PRZEMIERZONE — ten blok jako jedyny w pliku ma iść za balansem, bo jego teza
-    // brzmi „na DOMYŚLNYM balansie". Zmierzone na `WIN_SEED` przy dzisiejszej nastawie:
-    // **2220 zrodzonych** (przed strojeniem Zadania 3: 5044), szczyt 145 żywych naraz (481),
-    // 114 żywych na końcu (375), 272 odbudowy muru (2320). Spadek idzie za tempem spawnu
+    // brzmi „na DOMYŚLNYM balansie". Zmierzone na `WIN_SEED` po naprawie O2:
+    // **2292 zrodzonych** (przed strojeniem Zadania 3: 5044), szczyt 150 żywych naraz (481),
+    // 109 żywych na końcu (375), 491 odbudów muru (2320). Spadek idzie za tempem spawnu
     // i za tym, że oświetlone pentagony nie spawnują wcale (D1) — oblężenie dalej trwa,
     // mur dalej pada i wstaje.
     //
