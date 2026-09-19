@@ -662,3 +662,96 @@ describe('kolejność wywołań systemów w źródle step()', () => {
     }
   });
 });
+
+/**
+ * # Mnożnik nagród za zabicie dociera do RUDY (Faza 3, Zadanie 3)
+ *
+ * `killRewardScale` jest suwakiem, którym to zadanie stroi trudność — §11.1 wskazał stopę
+ * nagród jako prawdziwy regulator, z progiem między 0,25× a 0,1×. Arytmetyka mnożenia jest
+ * trywialna; wadą, która ma tu realną szansę powstać, jest **rozejście się konfiguracji
+ * z systemem**: parametr przekazany jako twarda jedynka zamiast wartości z `RunConfig`.
+ *
+ * Parametr jest z tego powodu WYMAGANY — przeoczone wywołanie łapie kompilator, nie skan
+ * źródła, i już raz złapał dwa wywołania w scenie bramki czytelności. Ten blok wiąże drugą
+ * połowę: że do rudy trafia wartość z konfiguracji, w OBU miejscach naliczania (spalanie
+ * w `burning.ts` i zamiatacz walki w `combat.ts`).
+ *
+ * ## Dlaczego liniowość NIE wystarczyłaby
+ *
+ * Gdyby jedno z dwóch miejsc dostało twardą jedynkę, ruda nadal byłaby idealnie liniowa
+ * w suwaku — tylko z mniejszym współczynnikiem. Dlatego test liczy **dokładną sumę
+ * należnych nagród samodzielnie**, śledząc jednostki, które zniknęły, i sumując
+ * `ENEMIES[typ].oreReward`. Kontrolą tego przyrządu jest zgodność liczby zniknięć
+ * z licznikami `killsBySun + killsByTurret`, które prowadzi sama symulacja.
+ *
+ * ## Dlaczego `startingOre` jest ogromne
+ *
+ * Bo porównanie ma być DOKŁADNE, a nie statystyczne: przy rudzie, której nie da się wydać
+ * do zera, `canBuild` nigdy nie odmawia, więc trajektoria jest identyczna dla każdej stawki
+ * i ruda zachowuje się jak czysty akumulator. Test asercjuje tę niezależność, zamiast ją
+ * zakładać — inaczej różnica w rudzie mogłaby pochodzić z innego przebiegu, a nie z innej stawki.
+ */
+describe('[STROJENIE] killRewardScale dociera do rudy w OBU miejscach naliczania', () => {
+  const planet = createPlanet({ seed: 42 });
+  const TICKS = 8_000;
+  /** Zwycięskie otwarcie bez modułu ewakuacyjnego: run ma TRWAĆ, nie wygrać. */
+  const OBRONA = WINNING_OPENING.filter(([, type]) => type !== 'EVACUATION_MODULE');
+
+  function przebieg(killRewardScale: number) {
+    const sim = new Sim(planet, { ...DEFAULT_RUN, startingOre: 100_000, killRewardScale });
+    const orders = pickCells(planet, OBRONA);
+    const zywe = new Map<number, (typeof sim.state.units)[number]['type']>();
+    let naleznePrzy1x = 0;
+    let znikle = 0;
+
+    for (let t = 0; t < TICKS && sim.state.phase === 'RUNNING'; t++) {
+      for (const o of orders) {
+        if (o.kind === 'BUILD' && sim.state.buildings[o.cellId] === null) {
+          sim.enqueue(o);
+          break;
+        }
+      }
+      for (const u of sim.state.units) zywe.set(u.id, u.type);
+      sim.step();
+      const teraz = new Set(sim.state.units.map((u) => u.id));
+      for (const [id, typ] of [...zywe]) {
+        if (teraz.has(id)) continue;
+        naleznePrzy1x += ENEMIES[typ].oreReward;
+        znikle++;
+        zywe.delete(id);
+      }
+    }
+    return { s: sim.state, naleznePrzy1x, znikle };
+  }
+
+  it('różnica rudy między 1× a 0× to DOKŁADNIE suma należnych nagród', () => {
+    const pelna = przebieg(1);
+    const zerowa = przebieg(0);
+
+    // KONTROLA PRZYRZĄDU: moje śledzenie zniknięć musi zgadzać się z licznikami symulacji.
+    // Bez tego „suma należnych" mogłaby być dowolną liczbą, a asercja niżej tautologią.
+    expect(pelna.znikle, 'zniknięcia vs liczniki symulacji').toBe(
+      pelna.s.killsBySun + pelna.s.killsByTurret,
+    );
+    // KONTROLA FIKSTURY: oba miejsca naliczania muszą w tym przebiegu WYSTĄPIĆ, inaczej
+    // test wiązałby tylko to jedno, które akurat zadziałało.
+    expect(pelna.s.killsBySun, 'zgony od słońca → burning.ts').toBeGreaterThan(0);
+    expect(pelna.s.killsByTurret, 'zgony od wież → combat.ts').toBeGreaterThan(0);
+
+    // Trajektoria niezależna od stawki — precondycja dokładności, asercjowana, nie założona.
+    expect(zerowa.s.killsBySun).toBe(pelna.s.killsBySun);
+    expect(zerowa.s.killsByTurret).toBe(pelna.s.killsByTurret);
+    expect(zerowa.naleznePrzy1x).toBe(pelna.naleznePrzy1x);
+
+    // Sedno: gdyby JEDNO z dwóch miejsc dostało twardą jedynkę, różnica byłaby MNIEJSZA
+    // od należnej sumy — i nadal idealnie liniowa w suwaku.
+    expect(pelna.s.ore - zerowa.s.ore).toBeCloseTo(pelna.naleznePrzy1x, 9);
+  }, 60_000);
+
+  it('[PARA] stawka pośrednia daje dokładnie swój ułamek', () => {
+    const zerowa = przebieg(0).s.ore;
+    const cwierc = przebieg(0.25);
+    expect(cwierc.naleznePrzy1x, 'nagrody muszą w ogóle wystąpić').toBeGreaterThan(0);
+    expect(cwierc.s.ore - zerowa).toBeCloseTo(cwierc.naleznePrzy1x * 0.25, 9);
+  }, 60_000);
+});

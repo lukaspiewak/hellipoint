@@ -30,7 +30,11 @@ const EXPOSURE_EPSILON = 1e-9;
  * Ekspozycja na światło i śmierć od słońca (§4.4).
  * Sam RUCH ucieczki realizuje updateMovement — tutaj wyłącznie akumulacja i skutek.
  */
-export function updateBurning(s: SimState, light: Float32Array): void {
+export function updateBurning(
+  s: SimState,
+  light: Float32Array,
+  killRewardScale: number,
+): void {
   let anyDead = false;
 
   for (const u of s.units) {
@@ -47,7 +51,7 @@ export function updateBurning(s: SimState, light: Float32Array): void {
         // nie zapisanemu ani nie sprawdzonemu. Patrz task-3-fix-report.md, runda 2.
         // Tym samym argumentem `s.killsBySun++` tutaj (a nie w zamiataczu niżej) liczy
         // WYŁĄCZNIE zgony od ekspozycji — patrz doc-comment `killsBySun` w state.ts.
-        s.ore += ENEMIES[u.type].oreReward;
+        s.ore += ENEMIES[u.type].oreReward * killRewardScale;
         s.killsBySun++;
         anyDead = true;
       }

@@ -253,7 +253,10 @@ for (let t = 0; t < PREROLL_TICKS; t++) {
   lightFieldInto(planet, sunDir, prerollLight);
   if (t % 3 === 0) topUpUnits();
   updateMovement(sim, flowFields, prerollLight, sunDir, motion);
-  updateBurning(sim, prerollLight);
+  // Mnożnik nagród na sztywno 1, NIE z `DEFAULT_RUN`: scena bramki ma się nie zmieniać
+  // razem z grą (CLAUDE.md), inaczej dawne wyniki czytelności przestają cokolwiek opisywać.
+  // Ruda i tak nikogo tu nie interesuje — scena mierzy obraz, nie ekonomię.
+  updateBurning(sim, prerollLight, 1);
 }
 topUpUnits();
 // Jednostki stojące na komórce, o którą bramka pyta — z tego samego powodu co budynki.
@@ -725,7 +728,7 @@ function tick(): void {
       steps++;
       simTick++;
       updateMovement(sim, flowFields, light, sunDir, motion);
-      updateBurning(sim, light);
+      updateBurning(sim, light, 1); // 1 na sztywno — patrz preroll wyżej
       topUpUnits(); // utrzymanie szczytu z Fazy 1C — patrz `TARGET_UNITS`
     }
     // „Linijka" spalania jest rysowana TAKŻE w trybie swobodnym — runda naprawcza 1.

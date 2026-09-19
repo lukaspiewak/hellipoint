@@ -152,6 +152,10 @@ const GOLDEN_RUN_SHA256 = 'b6a638a0f3df21e66122cdc645855b7963437bc297836313ee1ae
 const GOLDEN_RUN_CONFIG: RunConfig = {
   rotationPeriod: 180,
   startingOre: 100_000,
+  // 1 = tożsamość. Suwak dodany w Zadaniu 3 Fazy 3; przy jedynce mnożenie `reward * 1`
+  // jest dokładne, więc TRAJEKTORIA nie ma prawa drgnąć — i to jest kontrola pozytywna
+  // tej zmiany. Rusza się wyłącznie ODCISK, bo literał zyskał pole.
+  killRewardScale: 1,
   cyclesPerRun: 10,
   evacUnlockFraction: 0.67,
   evacEnergyRequired: 1000,
@@ -191,7 +195,7 @@ const GOLDEN_RUN_CONFIG: RunConfig = {
  * Przestawienie pól bez zmiany wartości zgłosi „balans się zmienił" — kierunek zachowawczy
  * (każe spojrzeć), nie przeoczenie.
  */
-const GOLDEN_BALANCE_SHA256 = '1f9b4bbb941c2f5d4c4b11dbd2145969efb3a1a9f9d6ff1948fee2b2088e9998';
+const GOLDEN_BALANCE_SHA256 = 'e96b22cc1dfde36e6903e4659d1b33f444d980d2712fd780547227a928adbf1e';
 
 function balanceFingerprint(): string {
   return createHash('sha256')

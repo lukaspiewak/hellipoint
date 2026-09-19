@@ -263,6 +263,15 @@ export class Sim {
         `RunConfig.evacAlarmSeconds must be finite and positive, got ${config.evacAlarmSeconds}`,
       );
     }
+    // Mnożnik nagród wpływa wprost do `SimState.ore`, więc wartość zdegenerowana nie
+    // wywala się głośno: `NaN` rozlewa się po rudzie i `canBuild` zaczyna po cichu
+    // odmawiać wszystkiego, a run kończy się porażką wyglądającą na balansową. Faza 3
+    // buduje te konfiguracje programowo dla tysięcy przebiegów.
+    if (!Number.isFinite(config.killRewardScale) || config.killRewardScale < 0) {
+      throw new RangeError(
+        `RunConfig.killRewardScale must be finite and non-negative, got ${config.killRewardScale}`,
+      );
+    }
     if (typeof config.spawn !== 'object' || config.spawn === null) {
       throw new RangeError(`RunConfig.spawn must be a SpawnConfig object, got ${config.spawn}`);
     }
@@ -488,12 +497,12 @@ export class Sim {
     // Sprawca zapamiętywany tylko wtedy, gdy w TYM ticku ktoś w CORE uderzył — inaczej
     // ostatni znany sprawca byłby kasowany przez każdy spokojny tick, a ekran przegranej
     // pokazywałby `null` zawsze, gdy Core pada od obrażeń zadanych tick wcześniej.
-    const coreDamager = updateCombat(this.s, fields);
+    const coreDamager = updateCombat(this.s, fields, this.config.killRewardScale);
     if (coreDamager !== null) this.coreDamager = coreDamager;
 
     // 8. Spalanie — po walce, bo `updateBurning` nalicza rudę wyłącznie za własne ofiary
     //    i polega na tym, że walka zabrała swoich zabitych wcześniej (patrz burning.ts).
-    updateBurning(this.s, light);
+    updateBurning(this.s, light, this.config.killRewardScale);
 
     // 9. Fale i spawn.
     updateSpawning(this.s, light, this.waveRng, this.cycle, this.config.spawn);

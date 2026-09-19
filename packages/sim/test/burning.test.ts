@@ -34,14 +34,14 @@ describe('updateBurning', () => {
   it('ekspozycja rośnie w świetle', () => {
     const s = withCore();
     spawnUnit(s, 'SWARM', 10);
-    updateBurning(s, fullLight);
+    updateBurning(s, fullLight, 1);
     expect(s.units[0].exposure).toBeCloseTo(TICK_SECONDS, 9);
   });
 
   it('w cieniu ekspozycja nie rośnie i jednostka nie ginie nigdy', () => {
     const s = withCore();
     spawnUnit(s, 'SWARM', 10);
-    for (let i = 0; i < 10_000; i++) updateBurning(s, noLight);
+    for (let i = 0; i < 10_000; i++) updateBurning(s, noLight, 1);
     expect(s.units).toHaveLength(1);
     expect(s.units[0].exposure).toBe(0);
   });
@@ -51,10 +51,10 @@ describe('updateBurning', () => {
     spawnUnit(s, 'SWARM', 10);
     const ticks = Math.ceil(ENEMIES.SWARM.burnTime / TICK_SECONDS);
 
-    for (let i = 0; i < ticks - 1; i++) updateBurning(s, fullLight);
+    for (let i = 0; i < ticks - 1; i++) updateBurning(s, fullLight, 1);
     expect(s.units).toHaveLength(1);
 
-    updateBurning(s, fullLight);
+    updateBurning(s, fullLight, 1);
     expect(s.units).toHaveLength(0);
   });
 
@@ -62,7 +62,7 @@ describe('updateBurning', () => {
     const s = withCore();
     spawnUnit(s, 'SWARM', 10);
     const before = s.ore;
-    for (let i = 0; i < 1000 && s.units.length > 0; i++) updateBurning(s, fullLight);
+    for (let i = 0; i < 1000 && s.units.length > 0; i++) updateBurning(s, fullLight, 1);
     expect(s.ore).toBeCloseTo(before + ENEMIES.SWARM.oreReward, 6);
   });
 
@@ -78,7 +78,7 @@ describe('updateBurning', () => {
     // zewnętrzne, tak jak ma być w tym scenariuszu.
     const before = s.ore;
 
-    updateBurning(s, fullLight);
+    updateBurning(s, fullLight, 1);
 
     expect(s.units).toHaveLength(0); // obie usunięte — jedna umarła tu, druga była już martwa
     // TYLKO nagroda SWARM-a (2), NIGDY nagroda ARMOR-a (10) za trupa, którego
@@ -98,7 +98,7 @@ describe('updateBurning', () => {
     s.units[0].exposure = ENEMIES.SWARM.burnTime;
     s.units[1].hp = 0;
 
-    updateBurning(s, fullLight);
+    updateBurning(s, fullLight, 1);
 
     expect(s.killsBySun).toBe(1); // TYLKO SWARM — ARMOR był już martwy z zewnątrz
     expect(s.killsByTurret).toBe(0); // updateBurning nigdy nie rusza tego licznika
@@ -107,10 +107,10 @@ describe('updateBurning', () => {
   it('powrót do cienia regeneruje ekspozycję', () => {
     const s = withCore();
     spawnUnit(s, 'SWARM', 10);
-    for (let i = 0; i < 20; i++) updateBurning(s, fullLight);
+    for (let i = 0; i < 20; i++) updateBurning(s, fullLight, 1);
     const peak = s.units[0].exposure;
 
-    for (let i = 0; i < 10; i++) updateBurning(s, noLight);
+    for (let i = 0; i < 10; i++) updateBurning(s, noLight, 1);
     // Math.max(0, …) po obu stronach: kod klamruje w miejscu, więc oczekiwanie
     // musi klamrować tak samo, inaczej test pęka przy legalnym przestrojeniu
     // SHADOW_RECOVERY_RATE [STROJENIE] (Faza 3), nie przy regresji w kodzie —
@@ -136,7 +136,7 @@ describe('updateBurning', () => {
     // usunięcie samego Math.max przy tym samym starcie od zera zostawiało
     // całą suitę zieloną).
     s.units[0].exposure = (TICK_SECONDS * SHADOW_RECOVERY_RATE) / 2;
-    updateBurning(s, noLight);
+    updateBurning(s, noLight, 1);
     expect(s.units[0].exposure).toBe(0);
   });
 
@@ -172,7 +172,7 @@ describe('updateBurning', () => {
       const sun = sunDirection(t * TICK_SECONDS, T);
       const light = lightField(planet, sun);
       updateMovement(s, fields, light, sun, ctx);
-      updateBurning(s, light);
+      updateBurning(s, light, 1);
 
       if (s.units.length > 0) {
         lastPos = s.units[0].pos;
@@ -241,7 +241,7 @@ describe('updateBurning', () => {
       const sun = sunDirection(t * TICK_SECONDS, T);
       const light = lightField(planet, sun);
       updateMovement(s, fields, light, sun, ctx);
-      updateBurning(s, light);
+      updateBurning(s, light, 1);
     }
 
     expect(s.units).toHaveLength(1);

@@ -5,6 +5,24 @@ export interface RunConfig {
   rotationPeriod: number;
   startingOre: number;
   /**
+   * [STROJENIE] Mnożnik nagrody rudy za zabicie, nakładany na `ENEMIES[].oreReward`.
+   *
+   * **Suwak, a nie stała, bo §11.1 wskazał go jako PRAWDZIWY regulator trudności** —
+   * z progiem gdzieś między 0,25× a 0,1×, poniżej którego run umiera, bo gracza nie stać
+   * na odbudowę MURU (nie na moduł ewakuacyjny, którego cena okazała się nie być bramką:
+   * 300 → 1200 przesuwa zwycięstwo o 281 ticków).
+   *
+   * Mieszka w `RunConfig`, a nie w `ENEMIES`, z trzech powodów naraz: przemiatanie musi
+   * móc zmieniać go per przebieg, procesy potomne partii dostają konfigurację (a nie
+   * zmutowany moduł), i `configFingerprint` bierze go wtedy pod uwagę — czyli raport
+   * nie da się policzyć na dwóch nastawach, nie zauważając tego.
+   *
+   * `1` = dzisiejsze wartości z tabeli. Ruda jest ułamkowa (ekstraktor nalicza 0,05/tick),
+   * więc mnożnik nie potrzebuje zaokrąglania i nie ma progu, na którym SWARM przestaje
+   * płacić cokolwiek.
+   */
+  killRewardScale: number;
+  /**
    * PUNKT ODNIESIENIA DLA PROGU EWAKUACJI, **NIE** DŁUGOŚĆ RUNU. Nazwa sugeruje limit
    * czasu — takiego nie ma i mieć nie powinno: §5.6 zna dokładnie dwa warunki końca,
    * zwycięstwo przez ewakuację i porażkę przez utratę Core. Run, w którym gracz się nie
@@ -28,6 +46,7 @@ export interface RunConfig {
 export const DEFAULT_RUN: RunConfig = {
   rotationPeriod: 180,
   startingOre: 150,
+  killRewardScale: 1,
   cyclesPerRun: 10,       // 10 × 180 s = 30 min, zgodnie z D4
   evacUnlockFraction: 0.67,
   evacEnergyRequired: 1000,

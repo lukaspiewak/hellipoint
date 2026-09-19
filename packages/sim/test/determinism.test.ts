@@ -404,3 +404,39 @@ describe('RunConfig.spawn — walidacja pól SpawnConfig', () => {
     }
   });
 });
+
+/**
+ * # Mnożnik nagród za zabicie — walidacja (Faza 3, Zadanie 3)
+ *
+ * `killRewardScale` jest suwakiem, którym Zadanie 3 stroi trudność: §11.1 wskazał stopę
+ * nagród jako PRAWDZIWY regulator, z progiem między 0,25× a 0,1×. Mieszka w `RunConfig`,
+ * a nie w `ENEMIES`, żeby przemiatanie mogło zmieniać go per przebieg i żeby widział go
+ * `configFingerprint`.
+ *
+ * Tu stoi wyłącznie walidacja konstruktora — że suwak naprawdę DOCIERA do rudy, wiąże
+ * `fullrun.test.ts`, bo do zabicia kogokolwiek potrzebna jest obrona, a bez niej CORE
+ * pada w ~1000 ticków, zanim słońce kogokolwiek dopadnie (zmierzone: przy każdej stopie
+ * spawnu od 0,25 do 0,02 wychodzi `killsBySun = 0`).
+ */
+describe('RunConfig.killRewardScale — walidacja w konstruktorze Sim', () => {
+  const planet = createPlanet({ seed: 7 });
+
+  it('odrzuca wartość zdegenerowaną — NaN rozlałby się po rudzie i uciszył `canBuild`', () => {
+    for (const zly of [NaN, Infinity, -Infinity, -0.5]) {
+      expect(
+        () => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: zly }),
+        `killRewardScale=${zly}`,
+      ).toThrow(RangeError);
+    }
+  });
+
+  it('akceptuje 0 — stawka zerowa jest legalną nastawą przemiatania, nie błędem', () => {
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: 0 })).not.toThrow();
+  });
+
+  it('komunikat nazywa pole i wartość', () => {
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: -5 })).toThrow(
+      /killRewardScale.*-5/,
+    );
+  });
+});

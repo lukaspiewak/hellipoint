@@ -57,7 +57,7 @@ describe('walka: jednostki kontra budynki', () => {
 
     const fields = buildAllFlowFields(s);
     const before = s.buildings[wall]!.hp;
-    updateCombat(s, fields);
+    updateCombat(s, fields, 1);
     expect(s.buildings[wall]!.hp).toBeCloseTo(before - ENEMIES.SWARM.dps * TICK_SECONDS, 6);
   });
 
@@ -69,7 +69,7 @@ describe('walka: jednostki kontra budynki', () => {
 
     const outside = planet.cells[wall].neighbors.find((n) => s.buildings[n] === null)!;
     spawnUnit(s, 'SWARM', outside);
-    updateCombat(s, buildAllFlowFields(s));
+    updateCombat(s, buildAllFlowFields(s), 1);
     expect(s.buildings[wall]).toBeNull();
   });
 
@@ -106,7 +106,7 @@ describe('walka: jednostki kontra budynki', () => {
     expect(s.buildings[beyondRadius]!.powered).toBe(true);
 
     spawnUnit(s, 'DISRUPTOR', origin);
-    updateCombat(s, buildAllFlowFields(s));
+    updateCombat(s, buildAllFlowFields(s), 1);
 
     expect(s.buildings[atRadius]!.powered).toBe(false);
     expect(s.buildings[beyondRadius]!.powered).toBe(true);
@@ -126,7 +126,7 @@ describe('walka: kto uszkodził CORE', () => {
     const s = withCore();
     const outside = planet.cells[planet.startCell].neighbors.find((n) => s.buildings[n] === null)!;
     spawnUnit(s, 'ARMOR', outside);
-    expect(updateCombat(s, buildAllFlowFields(s))).toBe('ARMOR');
+    expect(updateCombat(s, buildAllFlowFields(s), 1)).toBe('ARMOR');
   });
 
   it('zwraca null, gdy oberwał INNY budynek niż CORE', () => {
@@ -139,14 +139,14 @@ describe('walka: kto uszkodził CORE', () => {
     spawnUnit(s, 'SWARM', outside);
 
     const before = s.buildings[wall]!.hp;
-    expect(updateCombat(s, buildAllFlowFields(s))).toBeNull();
+    expect(updateCombat(s, buildAllFlowFields(s), 1)).toBeNull();
     // Kontrola na fiksturę: bez TEGO „null" znaczyłoby „nikt nie atakował", a nie
     // „atakował kogoś innego" — czyli test przechodziłby najgłośniej, gdy nic nie mierzy.
     expect(s.buildings[wall]!.hp).toBeLessThan(before);
   });
 
   it('zwraca null, gdy na planszy nie ma jednostek', () => {
-    expect(updateCombat(withCore(), buildAllFlowFields(withCore()))).toBeNull();
+    expect(updateCombat(withCore(), buildAllFlowFields(withCore()), 1)).toBeNull();
   });
 });
 
@@ -167,7 +167,7 @@ describe('walka: wieże kontra jednostki', () => {
   it('zasilona wieża zadaje obrażenia jednostce w zasięgu', () => {
     const { s } = turretAndUnit('KINETIC_TURRET', 1);
     const before = s.units[0].hp;
-    updateCombat(s, buildAllFlowFields(s));
+    updateCombat(s, buildAllFlowFields(s), 1);
     expect(s.units[0].hp).toBeLessThan(before);
     // Wielkość przypięta liczbowo, nie tylko kierunek. Bez tego żaden test w tym
     // pliku nie sprawdzał WIELKOŚCI obrażeń wieża→jednostka (tylko kierunek i
@@ -182,23 +182,23 @@ describe('walka: wieże kontra jednostki', () => {
     const { s, turret } = turretAndUnit('KINETIC_TURRET', 1);
     s.buildings[turret]!.powered = false;
     const before = s.units.map((u) => u.hp);
-    updateCombat(s, buildAllFlowFields(s));
+    updateCombat(s, buildAllFlowFields(s), 1);
     expect(s.units.map((u) => u.hp)).toEqual(before);
   });
 
   it('SINGLE trafia dokładnie jedną jednostkę, AOE trafia wszystkie', () => {
     const single = turretAndUnit('KINETIC_TURRET', 1);
-    updateCombat(single.s, buildAllFlowFields(single.s));
+    updateCombat(single.s, buildAllFlowFields(single.s), 1);
     expect(single.s.units.filter((u) => u.hp < ENEMIES.SWARM.hp)).toHaveLength(1);
 
     const aoe = turretAndUnit('LASER_TURRET', 1);
-    updateCombat(aoe.s, buildAllFlowFields(aoe.s));
+    updateCombat(aoe.s, buildAllFlowFields(aoe.s), 1);
     expect(aoe.s.units.every((u) => u.hp < ENEMIES.SWARM.hp)).toBe(true);
   });
 
   it('SINGLE wybiera cel deterministycznie — najniższe id', () => {
     const { s } = turretAndUnit('KINETIC_TURRET', 1);
-    updateCombat(s, buildAllFlowFields(s));
+    updateCombat(s, buildAllFlowFields(s), 1);
     const hit = s.units.filter((u) => u.hp < ENEMIES.SWARM.hp);
     expect(hit[0].id).toBe(Math.min(...s.units.map((u) => u.id)));
   });
@@ -232,14 +232,14 @@ describe('walka: wieże kontra jednostki', () => {
     const atRange = planet.cells.findIndex((c) => near.dist[c.id] === range && near.s.buildings[c.id] === null);
     if (atRange < 0) throw new Error(`brak pustej komórki dokładnie na granicy zasięgu (${range} kroków)`);
     spawnUnit(near.s, 'SWARM', atRange);
-    updateCombat(near.s, buildAllFlowFields(near.s));
+    updateCombat(near.s, buildAllFlowFields(near.s), 1);
     expect(near.s.units[0].hp).toBeLessThan(ENEMIES.SWARM.hp);
 
     const far = turretState();
     const beyondRange = planet.cells.findIndex((c) => far.dist[c.id] === range + 1 && far.s.buildings[c.id] === null);
     if (beyondRange < 0) throw new Error(`brak pustej komórki krok za granicą zasięgu (${range + 1} kroków)`);
     spawnUnit(far.s, 'SWARM', beyondRange);
-    updateCombat(far.s, buildAllFlowFields(far.s));
+    updateCombat(far.s, buildAllFlowFields(far.s), 1);
     expect(far.s.units[0].hp).toBe(ENEMIES.SWARM.hp);
   });
 
@@ -249,7 +249,7 @@ describe('walka: wieże kontra jednostki', () => {
     const oreBefore = s.ore;
     const killed = s.units.length;
 
-    updateCombat(s, buildAllFlowFields(s));
+    updateCombat(s, buildAllFlowFields(s), 1);
     expect(s.units).toHaveLength(0);
     expect(s.ore).toBeCloseTo(oreBefore + killed * ENEMIES.SWARM.oreReward, 6);
   });
@@ -262,7 +262,7 @@ describe('walka: wieże kontra jednostki', () => {
     for (const u of s.units) u.hp = 0.01;
     const killed = s.units.length;
 
-    updateCombat(s, buildAllFlowFields(s));
+    updateCombat(s, buildAllFlowFields(s), 1);
     expect(s.killsByTurret).toBe(killed);
     expect(s.killsBySun).toBe(0);
   });
