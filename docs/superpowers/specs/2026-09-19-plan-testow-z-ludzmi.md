@@ -86,6 +86,11 @@ Minimum do podania na wejściu:
 Ostatni punkt jest na granicy podpowiedzi. Zostaje, bo bez niego pytanie 2 nie ma sensu —
 gracz nie oceni świtu jako ulgi, jeśli nie wie, że słońce działa na jego korzyść.
 
+## Gdzie lądują znaleziska
+
+[Dziennik obserwacji](2026-09-19-obserwacje-z-testow.md) — jeden wpis na znalezisko, każdy
+z pomiarem. Bez pomiaru wpis jest wrażeniem, nie znaleziskiem.
+
 ## Czego NIE robimy przy tych testach
 
 Nie stroimy liczb między sesjami. Każda zmiana balansu unieważnia porównanie między

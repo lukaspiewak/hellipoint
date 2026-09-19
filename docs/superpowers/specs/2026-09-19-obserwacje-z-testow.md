@@ -1,0 +1,110 @@
+# Obserwacje z testów z ludźmi — dziennik
+
+Dziennik znalezisk z sesji z graczami. Plan sesji: [plan testów](2026-09-19-plan-testow-z-ludzmi.md).
+
+**Reguła tego dziennika:** zapisujemy, **nie naprawiamy w trakcie serii**. Każda zmiana
+balansu albo ruchu unieważnia porównanie między testerami, a przy trzech–pięciu osobach nie
+ma z czego odbudować próby. Poprawki idą hurtem po całej serii — decyzja właściciela.
+
+Każdy wpis niesie: co widział gracz, co pokazał pomiar, gdzie to siedzi w kodzie, i czego
+naprawa dotknie. **Bez pomiaru wpis jest wrażeniem, nie znaleziskiem.**
+
+---
+
+## Sesja 1 (2026-09-19, właściciel) — balans `321c77c8`
+
+Trzy obserwacje, wszystkie o RUCHU jednostek. Dwie pierwsze zgłoszone jako osobne wady;
+trzecia okazała się ich wspólną przyczyną.
+
+### O1. Przeciwnicy nie przekraczają granicy noc/dzień — stoją pod ścianą
+
+**Gracz:** *„nie potrafią przekraczać granicy noc/dzień, blokują się"*.
+
+**Pomiar** (seed 5, 20 000 ticków, próbki co 20): 20,5 % próbek jednostek znajduje się
+w komórce oświetlonej, ale **głębokość zawsze wynosi dokładnie 1 krok**. Przez cały
+przebieg ani jedna jednostka nie weszła głębiej. 61 wejść z cienia w światło i tyleż
+natychmiastowych odwrotów.
+
+**Kod:** `movement.ts` — `if (light[u.cellId] > 0)` → jednostka porzuca cel i biegnie ku
+punktowi antypodycznemu do słońca. Warunek patrzy na **bieżącą** komórkę, więc odwrót
+następuje w tym samym ticku, w którym komórka dostanie choćby ślad światła.
+
+**Rozjazd ze specyfikacją.** §4.4 definiuje **pas śmierci** `D = burnTime · (v − v_term)` —
+„maksymalna głębokość wewnątrz oświetlonego obszaru, z której wróg zdąży uciec". To opisuje
+światło jako RYZYKO: można wejść na kilka komórek, zapłacić zdrowiem, przejść. Implementacja
+daje ŚCIANĘ. Przy głębokości zawsze ≤ 1 wzór `D` nie opisuje niczego, co zachodzi w grze.
+
+**Test N3 tego nie łapie:** `scale.test.ts` sprawdza wyłącznie arytmetykę `burnEscapeDepth`,
+nigdy zachowania w symulacji. Wzór jest poprawny, a pas, który opisuje, nie istnieje —
+ta sama klasa co „test nazwany od granicy, której arytmetyka nie osiąga" (CLAUDE.md §1).
+
+**Konsekwencja dla rozgrywki:** przez pół każdego obrotu baza po stronie dziennej jest
+**nietykalna**, a nie „trudna do zdobycia".
+
+**Do decyzji właściciela — filar, nie liczba.** Trzy drogi:
+1. zostawić ścianę i **usunąć `D` ze specu**, żeby nie obiecywał nieistniejącej mechaniki;
+2. wpuścić wrogów w światło na `D` kroków zgodnie z N3 — przywraca napięcie po stronie dziennej;
+3. wpuszczać tylko wtedy, gdy cel leży w zasięgu `D` — świadome poświęcenie zamiast błądzenia.
+
+Skłaniam się do (2), bo to jest wersja już opisana w specu i nigdy niezaimplementowana.
+
+### O2. Jednostki atakują z odstępu ~1⅓ heksa
+
+**Gracz:** *„nie podchodzą do atakowanego obiektu, atakują z przynajmniej 1 hexem odstępu —
+tak ma być?"*. **Nie, tak nie ma być.**
+
+**Pomiar** (seed 5, 1 999 próbek ataku): dystans jednostka → budynek w chwili ataku wynosi
+**p10 = 1,32, p50 = 1,37, p90 = 1,52 rozstawu komórki**. Gdyby jednostka stała w środku
+sąsiedniej komórki, byłoby dokładnie **1,00**.
+
+**Kod:** zamiar w `combat.ts` brzmi „jednostka atakuje budynek w swojej komórce, a jeśli go
+nie ma — ten, który blokuje jej następny krok", czyli z sąsiedztwa. Ale `movement.ts` robi
+`if (next < 0 || s.buildings[next] !== null) continue;` — `continue` pomija **cały ruch**,
+nie samo przejście między komórkami. Jednostka zamarza w chwili wejścia w komórkę sąsiadującą
+z budynkiem, czyli przy jej DALSZEJ krawędzi, i nigdy nie dochodzi do środka.
+
+**Naprawa jest jednoznaczna:** odmawiać wyłącznie przejścia do zajętej komórki, a nie ruchu
+w obrębie własnej. Nie ma tu czego wybierać — jedyne pytanie to kiedy.
+
+**Czego dotknie:** `updateMovement` rusza trajektorię złotego haszu i może przesunąć
+przypisanie komórek, więc pola przepływu i balans. Po naprawie trzeba przemierzyć kryteria
+(~30 min maszyny). Na same obrażenia nie wpływa — dps nie zależy od dystansu, więc jest to
+wada CZYTELNOŚCI, a czytelność jest w tej grze filarem.
+
+### O3. Ruch wygląda jak uderzanie w niewidzialną ścianę — WSPÓLNA PRZYCZYNA O1 i O2
+
+**Gracz:** *„samo uciekanie jednostek przed światłem jak i podążanie wygląda źle, bo
+jednostki uderzają w wirtualną ścianę"*.
+
+**Kod:** w `movement.ts` **nie ma modelu przyspieszenia ani ograniczenia tempa skrętu**.
+Sprawdzone: jedyny `lerp` w pliku to `slerpToward`, czyli krok po wielkim okręgu — nie
+wygładzanie. Z tego wynikają dwie rzeczy, obie widoczne:
+
+- **Prędkość jest zero-jedynkowa.** Albo pełny `angleStep`, albo `continue` i zero ruchu.
+  Jednostka przechodzi z pełnej prędkości w bezruch w jednym ticku, bez hamowania — i tak
+  właśnie wygląda O2.
+- **Kierunek nie ma limitu skrętu.** `targetDir` przeskakuje między następnikiem pola
+  przepływu a kierunkiem anty-słonecznym, więc potrafi się odwrócić o **180° między dwoma
+  tickami**, a `slerpToward` od razu wykonuje pełny krok w nową stronę — i tak wygląda O1.
+
+**To znaczy, że O1 i O2 nie są trzema wadami, tylko jedną wadą z trzema objawami.** Nawet
+gdyby rozstrzygnąć przepuszczalność światła (O1) i domknąć odstęp (O2), ruch nadal będzie
+czytał się szarpnięciami, dopóki prędkość i kierunek zmieniają się skokowo.
+
+**Kandydaci do rozważenia** (żaden nie zmierzony, wszystkie do sprawdzenia po serii):
+limit skrętu na tick; wygładzanie prędkości przy zatrzymaniu; rozdzielenie „nie mogę wejść
+w tę komórkę" od „nie mogę się ruszyć". Trzeci jest najtańszy i domyka O2 przy okazji.
+
+**Uwaga o zakresie:** to jest wada RENDERU w skutkach, ale jej źródło siedzi w symulacji,
+więc nie da się jej naprawić w `packages/render`. Determinizm i autorytatywność symulacji
+(D5, wymóg Fazy 5) znaczą, że każde wygładzanie musi być częścią `updateMovement`,
+a nie interpolacją w kliencie.
+
+---
+
+## Co z tego wynika dla Fazy 4
+
+Kamień milowy Fazy 4 to „wersja do pokazania", a jej zakres to m.in. **game feel**. O3 jest
+dokładnie tym: żadna ilość VFX nie zasłoni ruchu, który skacze. **Warto wejść w Fazę 4
+z rozstrzygniętym O1 i naprawionym O2**, bo inaczej pierwsze, co zrobi kierunek artystyczny,
+to podkreśli szarpnięcia.
