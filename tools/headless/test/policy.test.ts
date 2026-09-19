@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RUN } from '@heliopolis/sim';
+import { DEFAULT_RUN, type Sim } from '@heliopolis/sim';
 import { simulateRun, type RunResult } from '../src/run.js';
 import { formatReport } from '../src/report.js';
-import { BeginnerPolicy } from '../src/policy.js';
+import { BeginnerPolicy, type Policy } from '../src/policy.js';
 import { SkilledPolicy, SKILLED_OPENING } from '../src/skilledPolicy.js';
 import { WINNING_OPENING } from '../../../packages/sim/test/support/openings.js';
 
@@ -17,8 +17,16 @@ import { WINNING_OPENING } from '../../../packages/sim/test/support/openings.js'
  * mierzy bota, nie grę.
  */
 
-/** [STROJENIE w teście] ~1,65× zmierzonej długości zwycięskiego przebiegu (24 133 ticki). */
-const WIN_CAP = 40_000;
+/**
+ * [STROJENIE w teście] ~1,7× zmierzonej długości zwycięskiego przebiegu (35 483 ticki
+ * po strojeniu Zadania 3; wcześniej 24 133).
+ *
+ * Podniesione razem z balansem i to NIE jest kosmetyka: przy starych 40 000 zwycięski
+ * przebieg seeda 33 mieścił się w limicie z 13 % zapasu, a część seedów próbki była już
+ * OBCINANA — czyli test liczyłby „przegrane", które w rzeczywistości są niedokończone.
+ * Ta sama klasa, co sufit ticków leżący wewnątrz pasma H3 (patrz `MAX_TICKS` w `batch.ts`).
+ */
+const WIN_CAP = 60_000;
 
 /**
  * Limity czasu WYPROWADZONE Z POMIARU POD OBCIĄŻENIEM, nie z bezczynnej maszyny.
@@ -57,27 +65,40 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
    * ten próg** i zapisać go razem ze zmierzonym odsetkiem.
    *
    * **ZMIERZONE po naprawie Z1 (odstęp decyzji 1, nie 20): wygrywa WSZYSTKIE PIĘĆ.**
-   * Na czterdziestu seedach (0–39): **34 zwycięstwa, 85 %**, mediana zwycięskiego przebiegu
-   * 23 801 ticków = **19,8 min**.
+   * ## Liczby PRZED strojeniem Zadania 3 i PO nim
    *
-   * Poprzedni zapis w tym miejscu mówił „2 z 5, nawet najlepsza linia przegrywa większość
-   * seedów" — i był **odwrotnością prawdy**. Przegrywała przepustnica, nie linia.
+   * Przed: 40 seedów → **34 zwycięstwa (85 %)**, mediana 23 801 ticków = 19,8 min. Czyli
+   * H1 (25–60 %) złamane od GÓRY, H3 (25–35 min) od DOŁU — dla wprawnego gra była za łatwa
+   * i za krótka, przy zerowym odsetku zwycięstw początkującego.
    *
-   * Co z tego wynika dla Zadania 3: przy dzisiejszym balansie **H1 (25–60 %) jest złamane
-   * od góry** (85 % = „przechodzi się samo"), a **H3 (mediana 25–35 min) od dołu**
-   * (19,8 min). Oba w tę samą stronę: dla wprawnego gracza gra jest za łatwa i za krótka,
-   * przy zerowym odsetku zwycięstw bota początkującego.
+   * (Zapis sprzed naprawy Z1 mówił w tym miejscu „2 z 5, nawet najlepsza linia przegrywa
+   * większość seedów" i był **odwrotnością prawdy** — przegrywała przepustnica, nie linia.)
+   *
+   * Po strojeniu (`killRewardScale` 0,5, `baseRatePerPentagon` 0,05): 40 seedów → **9
+   * zwycięstw (22,5 %)**, mediana 32 414 ticków = **27,0 min**. Czterdzieści seedów niesie
+   * ±13 pp, więc 22,5 % jest zgodne z pomiarem decyzyjnym na 1 000 przebiegów: **H1 = 35,5 %
+   * ±3,0** i **H3 = 27,3 min ±0,3**, oba w paśmie. Tamten pomiar jest wiążący, ten jest
+   * tanim strażnikiem przyrządu.
+   *
+   * **Ten test NIE jest pomiarem sufitu** — pięć seedów niesie ±22 pp. Jest asercją,
+   * że wprawna i początkująca to naprawdę DWA różne przyrządy, na tych samych planetach.
    */
-  it('1b. SkilledPolicy wygrywa na WSZYSTKICH pięciu seedach próbki', () => {
+  it('1b. na tej samej próbce wprawna wygrywa, a początkująca nie wygrywa NIGDY', () => {
     const seeds = [33, 101, 202, 303, 404];
-    const wins = seeds.filter(
-      (seed) =>
-        simulateRun(seed, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim)).phase ===
-        'VICTORY',
-    );
+    const wygrane = (make: (sim: Sim) => Policy) =>
+      seeds.filter(
+        (seed) => simulateRun(seed, DEFAULT_RUN, WIN_CAP, make).phase === 'VICTORY',
+      );
+    const wprawna = wygrane((sim) => new SkilledPolicy(sim));
+    const poczatkujaca = wygrane((sim) => new BeginnerPolicy(sim));
     // eslint-disable-next-line no-console
-    console.log(`[PRZYRZĄD] SkilledPolicy wygrywa na ${wins.length} z ${seeds.length}: ${wins}`);
-    expect(wins, 'wszystkie pięć').toEqual(seeds);
+    console.log(`[PRZYRZĄD] wprawna ${wprawna.length}/5 ${wprawna}, początkująca ${poczatkujaca.length}/5`);
+
+    // Przypięte co do seeda: po strojeniu wygrywa 33 i 303. Sama liczba „2 z 5" byłaby
+    // zielona także wtedy, gdyby wygrywały dwie INNE planety, czyli gdyby polityka
+    // przestała być tą samą polityką.
+    expect(wprawna).toEqual([33, 303]);
+    expect(poczatkujaca, 'podłoga: H2 = 0,0 % na 1 000 przebiegów').toEqual([]);
   }, FIVE_RUNS_MS);
 
   /**
@@ -95,10 +116,14 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
    * oczekiwane** — przepnij ją razem z resztą strojenia. Gdy przestanie się zgadzać BEZ
    * zmiany balansu, przyrząd się popsuł i pomiary z niego są nieważne.
    */
-  it('1e. seed 33 kończy na ticku 24 133 — liczbie referencyjnej z §11.1', () => {
+  it('1e. seed 33 kończy na ticku 35 483 — liczba przepięta ze strojeniem Zadania 3', () => {
     const r = simulateRun(33, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim));
     expect(r.phase).toBe('VICTORY');
-    expect(r.ticks).toBe(24_133);
+    // 24 133 przy balansie sprzed Zadania 3; 35 483 po nim. Przepięte zgodnie z instrukcją
+    // w doc-commencie wyżej — zmiana PO strojeniu jest oczekiwana, BEZ strojenia znaczy
+    // zepsuty przyrząd. `fullrun.test.ts` przypina tę samą liczbę z drugiej strony,
+    // przez `playPlan`, więc rozjazd polityki z otwarciem oblewa w dwóch miejscach.
+    expect(r.ticks).toBe(35_483);
   }, ONE_RUN_MS);
 
   /**

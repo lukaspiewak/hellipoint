@@ -5,6 +5,7 @@ import { applyCommand } from '../src/sim/commands.js';
 import { DEFAULT_SPAWN, updateSpawning } from '../src/sim/spawning.js';
 import { Rng, STREAM } from '../src/math/rng.js';
 import { BUILDINGS } from '../src/sim/defs.js';
+import { GESTY_SPAWN } from './support/gestySpawn.js';
 
 const planet = createPlanet({ seed: 81 });
 const N = planet.cells.length;
@@ -25,10 +26,24 @@ function fresh() {
  * "RNG zależy od seeda" niżej. Domyślna wartość zachowuje dokładnie zachowanie
  * wszystkich testów, które nie podają go jawnie.
  */
+/**
+ * **Nastawa PRZYPIĘTA, nie `DEFAULT_SPAWN`.**
+ *
+ * Testy w tym pliku mówią o ARYTMETYCE akumulatora — „floor(0,25 × 30) = 7 jednostek",
+ * „1/rate = 4 s" — i liczby te stoją w ich nazwach, opisach i asercjach. Odziedziczone
+ * tempo znaczyłoby, że każde strojenie balansu unieważnia dowód o zmiennoprzecinkowej
+ * akumulacji, która z balansem nie ma nic wspólnego. Zmierzone, gdy Zadanie 3 zeszło
+ * z 0,25 na 0,05: trzy testy oblały, choć akumulator był nietknięty.
+ *
+ * 0,25 zostaje, bo to wokół niej wyliczono 7,5 = 0,25×30 (pół jednostki od granicy
+ * całkowitej, więc błąd rzędu 1e-13 nie przesunie wyniku) i 4 s = 1/0,25.
+ */
+const NASTAWA_TESTOWA = GESTY_SPAWN;
+
 function run(s: ReturnType<typeof fresh>, light: Float32Array, seconds: number, cycle = 1, seed = 999) {
   const rng = new Rng(seed).fork(STREAM.WAVES);
   const ticks = Math.round(seconds / 0.05);
-  for (let i = 0; i < ticks; i++) updateSpawning(s, light, rng, cycle, DEFAULT_SPAWN);
+  for (let i = 0; i < ticks; i++) updateSpawning(s, light, rng, cycle, NASTAWA_TESTOWA);
 }
 
 describe('updateSpawning', () => {

@@ -10,6 +10,7 @@ import { ORE_PER_SECOND } from '../src/sim/economy.js';
 import { lightField, sunDirection } from '../src/sim/light.js';
 import { spawnUnit } from '../src/sim/movement.js';
 import { WINNING_OPENING, type Pool } from './support/openings.js';
+import { GESTY_SPAWN } from './support/gestySpawn.js';
 import { TICK_SECONDS, type BuildingType } from '../src/sim/state.js';
 import type { Command } from '../src/sim/commands.js';
 
@@ -29,7 +30,11 @@ const PASSIVE_CAP = 6000;
 
 describe('pełny run', () => {
   it('symulacja bez żadnych komend kończy się porażką w skończonym czasie', () => {
-    const sim = new Sim(createPlanet({ seed: 101 }), DEFAULT_RUN);
+    // Tempo spawnu PRZYPIĘTE (`GESTY_SPAWN`): to jest strażnik `dps` WROGÓW, a okno
+    // 463–511 wyliczono z pomiaru wrażliwości na `dps` przy tempie 0,25. Odziedziczone
+    // tempo znaczyłoby, że strojenie spawnu unieważnia dowód o obrażeniach — zmierzone,
+    // gdy Zadanie 3 zeszło na 0,05: ten sam run trwa 971 ticków zamiast 487.
+    const sim = new Sim(createPlanet({ seed: 101 }), { ...DEFAULT_RUN, spawn: GESTY_SPAWN });
     let ticks = 0;
     while (sim.state.phase === 'RUNNING' && ticks < PASSIVE_CAP) {
       sim.step();
@@ -55,7 +60,7 @@ describe('pełny run', () => {
 
   it('pełen run jest deterministyczny na przestrzeni tysięcy ticków', () => {
     const run = () => {
-      const sim = new Sim(createPlanet({ seed: 102 }), DEFAULT_RUN);
+      const sim = new Sim(createPlanet({ seed: 102 }), { ...DEFAULT_RUN, spawn: GESTY_SPAWN });
       let ticks = 0;
       while (ticks < PASSIVE_CAP && sim.state.phase === 'RUNNING') { sim.step(); ticks++; }
       // Run ma skończyć się FAZĄ, nie limitem — inaczej ten test porównuje dwa uciecia
@@ -116,7 +121,7 @@ describe('pełny run', () => {
  */
 describe('przebieg porównywany testem determinizmu jest bogaty w zdarzenia', () => {
   it('seed 102 rodzi setki jednostek, traci CORE i nalicza rudę za zabójstwa — nie jest martwą pętlą', () => {
-    const sim = new Sim(createPlanet({ seed: 102 }), DEFAULT_RUN);
+    const sim = new Sim(createPlanet({ seed: 102 }), { ...DEFAULT_RUN, spawn: GESTY_SPAWN });
     const core = sim.state.planet.startCell;
     const startOre = sim.state.ore;
 
@@ -496,8 +501,15 @@ const times = <T,>(n: number, v: T): T[] => Array.from({ length: n }, () => v);
  */
 // Kolejka zwycięskiego otwarcia mieszka w `support/openings.ts` — patrz tamtejszy
 // doc-comment; dzieli ją z polityką wprawną narzędzia headless.
-/** [STROJENIE-niezależne] ~1,65× zmierzonej długości zwycięskiego przebiegu (24 133 ticki). */
-const WIN_CAP = 40_000;
+/**
+ * [STROJENIE-niezależne] ~1,7× zmierzonej długości zwycięskiego przebiegu.
+ *
+ * Zadanie 3 Fazy 3 przestroiło balans (`killRewardScale` 0,5, `baseRatePerPentagon` 0,05)
+ * i seed 33 kończy teraz na **35 483** tickach zamiast 24 133 — run jest dłuższy o połowę,
+ * bo taki był cel H3 (mediana 25–35 min; zmierzona 27,3 ±0,3). Stary limit 40 000 zostawiał
+ * nad tą liczbą 13 % zapasu, czyli za mało, żeby kolejne strojenie nie obcięło zwycięstwa.
+ */
+const WIN_CAP = 60_000;
 
 /**
  * Deliverable całego Taska 5 brzmi: run da się rozegrać OD STARTU DO ZWYCIĘSTWA
@@ -517,20 +529,29 @@ describe('broniony run dochodzi do ZWYCIĘSTWA', () => {
 
     // Bramka §5.6 NAPRAWDĘ działała w trakcie runu, nie tylko w teście jednostkowym:
     // plan prosi o Evac od pierwszego ticka, a moduł staje dopiero po progu.
-    // Zmierzone: próg 21 600, Evac postawiony na ticku 22 134.
+    // Zmierzone po strojeniu Zadania 3: próg 21 600, Evac postawiony na ticku 33 484.
     expect(a.evacBuiltTick).toBeGreaterThanOrEqual(a.sim.state.evacUnlockTick);
     expect(a.sim.cycle).toBeGreaterThanOrEqual(
       Math.ceil(DEFAULT_RUN.cyclesPerRun * DEFAULT_RUN.evacUnlockFraction),
     );
 
-    // Zwycięstwo WYWALCZONE, nie odczekane w pustce (zmierzone: 5044 zrodzone jednostki,
-    // szczyt 481 żywych naraz, 375 wciąż żywych na końcu, 2320 odbudów muru).
-    expect(a.sim.state.nextUnitId - 1).toBeGreaterThan(3000);
-    expect(a.peakUnits).toBeGreaterThan(200);
+    // Zwycięstwo WYWALCZONE, nie odczekane w pustce.
+    //
+    // Liczby PRZEMIERZONE po strojeniu Zadania 3 — ten blok jako jedyny w pliku ma iść
+    // za balansem, bo jego teza brzmi „na DOMYŚLNYM balansie". Zmierzone dziś: 2826
+    // zrodzonych (było 5044), szczyt 212 żywych naraz (481), 145 żywych na końcu (375),
+    // 584 odbudowy muru (2320). Spadek jest o rząd tempa spawnu, nie o klasę przebiegu:
+    // oblężenie dalej trwa, mur dalej pada i wstaje.
+    //
+    // **Otwarcie NADAL WYGRYWA** — i to jest tu rzecz najważniejsza, bo rozstrzygnięcie R2
+    // planu wymaga, by polityka wprawna była co najmniej tak dobra jak `WINNING_OPENING`,
+    // a doc-comment tej kolejki zakazuje osłabiania asercji zamiast wyznaczenia nowej.
+    expect(a.sim.state.nextUnitId - 1).toBeGreaterThan(2000);
+    expect(a.peakUnits).toBeGreaterThan(150);
     expect(a.sim.state.units.length).toBeGreaterThan(100);
     // Mur był realnie rozbijany i realnie odbudowywany — bez tego „obrona" mogłaby
     // po prostu stać nietknięta i test nie odróżniłby oblężenia od spokoju.
-    expect(a.rebuilds).toBeGreaterThan(500);
+    expect(a.rebuilds).toBeGreaterThan(400);
     // CORE przeżył — to jest warunek zwycięstwa, nie skutek uboczny.
     expect(a.sim.state.buildings[core]).not.toBeNull();
     // Ewakuacja doszła do końca: ładunek pełny, alarm odliczony do zera.
@@ -572,6 +593,10 @@ describe('zwycięstwo jest osiągalne przez samą pętlę, niezależnie od stroj
       startingOre: 400,        // [STROJENIE] stać na Evac od razu
       evacEnergyRequired: 100, // [STROJENIE] 1/10 domyślnej — skraca ładowanie do ~10 s
       evacAlarmSeconds: 5,     // [STROJENIE] 1/12 domyślnego — skraca alarm do 100 ticków
+      // Tempo spawnu PRZYPIĘTE: nazwa tego bloku mówi „niezależnie od stroju balansu",
+      // a przesłanka `sawUnits` wymaga, żeby w ~330 tickach ktokolwiek się urodził.
+      // Przy dzisiejszym 0,05 nie rodzi się nikt i zwycięstwo padałoby w pustce.
+      spawn: GESTY_SPAWN,
     };
     const sim = new Sim(planet, cfg);
     expect(sim.state.evacUnlockTick).toBe(0); // przesłanka testu, nie założenie

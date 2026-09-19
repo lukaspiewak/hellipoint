@@ -139,3 +139,94 @@ bo początkująca nie wygrała ani razu — **różnica obudzi się dopiero w Za
   niezależnie od `n`, więc pierwsza wersja wypisała „H2: 0,0 % ±0,0 (n=10000)" — i to samo
   wypisałaby po ośmiu przebiegach. Teraz H2 pokazuje ±0,02 pp przy dziesięciu tysiącach
   i ±16 pp przy ośmiu.
+
+
+---
+
+# Po strojeniu (Zadanie 3)
+
+**Nastawa:** `killRewardScale` 1 → **0,5**, `baseRatePerPentagon` 0,25 → **0,05**.
+`startingOre` i `growthPerCycle` **bez zmian** — i to też jest wynik pomiaru, nie zaniechanie.
+Odcisk konfiguracji `9febf80c`. Pomiar decyzyjny: 1 000 przebiegów na politykę.
+
+```
+H1  OK    zwycięstw polityki wprawnej: 35.5% ±3.0 (n=1000 runów), próg 25–60%
+H2  BŁĄD  zwycięstw polityki początkującej: 0.0% ±0.2 (n=1000 runów), próg >2% i <17.8% (połowa H1 = 35.5%)
+H3  OK    mediana runu wygranego POLITYKI WPRAWNEJ: 27.3 min ±0.3 (n=355 zwycięstw), próg 25–35 min
+H4  BŁĄD  runów POLITYKI POCZĄTKUJĄCEJ ginących w cyklu 1: 82.5% ±2.4 (n=1000 runów), próg <15%
+H5  NIEZMIERZONE  wymaga wyników wielu OTWARĆ — Zadanie 3
+H6  NIEZMIERZONE  wymaga wyników z pulą i bez niej — Zadanie 5
+```
+
+| | przed | po | próg | |
+|---|---|---|---|---|
+| **H1** sufit | 76,0 % (≥) | **35,5 % ±3,0** | 25–60 % | **spełnione** |
+| **H2** podłoga | 0,0 % | 0,0 % ±0,2 | >2 % | bez zmian |
+| **H3** mediana runu | 20,2 min | **27,3 min ±0,3** | 25–35 min | **spełnione** |
+| **H4** porażki w cyklu 1 | 94,2 % | 82,5 % ±2,4 | <15 % | bez zmian |
+
+## Co się udało: sufit i długość runu, i to jedną parą liczb
+
+Żadna z osi osobno tego nie dawała. Stopa nagród ustawia H1 i **nie rusza H3 ani o minutę**
+(23,6 → 20,3 min w całym zakresie 0,2–0,7). Tempo spawnu ustawia H3 i **rozbija H1 od dołu**
+— przy 0,05 sufit spada do 16 %, bo wprawna nie wydobywa ani jednej rudy i finansuje się
+wyłącznie nagrodami, więc rzadszy spawn znaczy dla niej UBÓSTWO, nie ulgę.
+
+Rozwiązanie wyszło z połączenia: rzadziej, ale drożej. Dochód to stawka × liczba zabitych,
+więc obniżenie liczby odrabia się stawką, a presja i długość runu idą za samą liczbą.
+Przy 0,05 zmierzone stawki 0,5 / 0,8 / 1,2 / 1,8 dają H1 kolejno 38 / 71 / 87 / 94 %,
+a H3 27,1 / 21,8 / 20,2 / 19,7 min — **0,5 jest jedynym punktem, w którym oba są w paśmie**.
+
+`growthPerCycle` zostaje na 1,35, bo podnoszenie go psuje H3 (27,1 → 21,5 → 20,7 → 20,5 min
+przy 1,35 / 1,5 / 1,65 / 1,8), a H1 też nie poprawia.
+
+## Czego NIE dało się zrobić: podłoga
+
+H2 i H4 nie drgnęły. To nie jest brak prób — **to wynik, i da się go uzasadnić osią po osi**:
+
+- **`killRewardScale` nie może.** Nagrody przychodzą z zabójstw, a zabójstwa zdarzają się
+  po śmierciach, które definiują H4. Zmierzone: H2 i H4 identyczne co do dziesiątej
+  przy stawkach 0,2 / 0,3 / 0,4 / 0,5 / 0,7 — pięć punktów, ten sam wynik.
+- **`startingOre` jest osią martwą.** 150 → 1500 kupuje 9 punktów H4 i robi to
+  NIEMONOTONICZNIE (przy 600 wychodzi 98,8 %, gorzej niż przy 150). Rozstrzyga jedna liczba:
+  `moment porażki p10` stoi na **~31 s we wszystkich pięciu punktach**, podczas gdy
+  początkująca buduje coraz więcej (szczyt zabudowy p50: 9 → 26). Stać ją, buduje, ginie
+  w tej samej sekundzie.
+- **`growthPerCycle` nie może z arytmetyki.** Tempo to `baseRatePerPentagon ×
+  growthPerCycle^(cykl−1)`, więc w cyklu 1 wykładnik wynosi zero i wzrost nie istnieje.
+  Zmierzone dla porządku: 82,5 % przy 1,35 / 1,5 / 1,65 / 1,8 — cztery razy ta sama liczba.
+- **`baseRatePerPentagon` może, ale płaci H1.** Jedyna oś, która rusza H4 (95,5 → 82,5 %).
+  Moment porażki skaluje się mniej więcej jak 1/tempo (p50: 50 → 64 → 84 → 125 s), a cykl 1
+  trwa 180 s. Żeby 85 % przebiegów przeżyło cykl 1, tempo musiałoby zejść poniżej ~0,02 —
+  rząd wielkości pod dzisiejsze, gdzie sufit jest już rozbity.
+
+## Przyczyna, nie objaw
+
+`updateSpawning` liczy tempo jako `baseRatePerPentagon × growthPerCycle^(cykl−1)`. W cyklu 1
+daje to **pełne natężenie fali w sekundzie zerowej**, przeciw bazie złożonej z samego CORE.
+Nie ma rozbiegu wewnątrz cyklu ani okresu łaski na starcie runu.
+
+Dlatego `moment porażki p10` jest nieczuły na pieniądze: zanim cokolwiek stanie, fala już
+idzie. To nie jest liczba do przestrojenia — **to brakująca mechanika**, i wykracza poza
+zakres Zadania 3, które stroi liczby oznaczone `[STROJENIE]`.
+
+**Granica, którą trzeba znać.** H4 = 82,5 % zmierzono na `BeginnerPolicy`, która z założenia
+ma być słaba. Na `SkilledPolicy` to samo kryterium daje **0,0 %**. Prawdziwy nowicjusz leży
+gdzieś pomiędzy, a headless nie umie powiedzieć gdzie — to jest dokładnie ta klasa pytań,
+którą §11.1 specu nazywa „progi zmierzone na słabej polityce nie są wiążące". Rozstrzygnąć
+to może dopiero człowiek grający (Zadanie 7).
+
+## Skutek uboczny: fikstury testowe były przywiązane do balansu
+
+Strojenie oblało **szesnaście testów naraz** w pięciu plikach — i każdy z nich oblał na
+swojej KONTROLI POZYTYWNEJ („przebieg naprawdę coś robił", „fikstura jest BOGATA"),
+czyli zadziałały dokładnie tak, jak miały. Dowodzone niezmienniki nie drgnęły: przy tempie
+0,05 w 400 tickach rodziła się jedna jednostka zamiast dziesiątek, więc „hash identyczny
+przez 400 ticków" stało się prawdą o dwóch prawie pustych stanach.
+
+Naprawa: `packages/sim/test/support/gestySpawn.ts` — jedna zamrożona nastawa dla wszystkich
+fikstur, ta sama decyzja co `GOLDEN_RUN_CONFIG`. Następne strojenie balansu już ich nie ruszy.
+
+Wyjątkiem są dwa miejsca, które mają iść za grą i zostały PRZEMIERZONE: test zwycięstwa
+w `fullrun.test.ts` (seed 33 kończy teraz na ticku 35 483, nie 24 133) i liczba referencyjna
+w `policy.test.ts`. **Zwycięskie otwarcie nadal wygrywa** — rozstrzygnięcie R2 trzyma.

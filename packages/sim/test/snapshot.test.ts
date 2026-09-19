@@ -5,6 +5,7 @@ import { stateHash } from '../src/sim/hash.js';
 import { DEFAULT_RUN } from '../src/sim/rules.js';
 import { createState, type SimState } from '../src/sim/state.js';
 import type { Command } from '../src/sim/commands.js';
+import { GESTY_SPAWN } from './support/gestySpawn.js';
 
 /**
  * PRZEGLĄD GAŁĘZI, Important #2: „`SimState` NIE jest wznawialną migawką".
@@ -34,10 +35,23 @@ import type { Command } from '../src/sim/commands.js';
 const SEED = 5;
 
 /** Pula trzech typów od cyklu 1 — inaczej pozycja generatora jest niewidoczna. */
+/**
+ * **Tempo spawnu PRZYPIĘTE, nie odziedziczone po `DEFAULT_RUN`.**
+ *
+ * Ten test dowodzi czegoś o wznawianiu migawki, a nie o balansie — i żeby dowodził, run
+ * musi być GĘSTY: przy rzadkim strumieniu „hash identyczny przez 400 ticków" jest prawdą
+ * o dwóch prawie pustych stanach. Zmierzone, gdy Zadanie 3 obniżyło `baseRatePerPentagon`
+ * z 0,25 na 0,05: w 400 tickach rodziła się **jedna** jednostka i przesłanka „przebieg
+ * naprawdę coś robił" oblewała — kontrola pozytywna zadziałała dokładnie tak, jak miała.
+ *
+ * Wniosek nie brzmi „poluzować przesłankę", tylko **odpiąć fiksturę od nastawy gry**.
+ * Ta sama decyzja i to samo uzasadnienie, co przy `GOLDEN_RUN_CONFIG` w `golden-hash.test.ts`:
+ * fikstura, która idzie za balansem, przestaje opisywać to, co opisywała.
+ */
 const CONFIG = {
   ...DEFAULT_RUN,
   startingOre: 400,
-  spawn: { ...DEFAULT_RUN.spawn, disruptorFromCycle: 1, armorFromCycle: 1 },
+  spawn: { ...GESTY_SPAWN, disruptorFromCycle: 1, armorFromCycle: 1 },
 };
 
 /**

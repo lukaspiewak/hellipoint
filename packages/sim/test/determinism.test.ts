@@ -7,6 +7,7 @@ import { minRotationPeriod } from '../src/sim/movement.js';
 import type { Command } from '../src/sim/commands.js';
 import { DEFAULT_RUN } from '../src/sim/rules.js';
 import { DEFAULT_SPAWN } from '../src/sim/spawning.js';
+import { GESTY_SPAWN } from './support/gestySpawn.js';
 
 /**
  * Pola `rotationPeriod`/`startingOre` wypisane JAWNIE, mimo że `DEFAULT_RUN` ma dziś
@@ -16,7 +17,12 @@ import { DEFAULT_SPAWN } from '../src/sim/spawning.js';
  * PYLON+BARRICADE). Bez jawnego nadpisania przestrojenie `DEFAULT_RUN` po cichu
  * zmieniałoby sens tych testów.
  */
-const CONFIG = { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 150 };
+/**
+ * Tempo spawnu PRZYPIĘTE — patrz `GESTY_SPAWN`. Determinizm ma być dowodzony na przebiegu
+ * BOGATYM w zdarzenia; kontrolę tego bogactwa niesie `fullrun.test.ts` i musi ona opisywać
+ * TĘ SAMĄ konfigurację.
+ */
+const CONFIG = { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 150, spawn: GESTY_SPAWN };
 
 /**
  * `withCommands = false` daje IDENTYCZNĄ pętlę step() bez żadnej komendy w kolejce —

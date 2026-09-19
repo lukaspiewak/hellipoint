@@ -19,7 +19,20 @@ export interface SpawnConfig {
 
 // [STROJENIE] — cała ta tabela należy do Fazy 3 i headlessa.
 export const DEFAULT_SPAWN: SpawnConfig = {
-  baseRatePerPentagon: 0.25,
+  /**
+   * [STROJENIE] **0,05 — jedyna zmierzona nastawa, przy której H3 wchodzi w pasmo.**
+   *
+   * Zmierzone (Faza 3, Zadanie 3, 250 przebiegów na punkt przy `killRewardScale` 0,35):
+   * 0,05 → mediana runu wygranego **32,1 min**, a 0,10 / 0,15 / 0,25 / 0,40 → 24,4 / 21,2 /
+   * 20,6 / 20,4 min. Żadna inna oś nie ruszyła H3 z okolic 20,5 min ani o minutę.
+   *
+   * H1 jest w tej osi **niemonotoniczne** (16,0 / 30,0 / 40,8 / 46,4 / 34,4 %) ze szczytem
+   * przy dawnych 0,25 i spadkiem po obu stronach: przy wysokim tempie z presji, przy niskim
+   * z **ubóstwa** — mniej wrogów to mniej nagród, a wprawna nie ma innego dochodu. Spadek
+   * po lewej odrabia `killRewardScale` 0,5; potwierdzone na 1 000 przebiegach:
+   * H1 = 35,5 % ±3,0 i H3 = 27,3 min ±0,3, oba w paśmie.
+   */
+  baseRatePerPentagon: 0.05,
   growthPerCycle: 1.35,
   eruptionInterval: 20,
   eruptionBurstBase: 4,

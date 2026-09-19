@@ -45,8 +45,36 @@ export interface RunConfig {
 // [STROJENIE] — cała tabela do wyznaczenia headlessem w Fazie 3.
 export const DEFAULT_RUN: RunConfig = {
   rotationPeriod: 180,
+  /**
+   * [STROJENIE] **Zostaje 150 — bo przemiatanie pokazało, że ta oś jest MARTWA.**
+   *
+   * Zmierzone (Faza 3, Zadanie 3, 250 przebiegów wprawnej i 1 000 początkującej na punkt,
+   * przy `killRewardScale` 0,35): 150 → 300 → 600 → 900 → 1500 daje H4 kolejno
+   * 95,5 / 90,0 / **98,8** / 92,5 / 86,2 %. Dziesięciokrotny wzrost kupuje 9 punktów przy
+   * progu <15 %, a przebieg **nie jest monotoniczny** — przy 600 wychodzi GORZEJ niż przy
+   * 150, i to daleko poza przedziałami (±1,9 wobec ±0,7). H1 nasyca się po 300.
+   *
+   * Rozstrzyga jedna liczba: `moment porażki p10` stoi na **~31 s we wszystkich pięciu
+   * punktach**, podczas gdy początkująca buduje coraz więcej (szczyt zabudowy p50: 9 → 26).
+   * Stać ją, buduje, ginie w tej samej sekundzie. To nie jest brak zasobów.
+   *
+   * Rekomendacja §11.1 („podnieść rudę startową") jest tym pomiarem OBALONA.
+   */
   startingOre: 150,
-  killRewardScale: 1,
+  /**
+   * [STROJENIE] **0,5 — wybrane razem z `baseRatePerPentagon`, nie osobno.**
+   *
+   * Stoi na pomiarze 1 000 przebiegów wprawnej przy tempie spawnu 0,05:
+   * **H1 = 35,5 % ±3,0 (próg 25–60) i H3 = 27,3 min ±0,3 (próg 25–35)** — pierwsza nastawa
+   * w całej fazie, w której oba kryteria sufitu są spełnione naraz.
+   *
+   * Dlaczego wyżej niż zgrubne 0,35 z przemiatania samej tej osi: przy rzadszym spawnie
+   * wprawna **ubożeje**, bo nie wydobywa ani jednej rudy (p10=p50=p90=0 w każdym pomiarze)
+   * i finansuje się wyłącznie nagrodami. Dochód to stawka × liczba zabitych, więc obniżenie
+   * liczby trzeba odrobić stawką. Zmierzone przy 0,05: stawka 0,5 → H1 38 %, 0,8 → 71 %,
+   * 1,2 → 87 %, 1,8 → 94 %.
+   */
+  killRewardScale: 0.5,
   cyclesPerRun: 10,       // 10 × 180 s = 30 min, zgodnie z D4
   evacUnlockFraction: 0.67,
   evacEnergyRequired: 1000,
