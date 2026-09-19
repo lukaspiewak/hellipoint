@@ -42,6 +42,7 @@ describe('1. [OŚ] każda oś rusza dokładnie to pole, które nazywa', () => {
       startingOre: (c) => c.startingOre,
       growthPerCycle: (c) => c.spawn.growthPerCycle,
       baseRatePerPentagon: (c) => c.spawn.baseRatePerPentagon,
+      sunPhaseAtStart: (c) => c.sunPhaseAtStart,
     };
     for (const nazwa of Object.keys(AXES) as AxisName[]) {
       const os = AXES[nazwa];

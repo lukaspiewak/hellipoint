@@ -23,6 +23,32 @@ export interface RunConfig {
    */
   killRewardScale: number;
   /**
+   * [STROJENIE] Faza słońca na starcie runu, **liczona WZGLĘDEM ŚWITU komórki startowej**,
+   * w ułamku pełnego obrotu. `0` = CORE wchodzi w światło dokładnie w ticku zero.
+   *
+   * ## Dlaczego względem świtu, a nie bezwzględnie
+   *
+   * Bo bezwzględna faza startu **różni się planeta od planety i to przypadkiem**. Zmierzone
+   * przy obrocie 180 s: seed 7 zaczyna w pełnym świetle (0,75 i gasnące), seed 101 ma przed
+   * sobą 90 sekund ciemności, seed 33 startuje o świcie. Gracz na seedzie 101 dostawał więc
+   * półtorej minuty nocy, zanim słońce w ogóle zaczęło mu pomagać, a gracz na seedzie 7 —
+   * pomoc natychmiast. Ta wariancja nie była niczyją decyzją; brała się z generowania planety.
+   *
+   * Odniesienie do świtu sprawia, że **ta sama liczba znaczy to samo na każdej planecie**,
+   * a przemiatanie po tej osi mierzy jedną rzecz, a nie dwie naraz.
+   *
+   * ## Po co to istnieje
+   *
+   * Zadanie 3 zmierzyło, że H4 (porażki w cyklu 1) nie rusza się od ŻADNEJ liczby balansowej:
+   * `updateSpawning` daje w cyklu 1 pełne natężenie fali w sekundzie zerowej, przeciw bazie
+   * złożonej z samego CORE. Start o świcie daje graczowi okno, w którym **słońce broni za
+   * niego** — wrogowie muszą wejść w światło, żeby dojść do bazy, a tam płoną (§4.4).
+   * To rozbieg opowiedziany mechaniką tej gry, nie ukryty mnożnik trudności.
+   *
+   * Wartość jest okresowa: 0,5 znaczy pół obrotu po świcie, czyli start w pełnej nocy.
+   */
+  sunPhaseAtStart: number;
+  /**
    * PUNKT ODNIESIENIA DLA PROGU EWAKUACJI, **NIE** DŁUGOŚĆ RUNU. Nazwa sugeruje limit
    * czasu — takiego nie ma i mieć nie powinno: §5.6 zna dokładnie dwa warunki końca,
    * zwycięstwo przez ewakuację i porażkę przez utratę Core. Run, w którym gracz się nie
@@ -75,6 +101,8 @@ export const DEFAULT_RUN: RunConfig = {
    * 1,2 → 87 %, 1,8 → 94 %.
    */
   killRewardScale: 0.5,
+  /** [STROJENIE] Start O ŚWICIE — uzasadnienie i pomiar przy polu w `RunConfig` wyżej. */
+  sunPhaseAtStart: 0,
   cyclesPerRun: 10,       // 10 × 180 s = 30 min, zgodnie z D4
   evacUnlockFraction: 0.67,
   evacEnergyRequired: 1000,

@@ -10,7 +10,7 @@ import { ORE_PER_SECOND } from '../src/sim/economy.js';
 import { lightField, sunDirection } from '../src/sim/light.js';
 import { spawnUnit } from '../src/sim/movement.js';
 import { WINNING_OPENING, type Pool } from './support/openings.js';
-import { GESTY_SPAWN } from './support/gestySpawn.js';
+import { GESTA_FAZA_SLONCA, GESTY_SPAWN, gestyRun } from './support/gestySpawn.js';
 import { TICK_SECONDS, type BuildingType } from '../src/sim/state.js';
 import type { Command } from '../src/sim/commands.js';
 
@@ -30,11 +30,11 @@ const PASSIVE_CAP = 6000;
 
 describe('pełny run', () => {
   it('symulacja bez żadnych komend kończy się porażką w skończonym czasie', () => {
-    // Tempo spawnu PRZYPIĘTE (`GESTY_SPAWN`): to jest strażnik `dps` WROGÓW, a okno
+    // Tempo spawnu i faza słońca PRZYPIĘTE (`gestyRun`): to jest strażnik `dps` WROGÓW, a okno
     // 463–511 wyliczono z pomiaru wrażliwości na `dps` przy tempie 0,25. Odziedziczone
     // tempo znaczyłoby, że strojenie spawnu unieważnia dowód o obrażeniach — zmierzone,
     // gdy Zadanie 3 zeszło na 0,05: ten sam run trwa 971 ticków zamiast 487.
-    const sim = new Sim(createPlanet({ seed: 101 }), { ...DEFAULT_RUN, spawn: GESTY_SPAWN });
+    const sim = new Sim(createPlanet({ seed: 101 }), gestyRun(DEFAULT_RUN));
     let ticks = 0;
     while (sim.state.phase === 'RUNNING' && ticks < PASSIVE_CAP) {
       sim.step();
@@ -54,13 +54,16 @@ describe('pełny run', () => {
     // i więcej w obie strony. NIE ŁAPIE: zmian rzędu ±10 % `dps`, które ruszają run o ~3 %.
     // Seed 101 wybrany świadomie — jest najczulszy: przy ×0,5…×2,0 runy seedów 102 i 103
     // zmieniają się tylko o ~3 %, bo ich długość wyznacza droga i tempo spawnu, nie obrażenia.
-    expect(ticks).toBeGreaterThan(463); // 487 − 5 %
-    expect(ticks).toBeLessThan(511);    // 487 + 5 %
+    // Baza PRZEMIERZONA po wprowadzeniu fazy słońca: 979 ticków (wcześniej 487 przy
+    // naiwnej fazie). Ratios wrażliwości na `dps` wyżej pochodzą z tamtego pomiaru
+    // i opisują KSZTAŁT zależności, nie tę konkretną liczbę — okno ±5 % zostaje.
+    expect(ticks).toBeGreaterThan(930);  // 979 − 5 %
+    expect(ticks).toBeLessThan(1028);    // 979 + 5 %
   });
 
   it('pełen run jest deterministyczny na przestrzeni tysięcy ticków', () => {
     const run = () => {
-      const sim = new Sim(createPlanet({ seed: 102 }), { ...DEFAULT_RUN, spawn: GESTY_SPAWN });
+      const sim = new Sim(createPlanet({ seed: 102 }), gestyRun(DEFAULT_RUN));
       let ticks = 0;
       while (ticks < PASSIVE_CAP && sim.state.phase === 'RUNNING') { sim.step(); ticks++; }
       // Run ma skończyć się FAZĄ, nie limitem — inaczej ten test porównuje dwa uciecia
@@ -121,7 +124,7 @@ describe('pełny run', () => {
  */
 describe('przebieg porównywany testem determinizmu jest bogaty w zdarzenia', () => {
   it('seed 102 rodzi setki jednostek, traci CORE i nalicza rudę za zabójstwa — nie jest martwą pętlą', () => {
-    const sim = new Sim(createPlanet({ seed: 102 }), { ...DEFAULT_RUN, spawn: GESTY_SPAWN });
+    const sim = new Sim(createPlanet({ seed: 102 }), gestyRun(DEFAULT_RUN));
     const core = sim.state.planet.startCell;
     const startOre = sim.state.ore;
 
@@ -133,11 +136,13 @@ describe('przebieg porównywany testem determinizmu jest bogaty w zdarzenia', ()
       if (sim.state.units.length > peakUnits) peakUnits = sim.state.units.length;
     }
 
-    // Zmierzone: 144 zrodzonych, szczyt 64 żywych naraz.
-    expect(sim.state.nextUnitId - 1).toBeGreaterThan(100);
+    // PRZEMIERZONE po wprowadzeniu fazy słońca: 66 zrodzonych, szczyt 56 żywych naraz
+    // (wcześniej 144 i 64). Spadek jest skutkiem startu przy oświetlonych pentagonach —
+    // te w świetle nie spawnują wcale (D1). Przebieg dalej jest oblężeniem, nie pustką.
+    expect(sim.state.nextUnitId - 1).toBeGreaterThan(50);
     expect(peakUnits).toBeGreaterThan(40);
     // Ruda rośnie WYŁĄCZNIE z zabójstw: ten run nie ma ani jednego ekstraktora,
-    // bo nie ma ani jednej komendy. Zmierzone: 150 → 310.
+    // bo nie ma ani jednej komendy. PRZEMIERZONE: 150 → 160.
     expect(sim.state.ore).toBeGreaterThan(startOre);
     // Budynek NAPRAWDĘ znika ze stanu, nie tylko schodzi do zera hp.
     expect(sim.state.buildings[core]).toBeNull();
@@ -145,8 +150,8 @@ describe('przebieg porównywany testem determinizmu jest bogaty w zdarzenia', ()
     // Pętla kończy się FAZĄ, nie limitem: `PASSIVE_CAP` (6000) nigdy nie jest osiągane
     // (zmierzone: 1978). Poprzednia wersja tego komentarza mówiła „8000" — zła liczba,
     // skorygowana w przeglądzie gałęzi.
-    expect(ticks).toBeGreaterThan(1000);
-    expect(ticks).toBeLessThan(PASSIVE_CAP);
+    expect(ticks).toBeGreaterThan(500);
+    expect(ticks).toBeLessThan(PASSIVE_CAP); // PRZEMIERZONE: 959
   });
 });
 
@@ -308,12 +313,20 @@ describe('kolejność systemów w step()', () => {
    * właśnie zaktualizował. Zmierzone na seedzie 3 (cała okolica d ≤ 3 komórki startowej
    * jest CIEMNA na ticku 0 — w świetle jednostka porzuca cel i ucieka, więc ogniwo w ogóle
    * by się nie ujawniło): jednostka wypuszczona 3 kroki od CORE zadaje pierwsze obrażenia
-   * na iteracji 36; po zamianie ruchu z walką — na 37, bo atakuje z komórki sprzed kroku.
+   * na iteracji **99**; po zamianie ruchu z walką — na 100, bo atakuje z komórki sprzed kroku.
+   * (Przed wprowadzeniem fazy słońca było to 36/37 — liczba zależy od tego, którą ciemną
+   * komórkę wybierze fikstura, a ta zmienia się razem z fazą. Teza testu jest o RÓŻNICY
+   * jednego ticka, nie o wartości bezwzględnej.)
    */
   it('jednostka atakuje z komórki, do której właśnie weszła — walka widzi ruch z TEGO ticka', () => {
     const planet = createPlanet({ seed: 3 });
     const fromCore = multiSourceDistances(planet.cells.map((c) => c.neighbors), [planet.startCell]);
-    const light0 = lightField(planet, sunDirection(0, DEFAULT_RUN.rotationPeriod));
+    const sim = new Sim(planet, DEFAULT_RUN);
+    // Światło czytane Z SYMULACJI (`sim.sunAt`), nie własnym `sunDirection(0, …)`.
+    // Od czasu, gdy run zaczyna się o świcie, faza ma przesunięcie zależne od planety —
+    // fikstura wybierająca komórkę po naiwnej fazie wskazywałaby ciemną tam, gdzie
+    // symulacja ma jasną, i test oblewałby z powodu, który z jego tezą nie ma nic wspólnego.
+    const light0 = lightField(planet, sim.sunAt(0));
     const core = planet.startCell;
 
     // Przesłanka testu, nie założenie: jednostka musi startować w ciemności.
@@ -322,7 +335,6 @@ describe('kolejność systemów w step()', () => {
       .sort((a, b) => a.id - b.id)[0];
     expect(start, 'brak ciemnej komórki w odległości 3 — jednostka uciekałaby przed światłem').toBeDefined();
 
-    const sim = new Sim(planet, DEFAULT_RUN);
     const fullHp = sim.state.buildings[core]!.hp;
     spawnUnit(sim.state, 'SWARM', start.id);
 
@@ -334,7 +346,7 @@ describe('kolejność systemów w step()', () => {
 
     expect(sim.state.buildings[core]!.hp).toBeLessThan(fullHp);
     // Dokładna liczba, nie „mniej niż 300": po zamianie ruchu z walką wychodzi 37.
-    expect(iteracje).toBe(36);
+    expect(iteracje).toBe(99);
   });
 
   /**
@@ -347,7 +359,11 @@ describe('kolejność systemów w step()', () => {
   it('jednostka gasnąca od słońca zadaje jeszcze swój ostatni cios — spalanie biegnie PO walce', () => {
     const planet = createPlanet({ seed: 7 });
     const sim = new Sim(planet, DEFAULT_RUN);
-    const light0 = lightField(planet, sunDirection(0, DEFAULT_RUN.rotationPeriod));
+    // Światło czytane Z SYMULACJI (`sim.sunAt`), nie własnym `sunDirection(0, …)`.
+    // Od czasu, gdy run zaczyna się o świcie, faza ma przesunięcie zależne od planety —
+    // fikstura wybierająca komórkę po naiwnej fazie wskazywałaby ciemną tam, gdzie
+    // symulacja ma jasną, i test oblewałby z powodu, który z jego tezą nie ma nic wspólnego.
+    const light0 = lightField(planet, sim.sunAt(0));
 
     // Komórka OŚWIETLONA (inaczej ekspozycja nie rośnie i jednostka nie zginie w tym ticku).
     const cell = planet.cells.find((c) => light0[c.id] > 0.5 && c.cellType === 'HEXAGON');
@@ -529,7 +545,7 @@ describe('broniony run dochodzi do ZWYCIĘSTWA', () => {
 
     // Bramka §5.6 NAPRAWDĘ działała w trakcie runu, nie tylko w teście jednostkowym:
     // plan prosi o Evac od pierwszego ticka, a moduł staje dopiero po progu.
-    // Zmierzone po strojeniu Zadania 3: próg 21 600, Evac postawiony na ticku 33 484.
+    // Zmierzone po strojeniu i starcie o świcie: próg 21 600, Evac postawiony na 30 168.
     expect(a.evacBuiltTick).toBeGreaterThanOrEqual(a.sim.state.evacUnlockTick);
     expect(a.sim.cycle).toBeGreaterThanOrEqual(
       Math.ceil(DEFAULT_RUN.cyclesPerRun * DEFAULT_RUN.evacUnlockFraction),
@@ -538,20 +554,21 @@ describe('broniony run dochodzi do ZWYCIĘSTWA', () => {
     // Zwycięstwo WYWALCZONE, nie odczekane w pustce.
     //
     // Liczby PRZEMIERZONE po strojeniu Zadania 3 — ten blok jako jedyny w pliku ma iść
-    // za balansem, bo jego teza brzmi „na DOMYŚLNYM balansie". Zmierzone dziś: 2826
-    // zrodzonych (było 5044), szczyt 212 żywych naraz (481), 145 żywych na końcu (375),
-    // 584 odbudowy muru (2320). Spadek jest o rząd tempa spawnu, nie o klasę przebiegu:
+    // za balansem, bo jego teza brzmi „na DOMYŚLNYM balansie". Zmierzone po strojeniu
+    // i po wprowadzeniu startu o świcie: **2100 zrodzonych** (przed strojeniem 5044),
+    // szczyt 140 żywych naraz (481), 86 żywych na końcu (375), 403 odbudowy muru (2320).
+    // Spadek idzie za tempem spawnu i za tym, że oświetlone pentagony nie spawnują wcale —
     // oblężenie dalej trwa, mur dalej pada i wstaje.
     //
     // **Otwarcie NADAL WYGRYWA** — i to jest tu rzecz najważniejsza, bo rozstrzygnięcie R2
     // planu wymaga, by polityka wprawna była co najmniej tak dobra jak `WINNING_OPENING`,
     // a doc-comment tej kolejki zakazuje osłabiania asercji zamiast wyznaczenia nowej.
-    expect(a.sim.state.nextUnitId - 1).toBeGreaterThan(2000);
-    expect(a.peakUnits).toBeGreaterThan(150);
-    expect(a.sim.state.units.length).toBeGreaterThan(100);
+    expect(a.sim.state.nextUnitId - 1).toBeGreaterThan(1500);
+    expect(a.peakUnits).toBeGreaterThan(100);
+    expect(a.sim.state.units.length).toBeGreaterThan(50);
     // Mur był realnie rozbijany i realnie odbudowywany — bez tego „obrona" mogłaby
     // po prostu stać nietknięta i test nie odróżniłby oblężenia od spokoju.
-    expect(a.rebuilds).toBeGreaterThan(400);
+    expect(a.rebuilds).toBeGreaterThan(300);
     // CORE przeżył — to jest warunek zwycięstwa, nie skutek uboczny.
     expect(a.sim.state.buildings[core]).not.toBeNull();
     // Ewakuacja doszła do końca: ładunek pełny, alarm odliczony do zera.
@@ -597,6 +614,7 @@ describe('zwycięstwo jest osiągalne przez samą pętlę, niezależnie od stroj
       // a przesłanka `sawUnits` wymaga, żeby w ~330 tickach ktokolwiek się urodził.
       // Przy dzisiejszym 0,05 nie rodzi się nikt i zwycięstwo padałoby w pustce.
       spawn: GESTY_SPAWN,
+      sunPhaseAtStart: GESTA_FAZA_SLONCA,
     };
     const sim = new Sim(planet, cfg);
     expect(sim.state.evacUnlockTick).toBe(0); // przesłanka testu, nie założenie
@@ -647,7 +665,7 @@ describe('zwycięstwo jest osiągalne przez samą pętlę, niezależnie od stroj
 describe('kolejność wywołań systemów w źródle step()', () => {
   const KOLEJNOSC = [
     'applyCommand(',        // 1. komendy
-    'sunDirection(',        // 2. oświetlenie
+    'this.sunAt(',          // 2. oświetlenie (przez `sunAt`, bo faza ma przesunięcie)
     'lightField(',
     'updatePower(',         // 3. energia
     'updateEconomy(',       // 4. ekonomia

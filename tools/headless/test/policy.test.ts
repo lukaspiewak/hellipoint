@@ -94,10 +94,10 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
     // eslint-disable-next-line no-console
     console.log(`[PRZYRZĄD] wprawna ${wprawna.length}/5 ${wprawna}, początkująca ${poczatkujaca.length}/5`);
 
-    // Przypięte co do seeda: po strojeniu wygrywa 33 i 303. Sama liczba „2 z 5" byłaby
+    // Przypięte co do seeda: po strojeniu i starcie o świcie wygrywa sam 33. Sama liczba byłaby
     // zielona także wtedy, gdyby wygrywały dwie INNE planety, czyli gdyby polityka
     // przestała być tą samą polityką.
-    expect(wprawna).toEqual([33, 303]);
+    expect(wprawna).toEqual([33]);
     expect(poczatkujaca, 'podłoga: H2 = 0,0 % na 1 000 przebiegów').toEqual([]);
   }, FIVE_RUNS_MS);
 
@@ -116,14 +116,15 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
    * oczekiwane** — przepnij ją razem z resztą strojenia. Gdy przestanie się zgadzać BEZ
    * zmiany balansu, przyrząd się popsuł i pomiary z niego są nieważne.
    */
-  it('1e. seed 33 kończy na ticku 35 483 — liczba przepięta ze strojeniem Zadania 3', () => {
+  it('1e. seed 33 kończy na ticku 32 167 — liczba przepięta ze strojeniem Zadania 3', () => {
     const r = simulateRun(33, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim));
     expect(r.phase).toBe('VICTORY');
-    // 24 133 przy balansie sprzed Zadania 3; 35 483 po nim. Przepięte zgodnie z instrukcją
+    // 24 133 przy balansie sprzed Zadania 3; 35 483 po strojeniu liczb; 32 167 po dołożeniu
+    // startu o świcie (§5.3 — mechanika, nie liczba). Przepięte zgodnie z instrukcją
     // w doc-commencie wyżej — zmiana PO strojeniu jest oczekiwana, BEZ strojenia znaczy
     // zepsuty przyrząd. `fullrun.test.ts` przypina tę samą liczbę z drugiej strony,
     // przez `playPlan`, więc rozjazd polityki z otwarciem oblewa w dwóch miejscach.
-    expect(r.ticks).toBe(35_483);
+    expect(r.ticks).toBe(32_167);
   }, ONE_RUN_MS);
 
   /**

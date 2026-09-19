@@ -1,4 +1,5 @@
 import { DEFAULT_SPAWN, type SpawnConfig } from '../../src/sim/spawning.js';
+import type { RunConfig } from '../../src/sim/rules.js';
 
 /**
  * # Gęsta nastawa spawnu dla FIKSTUR — jedna definicja
@@ -38,3 +39,30 @@ export const GESTY_SPAWN: SpawnConfig = {
   baseRatePerPentagon: 0.25,
   growthPerCycle: 1.35,
 };
+
+/**
+ * Faza słońca dla fikstur — **ćwierć obrotu po świcie**.
+ *
+ * Gra stoi od Zadania 3 na `sunPhaseAtStart: 0` (start o świcie) i ma prawo tam zostać.
+ * Fikstury nie mogą za tym iść z tego samego powodu, co przy tempie spawnu, tylko dobitniej:
+ * przy świcie baza jest oświetlona, wrogowie płoną po drodze i **zwykły przebieg robi się
+ * dwa razy dłuższy** (zmierzone na seedzie 101: 971 → 1832 ticków). Liczby referencyjne
+ * w opisach tych testów przestałyby cokolwiek opisywać.
+ *
+ * 0,25 wybrane tym samym pomiarem, co w `golden-hash.test.ts`: skrajne fazy zostawiają
+ * jedną ścieżkę śmierci martwą (przy świcie wieże nie mają do kogo strzelać, w pełnej nocy
+ * słońce nikogo nie pali), a ćwierć obrotu po świcie trzyma obie wyraźnie dodatnie.
+ */
+export const GESTA_FAZA_SLONCA = 0.25;
+
+/**
+ * Konfiguracja fikstury: zadana baza z PRZYPIĘTYM tempem spawnu i fazą słońca.
+ *
+ * Jedna funkcja, a nie dwie stałe do rozsypania po plikach — **dokładnie dlatego, że za
+ * pierwszym razem przypiąłem tylko tempo**. Faza słońca doszła do `RunConfig` tydzień
+ * później i osiem testów oblało ponownie, bo każde miejsce wołania trzeba było znaleźć
+ * na nowo. Następne pole tej klasy dopisuje się tutaj i nigdzie indziej.
+ */
+export function gestyRun<T extends RunConfig>(base: T): T {
+  return { ...base, sunPhaseAtStart: GESTA_FAZA_SLONCA, spawn: GESTY_SPAWN };
+}

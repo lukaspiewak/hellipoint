@@ -5,7 +5,7 @@ import { stateHash } from '../src/sim/hash.js';
 import { DEFAULT_RUN } from '../src/sim/rules.js';
 import { createState, type SimState } from '../src/sim/state.js';
 import type { Command } from '../src/sim/commands.js';
-import { GESTY_SPAWN } from './support/gestySpawn.js';
+import { GESTA_FAZA_SLONCA, GESTY_SPAWN, gestyRun } from './support/gestySpawn.js';
 
 /**
  * PRZEGLĄD GAŁĘZI, Important #2: „`SimState` NIE jest wznawialną migawką".
@@ -49,7 +49,7 @@ const SEED = 5;
  * fikstura, która idzie za balansem, przestaje opisywać to, co opisywała.
  */
 const CONFIG = {
-  ...DEFAULT_RUN,
+  ...gestyRun(DEFAULT_RUN),
   startingOre: 400,
   spawn: { ...GESTY_SPAWN, disruptorFromCycle: 1, armorFromCycle: 1 },
 };

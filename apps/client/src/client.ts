@@ -8,7 +8,6 @@ import {
 import {
   createPlanet,
   lightFieldInto,
-  sunDirection,
   TICK_SECONDS,
   type Building,
   type EnemyType,
@@ -75,6 +74,15 @@ export interface ClientSim extends CommandQueue {
    * przegranej. Też pole `Sim`, nie `SimState`, i z tego samego powodu co `lastPower`.
    */
   readonly lastCoreDamager: EnemyType | null;
+  /**
+   * Kierunek słońca w danej chwili runu — **jedyna droga renderu do fazy słońca**.
+   *
+   * Nie `sunDirection(t, period)` na własną rękę: od Zadania 3 Fazy 3 run zaczyna się
+   * o świcie komórki startowej, więc faza ma przesunięcie zależne od PLANETY. Dwa
+   * niezależne wywołania rozjechałyby obraz z symulacją po cichu — wrogowie płonący
+   * w cieniu wyglądają jak wynik, nie jak błąd.
+   */
+  sunAt(elapsedSeconds: number): Vec3;
 }
 
 /** Tyle z `PlanetScene`, ile widzi spięcie. */
@@ -298,7 +306,11 @@ export function wireClient(deps: ClientDeps): Client {
       // `simAccumulator` dokłada ułamek ticka jeszcze nierozliczonego, żeby przy 60 Hz
       // słońce szło gładko zamiast przeskakiwać 20 razy na sekundę o 0,1° (0,6 px).
       const renderSeconds = sim.elapsedSeconds + simAccumulator;
-      const sunDir = sunDirection(renderSeconds, run.rotationPeriod);
+      // `sim.sunAt`, a NIE `sunDirection(renderSeconds, period)`: od Zadania 3 Fazy 3 run
+      // zaczyna się o świcie komórki startowej, więc słońce ma przesunięcie fazy zależne
+      // od planety. Własne wywołanie `sunDirection` rysowałoby noc tam, gdzie symulacja
+      // liczy dzień — wrogowie płonęliby w cieniu, a obraz wyglądałby całkiem prawdopodobnie.
+      const sunDir = sim.sunAt(renderSeconds);
       lightFieldInto(planet, sunDir, light);
 
       // Wskazanie przeliczane CO KLATKĘ z ostatniego znanego piksela, nie tylko na

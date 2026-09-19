@@ -138,7 +138,7 @@ describe('złoty hasz determinizmu', () => {
  * Podmiana tej liczby, żeby „testy przeszły", kasuje jedyny strażnik, jaki ta własność ma.
  */
 const GOLDEN_RUN_TICKS = 1200;
-const GOLDEN_RUN_SHA256 = 'b6a638a0f3df21e66122cdc645855b7963437bc297836313ee1ae980a02da22c';
+const GOLDEN_RUN_SHA256 = '8a0345bbb82f65b2a85f76c0027c0f5f544eab545ed57836adefbe965d495b37';
 
 /**
  * Konfiguracja przebiegu — **ZAMROŻONY LITERAŁ, nie `DEFAULT_RUN`**.
@@ -156,6 +156,24 @@ const GOLDEN_RUN_CONFIG: RunConfig = {
   // jest dokładne, więc TRAJEKTORIA nie ma prawa drgnąć — i to jest kontrola pozytywna
   // tej zmiany. Rusza się wyłącznie ODCISK, bo literał zyskał pole.
   killRewardScale: 1,
+  /**
+   * Ćwierć obrotu po świcie — **wybrane pomiarem, nie domyślne**.
+   *
+   * W odróżnieniu od `killRewardScale: 1` to nie jest tożsamość: symulacja liczy teraz
+   * słońce z przesunięciem względem świtu komórki startowej, więc trajektoria tego
+   * przebiegu MUSIAŁA się zmienić i została przepięta razem z odciskiem. Zmiana silnika,
+   * zamierzona i jednorazowa.
+   *
+   * Dlaczego akurat 0,25, a nie 0 (nastawa gry): przy świcie ten scenariusz przestaje
+   * ćwiczyć wieże. Zmierzone na 1200 tickach, zabójstwa wieże/słońce przy kolejnych fazach:
+   * 0 → **0/53**, 0,125 → 6/34, **0,25 → 46/10**, 0,375 → 60/2, 0,5 → 71/**0**,
+   * 0,75 → 49/5, 0,875 → 16/43. Skrajne fazy zostawiają JEDNĄ ścieżkę śmierci martwą,
+   * a trajektoria ma strzec obu. 0,25 jest jedyną wartością z obiema wyraźnie dodatnimi.
+   *
+   * To także powód, dla którego `GOLDEN_RUN_CONFIG` nie idzie za `DEFAULT_RUN`: gra stoi
+   * dziś na świcie i ma prawo tam zostać, a ten scenariusz ma ćwiczyć silnik, nie balans.
+   */
+  sunPhaseAtStart: 0.25,
   cyclesPerRun: 10,
   evacUnlockFraction: 0.67,
   evacEnergyRequired: 1000,
@@ -195,7 +213,7 @@ const GOLDEN_RUN_CONFIG: RunConfig = {
  * Przestawienie pól bez zmiany wartości zgłosi „balans się zmienił" — kierunek zachowawczy
  * (każe spojrzeć), nie przeoczenie.
  */
-const GOLDEN_BALANCE_SHA256 = 'e96b22cc1dfde36e6903e4659d1b33f444d980d2712fd780547227a928adbf1e';
+const GOLDEN_BALANCE_SHA256 = '750307ed5f9ad1532fd526c448bc1804fba1c31029a343071223215a5fd63ec4';
 
 function balanceFingerprint(): string {
   return createHash('sha256')
@@ -296,6 +314,10 @@ describe('złoty hasz TRAJEKTORII', () => {
     }
     for (let t = 0; t < GOLDEN_RUN_TICKS; t++) sim.step();
     expect(sim.state.killsByTurret, 'wieże muszą realnie strzelać').toBeGreaterThan(20);
+    // Dodane po wprowadzeniu fazy słońca: bez tego scenariusz z CORE w pełnej nocy
+    // przechodziłby z ZEREM zgonów od ekspozycji, a trajektoria przestałaby strzec
+    // `updateBurning`. Zmierzone przy fazie 0,5: 71 zgonów od wież i dokładnie 0 od słońca.
+    expect(sim.state.killsBySun, 'słońce musi realnie palić').toBeGreaterThan(0);
     expect(sim.state.nextUnitId - 1, 'fale muszą realnie spawnować').toBeGreaterThan(50);
   });
 });

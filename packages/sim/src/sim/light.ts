@@ -103,3 +103,52 @@ export function lightFieldInto(planet: Planet, sunDir: Vec3, out: Float32Array):
     out[i] = lightAt(planet.cells[i].normal, sunDir);
   }
 }
+
+/**
+ * Moment, w którym komórka startowa WCHODZI w światło — w sekundach od fazy zerowej.
+ *
+ * ## Po co
+ *
+ * Faza słońca na starcie runu **różni się planeta od planety, i to przypadkiem**. Zmierzone
+ * przy `rotationPeriod = 180`: seed 7 zaczyna w pełnym świetle (0,75 i gasnące), seed 101
+ * ma przed sobą 90 sekund ciemności, seed 33 startuje dokładnie o świcie. To jest ogromna
+ * niekontrolowana wariancja trudności, wbudowana w grę przez sam sposób generowania planety.
+ *
+ * Ta funkcja pozwala ją znormalizować: `RunConfig.sunPhaseAtStart` liczy się WZGLĘDEM świtu,
+ * więc ta sama liczba znaczy to samo na każdej planecie.
+ *
+ * ## Postać zamknięta, nie próbkowanie
+ *
+ * `sunDirection` daje `(cos θ, 0, sin θ)`, więc oświetlenie komórki o normalnej `n` wynosi
+ * `saturate(nx·cos θ + nz·sin θ)` = `saturate(R·cos(θ − φ))`, gdzie `R = √(nx² + nz²)`
+ * i `φ = atan2(nz, nx)`. Światło jest dodatnie dokładnie dla `θ ∈ (φ − π/2, φ + π/2)`,
+ * więc **świt to `θ = φ − π/2`**, a stąd `t = P·(φ − π/2)/(2π)`.
+ *
+ * Próbkowanie dałoby ten sam wynik z dokładnością do kroku próbki — a CLAUDE.md §2 mówi
+ * wprost, że próbkowanie łapie wyłącznie to, co trwa dłużej niż odstęp między próbkami.
+ * Tutaj nie ma powodu na nie schodzić. Test wiąże tę postać z gęstym próbkowaniem.
+ *
+ * @throws {RangeError} gdy komórka startowa leży na biegunie osi obrotu — jej normalna
+ *   jest wtedy prostopadła do płaszczyzny ruchu słońca, komórka NIGDY nie jest oświetlona
+ *   i świt dla niej nie istnieje. Cicha zamiana na zero dałaby „świt", którego nie ma.
+ */
+export function dawnOffsetSeconds(
+  normal: Vec3,
+  rotationPeriod: number,
+): number {
+  if (!Number.isFinite(rotationPeriod) || rotationPeriod <= 0) {
+    throw new RangeError(`rotationPeriod must be positive and finite, got ${rotationPeriod}`);
+  }
+  const r = Math.hypot(normal.x, normal.z);
+  if (r === 0) {
+    throw new RangeError(
+      'dawnOffsetSeconds: komórka leży na biegunie osi obrotu (normalna ⟂ do płaszczyzny ' +
+        'ruchu słońca) — nigdy nie jest oświetlona, więc świt dla niej nie istnieje.',
+    );
+  }
+  const phi = Math.atan2(normal.z, normal.x);
+  const theta = phi - Math.PI / 2;
+  const t = (theta * rotationPeriod) / (2 * Math.PI);
+  // Do [0, P): faza jest okresowa, a ujemne przesunięcie czytałoby się jak „przed startem".
+  return ((t % rotationPeriod) + rotationPeriod) % rotationPeriod;
+}

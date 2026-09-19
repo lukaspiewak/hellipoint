@@ -57,6 +57,19 @@ export const AXES = {
     unit: '× fala na cykl',
     apply: (base, value) => ({ ...base, spawn: { ...base.spawn, growthPerCycle: value } }),
   },
+  /**
+   * Faza słońca na starcie runu, względem ŚWITU komórki startowej (ułamek obrotu).
+   *
+   * Nie jest to pokrętło trudności w tym samym sensie, co pozostałe: 0 daje graczowi
+   * okno, w którym słońce broni za niego, 0,5 wypuszcza go w pełną noc. Zadanie 3
+   * zmierzyło, że H4 nie rusza się od żadnej liczby balansowej, więc to jest oś,
+   * która ma szansę ruszyć podłogę — i dlatego musi dać się przemiatać.
+   */
+  sunPhaseAtStart: {
+    name: 'sunPhaseAtStart',
+    unit: 'obrotu po świcie',
+    apply: (base, value) => ({ ...base, sunPhaseAtStart: value }),
+  },
   /** Krzywa eskalacji — punkt wyjścia, zanim wzrost cokolwiek pomnoży. */
   baseRatePerPentagon: {
     name: 'baseRatePerPentagon',

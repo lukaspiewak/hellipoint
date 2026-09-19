@@ -24,7 +24,7 @@ export { BUILDINGS, BROWNOUT_ORDER, ENEMIES, evaluateEnergyOutput } from './sim/
 export type { BuildingDef, EnemyDef, EnergyOutput } from './sim/defs.js';
 export { applyCommand, canBuild } from './sim/commands.js';
 export type { BuildCheck, BuildRefusalReason, Command } from './sim/commands.js';
-export { lightAt, lightField, lightFieldInto, sunDirection } from './sim/light.js';
+export { dawnOffsetSeconds, lightAt, lightField, lightFieldInto, sunDirection } from './sim/light.js';
 export { connectedToCore } from './sim/network.js';
 export { OUTAGE_NONE, OUTAGE_SHED, OUTAGE_UNLINKED, updatePower } from './sim/power.js';
 export type { PowerReport } from './sim/power.js';

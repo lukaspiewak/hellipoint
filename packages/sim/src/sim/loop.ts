@@ -6,7 +6,7 @@ import { applyCommand, type Command } from './commands.js';
 import { BUILDINGS } from './defs.js';
 import { updateEconomy } from './economy.js';
 import { buildAllFlowFields } from './flowfield.js';
-import { lightField, sunDirection } from './light.js';
+import { dawnOffsetSeconds, lightField, sunDirection } from './light.js';
 import type { MotionContext } from './movement.js';
 import {
   minRotationPeriod,
@@ -24,6 +24,7 @@ import {
   type EnemyType,
   type SimState,
 } from './state.js';
+import type { Vec3 } from '../math/vec3.js';
 
 /** [STROJENIE] Co ile ticków przeliczane są pola przepływu. 4 ticki = 5 Hz (§4.5). */
 export const FLOWFIELD_INTERVAL_TICKS = 4;
@@ -267,6 +268,11 @@ export class Sim {
     // wywala się głośno: `NaN` rozlewa się po rudzie i `canBuild` zaczyna po cichu
     // odmawiać wszystkiego, a run kończy się porażką wyglądającą na balansową. Faza 3
     // buduje te konfiguracje programowo dla tysięcy przebiegów.
+    if (!Number.isFinite(config.sunPhaseAtStart)) {
+      throw new RangeError(
+        `RunConfig.sunPhaseAtStart must be finite, got ${config.sunPhaseAtStart}`,
+      );
+    }
     if (!Number.isFinite(config.killRewardScale) || config.killRewardScale < 0) {
       throw new RangeError(
         `RunConfig.killRewardScale must be finite and non-negative, got ${config.killRewardScale}`,
@@ -367,6 +373,12 @@ export class Sim {
     }
     this.s.evacUnlockTick = unlockTick;
 
+    // Przesunięcie fazy słońca: świt komórki startowej + żądana faza z konfiguracji.
+    // Liczone RAZ — zależy tylko od normalnej komórki i okresu, więc co tick byłoby stratą.
+    this.sunOffsetSeconds =
+      dawnOffsetSeconds(planet.cells[planet.startCell].normal, config.rotationPeriod) +
+      config.sunPhaseAtStart * config.rotationPeriod;
+
     // CORE na komórce startowej: punkt wyjścia runu, nie decyzja gracza — więc bez kosztu
     // i WPROST do stanu, nie przez `applyCommand`. `canBuild` odrzuca CORE niezależnie od
     // komórki (`playerBuildable: false`), bo inaczej gracz mnożyłby go za darmo — zmierzone
@@ -418,6 +430,26 @@ export class Sim {
    */
   get lastCoreDamager(): EnemyType | null { return this.coreDamager; }
   get elapsedSeconds(): number { return this.s.tick * TICK_SECONDS; }
+
+  /**
+   * Przesunięcie fazy słońca dla TEGO runu na TEJ planecie, w sekundach.
+   *
+   * Liczone raz, w konstruktorze — `dawnOffsetSeconds` zależy wyłącznie od normalnej komórki
+   * startowej i okresu obrotu, więc przeliczanie go co tick byłoby czystą stratą. Publiczne,
+   * bo render MUSI używać tej samej liczby: słońce narysowane w innej fazie niż policzone
+   * dałoby wrogów płonących w cieniu — wynik prawdopodobnie wyglądający, nie błąd.
+   */
+  readonly sunOffsetSeconds: number;
+
+  /**
+   * Kierunek słońca w danej chwili runu. **Jedyna droga do fazy słońca poza symulacją.**
+   *
+   * Render woła to zamiast `sunDirection(t, period)`, bo tamto nie zna przesunięcia.
+   * Jedna formuła, jedno miejsce — inaczej obraz i symulacja rozjeżdżają się po cichu.
+   */
+  sunAt(elapsedSeconds: number): Vec3 {
+    return sunDirection(elapsedSeconds + this.sunOffsetSeconds, this.config.rotationPeriod);
+  }
   get cycle(): number { return currentCycle(this.elapsedSeconds, this.config.rotationPeriod); }
 
   enqueue(cmd: Command): void { this.pending.push(cmd); }
@@ -468,7 +500,7 @@ export class Sim {
     this.pending.length = 0;
 
     // 2. Oświetlenie — liczone raz i podawane pozostałym systemom.
-    const sun = sunDirection(this.elapsedSeconds, this.config.rotationPeriod);
+    const sun = this.sunAt(this.elapsedSeconds);
     const light = lightField(this.s.planet, sun);
 
     // 3. Energia — musi być przed ekonomią i walką, bo ustawia flagi `powered`.
