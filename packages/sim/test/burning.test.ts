@@ -171,7 +171,7 @@ describe('updateBurning', () => {
     for (let t = 0; t < maxTicks && s.units.length > 0; t++) {
       const sun = sunDirection(t * TICK_SECONDS, T);
       const light = lightField(planet, sun);
-      updateMovement(s, fields, light, sun, ctx);
+      updateMovement(s, fields, light, sun, ctx, 0);
       updateBurning(s, light, 1);
 
       if (s.units.length > 0) {
@@ -240,7 +240,7 @@ describe('updateBurning', () => {
     for (let t = 0; t < maxTicks && s.units.length > 0; t++) {
       const sun = sunDirection(t * TICK_SECONDS, T);
       const light = lightField(planet, sun);
-      updateMovement(s, fields, light, sun, ctx);
+      updateMovement(s, fields, light, sun, ctx, 0);
       updateBurning(s, light, 1);
     }
 

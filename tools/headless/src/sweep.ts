@@ -70,6 +70,19 @@ export const AXES = {
     unit: 'obrotu po świcie',
     apply: (base, value) => ({ ...base, sunPhaseAtStart: value }),
   },
+  /**
+   * Przepuszczalność światła — 0 to ściana, wartości dodatnie wpuszczają wrogów w światło
+   * na głębokość zależną od `burnTime` (pas śmierci §4.4).
+   *
+   * Oś istnieje, bo włączenie tej mechaniki wymaga PRZESTROJENIA CAŁEGO balansu, nie samego
+   * pokrętła: zmierzone H1 przy 0,5 / 0,7 / 0,85 / 1,0 to 4,2 / 4,2 / 0,8 / 5,8 % wobec
+   * 32,2 % przy ścianie. Bez tej osi to przestrojenie trzeba by robić ręcznie.
+   */
+  lightPermeability: {
+    name: 'lightPermeability',
+    unit: 'ułamka burnTime do zawrotu',
+    apply: (base, value) => ({ ...base, lightPermeability: value }),
+  },
   /** Krzywa eskalacji — punkt wyjścia, zanim wzrost cokolwiek pomnoży. */
   baseRatePerPentagon: {
     name: 'baseRatePerPentagon',

@@ -268,6 +268,11 @@ export class Sim {
     // wywala się głośno: `NaN` rozlewa się po rudzie i `canBuild` zaczyna po cichu
     // odmawiać wszystkiego, a run kończy się porażką wyglądającą na balansową. Faza 3
     // buduje te konfiguracje programowo dla tysięcy przebiegów.
+    if (!Number.isFinite(config.lightPermeability) || config.lightPermeability < 0) {
+      throw new RangeError(
+        `RunConfig.lightPermeability must be finite and non-negative, got ${config.lightPermeability}`,
+      );
+    }
     if (!Number.isFinite(config.sunPhaseAtStart)) {
       throw new RangeError(
         `RunConfig.sunPhaseAtStart must be finite, got ${config.sunPhaseAtStart}`,
@@ -523,7 +528,7 @@ export class Sim {
     const fields = this.fields;
 
     // 6. Ruch.
-    updateMovement(this.s, fields, light, sun, this.motion);
+    updateMovement(this.s, fields, light, sun, this.motion, this.config.lightPermeability);
 
     // 7. Walka — po ruchu, bo jednostka atakuje z komórki, do której właśnie weszła.
     // Sprawca zapamiętywany tylko wtedy, gdy w TYM ticku ktoś w CORE uderzył — inaczej

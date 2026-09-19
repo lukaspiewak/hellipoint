@@ -72,6 +72,35 @@ export interface RunConfig {
    */
   sunPhaseAtStart: number;
   /**
+   * [STROJENIE] PRZEPUSZCZALNOŚĆ ŚWIATŁA — ułamek `burnTime`, po którym wróg stojący
+   * w świetle jest już całkowicie zawrócony. **Zero znaczy ŚCIANA.**
+   *
+   * ## Skąd się wzięła i dlaczego domyślnie jest zerem
+   *
+   * Gracz w sesji 1 testów zgłosił, że wrogowie „odbijają się od granicy noc/dzień".
+   * Zmierzone: głębokość wejścia w światło **zawsze dokładnie 1 krok**, przez 20 000 ticków
+   * ani razu głębiej. Spec §4.4 obiecuje co innego — PAS ŚMIERCI `D = burnTime · (v − v_term)`,
+   * czyli światło jako RYZYKO, nie granicę nie do przejścia.
+   *
+   * Mechanika jest zaimplementowana: kierunek marszu miesza cel z ucieczką proporcjonalnie
+   * do poparzenia (`kierunekMarszu` w `movement.ts`), więc wróg wchodzi w światło, dopóki
+   * go nie piecze, i zawraca płynnie. Działa: głębokość rośnie z 1 na 2 kroki, a odsetek
+   * ticków ze zwrotem ostrzejszym niż 90° spada z 21,85 % na 1,85 %.
+   *
+   * **Ale ściana okazała się nośna.** Włączenie tej mechaniki zmienia balans o rząd
+   * wielkości: zmierzone H1 spada z 32,2 na **4,2 %**, a udział zabójstw słońca z 35,0
+   * na **11,6 %** — bo mieszanie po poparzeniu czyni wrogów optymalnymi zarządcami
+   * oparzenia: wchodzą, przypiekają się, cofają, regenerują w cieniu i wracają.
+   * Przemiatanie samego pokrętła tego nie ratuje: 0,5 / 0,7 / 0,85 / 1,0 dają H1
+   * kolejno 4,2 / 4,2 / 0,8 / 5,8 %.
+   *
+   * Zero zostaje więc **decyzją zmierzoną, nie zaniechaniem**: włączenie pasa śmierci
+   * wymaga PRZESTROJENIA CAŁEGO balansu (nagrody, tempo spawnu), a to jest osobna robota
+   * i osobna decyzja. Oś `lightPermeability` istnieje w `AXES`, więc da się ją przemieść
+   * razem z resztą, gdy ta decyzja zapadnie.
+   */
+  lightPermeability: number;
+  /**
    * PUNKT ODNIESIENIA DLA PROGU EWAKUACJI, **NIE** DŁUGOŚĆ RUNU. Nazwa sugeruje limit
    * czasu — takiego nie ma i mieć nie powinno: §5.6 zna dokładnie dwa warunki końca,
    * zwycięstwo przez ewakuację i porażkę przez utratę Core. Run, w którym gracz się nie
@@ -130,6 +159,8 @@ export const DEFAULT_RUN: RunConfig = {
    * `RunConfig` wyżej.
    */
   sunPhaseAtStart: 0.75,
+  /** [STROJENIE] Zero = ściana — jedyne źródło tej liczby. Uzasadnienie w `RunConfig` wyżej. */
+  lightPermeability: 0,
   cyclesPerRun: 10,       // 10 × 180 s = 30 min, zgodnie z D4
   evacUnlockFraction: 0.67,
   evacEnergyRequired: 1000,

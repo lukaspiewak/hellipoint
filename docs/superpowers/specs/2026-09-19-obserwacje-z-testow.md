@@ -106,9 +106,47 @@ a nie interpolacją w kliencie.
 
 | | stan | uwaga |
 |---|---|---|
-| **O1** przepuszczalność światła | **odłożone** | decyzja właściciela o filarze |
+| **O1** przepuszczalność światła | **zaimplementowane, WYŁĄCZONE** | mechanika gotowa, włączenie wymaga przestrojenia |
 | **O2** odstęp w ataku | **naprawione** (`ee9f374`) | 1,37 → 0,51 rozstawu |
-| **O3** wygładzenie ruchu | **odłożone świadomie** | patrz niżej |
+| **O3** wygładzenie ruchu | **naprawione warunkowo** | działa razem z O1 |
+
+### Czwarta droga: zaimplementowana, zmierzona, domyślnie wyłączona
+
+Mieszanie kierunku proporcjonalnie do `Unit.exposure` **działa i robi dokładnie to, co
+obiecywało**:
+
+| | przed | po |
+|---|---|---|
+| głębokość wejścia w światło | 1 krok | **2 kroki** |
+| wejść w światło (próbki co 20 ticków) | 61 | **265** |
+| ticków ze zwrotem ostrzejszym niż 90° | 21,85 % | **1,85 %** |
+| p90 zwrotu na tick | 175,6° | **28,1°** |
+
+Drugie dwa wiersze to naprawa O3 — jedna zmiana odpowiada na oba zgłoszenia gracza.
+
+**Ale ściana okazała się nośna, i to jest wynik dnia:**
+
+| | przed | po |
+|---|---|---|
+| H1 (sufit) | 32,2 % | **4,2 %** |
+| udział zabójstw słońca | 35,0 % | **11,6 %** |
+
+Powód jest strukturalny: mieszanie po poparzeniu czyni wrogów **optymalnymi zarządcami
+oparzenia** — wchodzą, przypiekają się, cofają, regenerują w cieniu i wracają. Słońce
+przestaje być barierą, a odpowiadało za **jedną trzecią wszystkich zabójstw**.
+
+Przemiatanie własnego pokrętła mechaniki tego nie ratuje — H1 przy progu 0,5 / 0,7 / 0,85 /
+1,0 wynosi 4,2 / 4,2 / 0,8 / 5,8 %. **Włączenie pasa śmierci wymaga przestrojenia całego
+balansu**, nie samego pokrętła.
+
+Stąd `RunConfig.lightPermeability`, domyślnie **0 = ściana**, dodane do `AXES` jako oś
+przemiatania. Mechanika jest zaimplementowana, związana testami i mierzalna normalnym
+przyrządem; gra zachowuje dzisiejszy balans do czasu decyzji. Przy zerze zachowanie jest
+odtworzone **co do bitu** — złota trajektoria wróciła do wartości sprzed zmiany.
+
+**Do decyzji:** czy płacimy pełne przestrojenie za pas śmierci. Argument za: §4.4 obiecuje
+go od początku, a dzień/noc przestaje być immunitetem. Argument przeciw: przestrojenie
+trzeba zrobić przed serią testów, a nie w jej trakcie — a serii jeszcze nie zaczęliśmy.
 
 ### Dlaczego O3 czeka na O1, a nie odwrotnie
 

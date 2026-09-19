@@ -174,6 +174,9 @@ const GOLDEN_RUN_CONFIG: RunConfig = {
    * dziś na świcie i ma prawo tam zostać, a ten scenariusz ma ćwiczyć silnik, nie balans.
    */
   sunPhaseAtStart: 0.25,
+  // Zero = ściana, czyli zachowanie sprzed mechaniki pasa śmierci. Zamrożone tutaj celowo:
+  // gdy gra kiedyś tę mechanikę włączy, ten scenariusz ma dalej ćwiczyć to, co ćwiczył.
+  lightPermeability: 0,
   cyclesPerRun: 10,
   evacUnlockFraction: 0.67,
   evacEnergyRequired: 1000,
@@ -213,7 +216,7 @@ const GOLDEN_RUN_CONFIG: RunConfig = {
  * Przestawienie pól bez zmiany wartości zgłosi „balans się zmienił" — kierunek zachowawczy
  * (każe spojrzeć), nie przeoczenie.
  */
-const GOLDEN_BALANCE_SHA256 = '2ad9822ce8fbdbb936fe61453ad8e509bf9aa593370b3122a0fcc59a769fd496';
+const GOLDEN_BALANCE_SHA256 = 'd19faf5a0034794e3453e94f281ebd51d1efda47e5f9ee431f5a12a2c7bf536c';
 
 function balanceFingerprint(): string {
   return createHash('sha256')
