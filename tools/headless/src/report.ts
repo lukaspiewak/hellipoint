@@ -51,7 +51,17 @@ export function formatReport(results: RunResult[]): string {
     lines.push('!!! Rozkłady porażki niżej opisują wyłącznie runy zakończone, więc są NIEPEŁNE.');
     lines.push('');
   }
+  // To samo dla KONFIGURACJI: Zadanie 3 przemiata nastawy, a partia z dwóch nastaw nie
+  // opisuje żadnej z nich — dokładnie tak samo jak partia z dwóch polityk (Z5).
+  const configs = [...new Set(results.map((r) => r.configFingerprint))].sort();
+  if (configs.length > 1) {
+    lines.push(`!!! UWAGA: ta partia MIESZA ${configs.length} konfiguracje (${configs.join(', ')}).`);
+    lines.push('!!! Rozkłady poniżej nie opisują żadnej z nich. Rozdziel partie.');
+    lines.push('');
+  }
+
   if (policies.length === 1) lines.push(`polityka: ${policies[0]}`);
+  if (configs.length === 1) lines.push(`konfiguracja: ${configs[0]}`);
   lines.push(`runów: ${n}`);
   lines.push(`  zwycięstw: ${wins} (${pct(wins / n)})`);
   lines.push(`  porażek:   ${defeats.length} (${pct(defeats.length / n)})`);

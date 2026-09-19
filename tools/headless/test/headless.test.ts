@@ -205,12 +205,18 @@ describe('formatReport — rozróżnienie „przegrał" od „skończył się bu
 
     const text = formatReport(done);
     expect(text).not.toContain('UWAGA');
-    // Pierwsza linia czystego raportu to od Fazy 3 NAZWA POLITYKI, a `runów:` zaraz pod nią.
-    // Kolejność jest kontraktem: ostrzeżenia (gdy są) — kontekst — liczby. Bez nazwy
-    // polityki dwa raporty z dwóch botów są nierozróżnialne (§11.1).
-    const [pierwsza, druga] = text.split('\n');
-    expect(pierwsza).toBe('polityka: beginner');
-    expect(druga).toBe('runów: 5');
+    // KOLEJNOŚĆ jest kontraktem tego raportu: ostrzeżenia (gdy są) — kontekst — liczby.
+    // Wiązana jest kolejność, a NIE numer linii: pierwsza wersja tego testu przypinała
+    // `text.split('\n')[0]`, więc każdy nowy wiersz kontekstu ją łamał — najpierw nazwa
+    // polityki, potem odcisk konfiguracji. Test pilnował wtedy kształtu, nie umowy.
+    const lines = text.split('\n');
+    const at = (prefix: string): number => lines.findIndex((l) => l.startsWith(prefix));
+    expect(at('polityka: '), 'nazwa polityki jest w raporcie').toBeGreaterThanOrEqual(0);
+    expect(at('konfiguracja: '), 'odcisk konfiguracji jest w raporcie').toBeGreaterThanOrEqual(0);
+    expect(at('runów: '), 'liczby idą PO kontekście').toBeGreaterThan(at('polityka: '));
+    expect(at('runów: ')).toBeGreaterThan(at('konfiguracja: '));
+    expect(lines[at('polityka: ')]).toBe('polityka: beginner');
+    expect(lines[at('runów: ')]).toBe('runów: 5');
     expect(text).toContain('porażek:   5 (100.0%)');
     expect(text).toContain('obciętych: 0 (0.0%)');
     expect(text).toContain('zwycięstw: 0 (0.0%)');

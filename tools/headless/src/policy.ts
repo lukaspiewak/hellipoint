@@ -45,6 +45,24 @@ const EXTRACTOR_EXEMPT_FROM_RESERVE = false;
  */
 export interface Policy {
   readonly name: string;
+  /**
+   * Co ile ticków wolno tej polityce podjąć decyzję.
+   *
+   * **Należy do POLITYKI, nie do runnera** — i to jest naprawa znaleziska Z1 z przeglądu
+   * Zadania 1. Odstęp siedział w `simulateRun` jako jedna stała dla wszystkich i **obcinał
+   * sufit o połowę**: zmierzone na pięciu seedach, `SkilledPolicy` wygrywa **5 z 5** przy
+   * odstępie 1 i **2 z 5** przy 20. Na 23 grywalnych seedach: 78 % wobec 39 %.
+   *
+   * Dowód, że odstęp 1 jest tu właściwy, a nie po prostu łaskawszy: przy nim seed 33 kończy
+   * na ticku **24 133** — co do ticka liczba referencyjna z §11.1 specu, wyznaczona przez
+   * `playPlan`, które decyduje w KAŻDYM ticku. Przy odstępie 20 wychodzi 24 340, czyli
+   * `SkilledPolicy` NIE BYŁA „co najmniej tak dobra jak `WINNING_OPENING`", jak wymaga
+   * rozstrzygnięcie R2 planu.
+   *
+   * Gdyby to zostało, H1 zmierzone na tym przyrządzie pokazałoby dziś **39 % („zdrowo")
+   * zamiast 78 % („przechodzi się samo")** — i całe strojenie Fazy 3 celowałoby w zły punkt.
+   */
+  readonly decisionIntervalTicks: number;
   decide(): Command[];
 }
 
@@ -75,6 +93,14 @@ export type PolicyFactory = (sim: Sim) => Policy;
  */
 export class BeginnerPolicy implements Policy {
   readonly name = 'beginner';
+
+  /**
+   * `[STROJENIE]` Bot początkujący decyduje RAZ NA SEKUNDĘ, nie co tick — inaczej stawiałby
+   * budynki szybciej, niż zarabia. To jest pokrętło JEGO zachowania i część tego, co znaczy
+   * „rozsądny początkujący"; zostaje nietknięte, żeby wszystkie dotychczasowe pomiary
+   * (raport z 1000 runów, §11.1) dalej znaczyły to samo.
+   */
+  readonly decisionIntervalTicks = 20;
 
   constructor(private readonly sim: Sim) {}
 

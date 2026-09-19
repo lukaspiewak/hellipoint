@@ -6,6 +6,7 @@ import {
   type Phase,
   type RunConfig,
 } from '@heliopolis/sim';
+import { createHash } from 'node:crypto';
 import { BeginnerPolicy, type PolicyFactory } from './policy.js';
 import { formatReport } from './report.js';
 
@@ -34,14 +35,38 @@ export interface RunResult {
    * powstała na słabszej polityce i jej progi bezwzględne nie są wiążące.
    */
   policy: string;
+  /**
+   * Odcisk `RunConfig`, na którym ten przebieg powstał (Faza 3, naprawa Z5).
+   *
+   * Raport krzyczał na mieszanie POLITYK, a był ślepy na mieszanie KONFIGURACJI — i to
+   * mimo że Zadanie 3 polega właśnie na przemiataniu konfiguracji. Partia z dwóch różnych
+   * `startingOre` dawała spokojny raport bez jednego słowa ostrzeżenia, a jej rozkłady
+   * nie opisywały żadnej z tych dwóch nastaw.
+   *
+   * Odcisk, nie cała konfiguracja: do raportu trafia osiem znaków, a nie osiemnaście pól.
+   * Do NAZWANIA nastawy służy etykieta partii, którą nadaje przemiatanie — odcisk ma
+   * wyłącznie wykrywać, że w jednej partii są dwie.
+   */
+  configFingerprint: string;
 }
 
 /**
- * [STROJENIE] Bot podejmuje decyzję co sekundę, nie co tick — inaczej stawiałby budynki
- * szybciej, niż zarabia. 20 ticków = 1 s przy `TICK_SECONDS = 0,05`; sam ODSTĘP jest
- * pokrętłem zachowania bota (Faza 3 może go zmienić), nie stałą wynikającą z czegokolwiek.
+ * Osiem znaków odcisku `RunConfig` — tyle, żeby dwie różne nastawy w jednej partii rzucały
+ * się w oczy, i za mało, żeby ktoś próbował z tego odczytać samą nastawę.
+ *
+ * `JSON.stringify` zależy od kolejności pól, więc przestawienie ich w `DEFAULT_RUN` zgłosi
+ * „inna konfiguracja" bez zmiany wartości. Kierunek zachowawczy: każe spojrzeć.
  */
-const DECISION_INTERVAL_TICKS = 20;
+export function configFingerprint(cfg: RunConfig): string {
+  return createHash('sha256').update(JSON.stringify(cfg)).digest('hex').slice(0, 8);
+}
+
+/**
+ * Odstęp decyzji NIE jest już stałą tego pliku — czyta się go z polityki
+ * (`Policy.decisionIntervalTicks`). Przegląd Zadania 1 Fazy 3 (Z1) zmierzył, ile kosztowała
+ * jedna wspólna wartość: `SkilledPolicy` dławiona odstępem 20 wygrywała 39 % grywalnych
+ * seedów zamiast 78 %, czyli przyrząd zaniżał sufit o połowę.
+ */
 
 /**
  * Jeden przebieg.
@@ -66,7 +91,7 @@ export function simulateRun(
   let ticks = 0;
 
   while (sim.state.phase === 'RUNNING' && ticks < maxTicks) {
-    if (ticks % DECISION_INTERVAL_TICKS === 0) {
+    if (ticks % policy.decisionIntervalTicks === 0) {
       for (const cmd of policy.decide()) sim.enqueue(cmd);
     }
 
@@ -103,6 +128,7 @@ export function simulateRun(
     firstDepletionTick,
     coreDamager: sim.lastCoreDamager,
     policy: policy.name,
+    configFingerprint: configFingerprint(cfg),
   };
 }
 

@@ -9,6 +9,7 @@ import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
 import { ORE_PER_SECOND } from '../src/sim/economy.js';
 import { lightField, sunDirection } from '../src/sim/light.js';
 import { spawnUnit } from '../src/sim/movement.js';
+import { WINNING_OPENING, type Pool } from './support/openings.js';
 import { TICK_SECONDS, type BuildingType } from '../src/sim/state.js';
 import type { Command } from '../src/sim/commands.js';
 
@@ -390,7 +391,6 @@ describe('kolejność systemów w step()', () => {
  *
  * `hexK` — zwykłe heksy bez rudy w odległości K kroków grafu od komórki startowej.
  */
-type Pool = 'hex1' | 'hex2' | 'hex3' | 'hex4';
 
 function pickCells(planet: Planet, spec: ReadonlyArray<readonly [Pool, BuildingType]>) {
   const fromCore = multiSourceDistances(planet.cells.map((c) => c.neighbors), [planet.startCell]);
@@ -494,17 +494,8 @@ const times = <T,>(n: number, v: T): T[] => Array.from({ length: n }, () => v);
  * tylko sygnał, że przy nowych liczbach to konkretne otwarcie przestało wygrywać.
  * Wtedy trzeba wyprowadzić nowe otwarcie headlessem, a nie osłabiać asercje.
  */
-const WINNING_OPENING: ReadonlyArray<readonly [Pool, BuildingType]> = [
-  ['hex1', 'LASER_TURRET'], ['hex1', 'LASER_TURRET'],
-  ['hex2', 'SOLAR_PANEL'], ['hex2', 'SOLAR_PANEL'],
-  ['hex1', 'BATTERY'], ['hex1', 'BATTERY'],
-  ['hex2', 'SOLAR_PANEL'], ['hex2', 'SOLAR_PANEL'],
-  ['hex2', 'BATTERY'], ['hex2', 'BATTERY'], ['hex2', 'BATTERY'],
-  ...times(13, ['hex3', 'BARRICADE'] as const),
-  ...times(17, ['hex4', 'BARRICADE'] as const),
-  ['hex2', 'EVACUATION_MODULE'],
-];
-
+// Kolejka zwycięskiego otwarcia mieszka w `support/openings.ts` — patrz tamtejszy
+// doc-comment; dzieli ją z polityką wprawną narzędzia headless.
 /** [STROJENIE-niezależne] ~1,65× zmierzonej długości zwycięskiego przebiegu (24 133 ticki). */
 const WIN_CAP = 40_000;
 

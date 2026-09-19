@@ -39,7 +39,15 @@ import type { Policy } from './policy.js';
  */
 
 /** Pierścienie grafowe wokół CORE, z których kolejka bierze komórki. */
-type Pool = 'hex1' | 'hex2' | 'hex3' | 'hex4';
+export type Pool = 'hex1' | 'hex2' | 'hex3' | 'hex4';
+
+/**
+ * Najdalszy pierścień, do którego wolno przelać zabudowę, gdy bliższe są pełne.
+ *
+ * Osiem, bo spawny stoją 6–8 kroków od bazy (D2) — dalej mur przestaje być murem BAZY.
+ * [STROJENIE], ale nie balansowe: to granica grywalności polityki, nie pokrętło trudności.
+ */
+const MAX_SPILL_RING = 8;
 
 const times = <T>(n: number, value: T): T[] => Array.from({ length: n }, () => value);
 
@@ -79,31 +87,62 @@ function ordersFor(planet: Planet): Command[] {
       .map((c) => c.id)
       .sort((a, b) => a - b);
 
-  const pools: Record<Pool, number[]> = {
-    hex1: plainHexRing(1),
-    hex2: plainHexRing(2),
-    hex3: plainHexRing(3),
-    hex4: plainHexRing(4),
+  const pools: Record<number, number[]> = {
+    1: plainHexRing(1),
+    2: plainHexRing(2),
+    3: plainHexRing(3),
+    4: plainHexRing(4),
   };
 
-  const taken: Partial<Record<Pool, number>> = {};
+  /**
+   * **PRZELEW DO DALSZEGO PIERŚCIENIA, nie wyjątek.** Naprawa znaleziska Z2.
+   *
+   * Pierwsza wersja rzucała, gdy pula się wyczerpała — i robiła to na **17,3 % planet**
+   * (173 z seedów 0–999), bo pierścienie hex3/hex4 bywają za małe. Partia 10 000 runów
+   * z Zadania 2 padłaby **na seedzie 0**, zanim zebrałaby jeden wynik.
+   *
+   * Dlaczego przelew, a nie „złap i pomiń tę planetę": pominięcie **przekrzywia próbkę**
+   * ku planetom o większych pierścieniach, czyli mierzy łatwiejszy podzbiór i nigdzie tego
+   * nie pisze. To jest ta sama klasa co kontrola pozytywna, która przecieka. Przelew trzyma
+   * politykę grywalną na KAŻDEJ planecie: gdy pierścień k nie ma już wolnego heksa,
+   * budynek idzie na k+1, potem k+2. Kosztuje to trochę zwartości bazy — i o to właśnie
+   * chodzi, bo ciaśniejsza planeta MA być trudniejsza, a nie wypadać z pomiaru.
+   *
+   * Wyjątek zostaje na przypadek, w którym zabrakło heksów we WSZYSTKICH pierścieniach do
+   * ósmego włącznie — to nie jest już ciasna planeta, tylko zepsuta.
+   */
+  const taken: Partial<Record<number, number>> = {};
+  const ringOf: Record<Pool, number> = { hex1: 1, hex2: 2, hex3: 3, hex4: 4 };
+
   return SKILLED_OPENING.map(([pool, type]) => {
-    const i = taken[pool] ?? 0;
-    taken[pool] = i + 1;
-    const cellId = pools[pool][i];
-    if (cellId === undefined) {
-      throw new Error(
-        `SkilledPolicy: pula ${pool} wyczerpana przy ${type} (planeta seed ${planet.seed}). ` +
-          'Kolejka zakłada pierścienie o pewnej minimalnej liczbie czystych heksów — ' +
-          'ta planeta ich nie ma.',
-      );
+    for (let k = ringOf[pool]; k <= MAX_SPILL_RING; k++) {
+      const ring = pools[k] ?? (pools[k] = plainHexRing(k));
+      const i = taken[k] ?? 0;
+      if (i < ring.length) {
+        taken[k] = i + 1;
+        return { kind: 'BUILD', cellId: ring[i], type } as Command;
+      }
     }
-    return { kind: 'BUILD', cellId, type } as Command;
+    throw new Error(
+      `SkilledPolicy: brak wolnego heksa w pierścieniach ${ringOf[pool]}..${MAX_SPILL_RING} ` +
+        `od CORE przy ${type} (planeta seed ${planet.seed}). To nie jest ciasna planeta, ` +
+        'tylko zepsuta — osiem pierścieni wokół CORE nie mieści kolejki otwarcia.',
+    );
   });
 }
 
 export class SkilledPolicy implements Policy {
   readonly name = 'skilled';
+
+  /**
+   * Decyzja W KAŻDYM TICKU — tak jak `playPlan`, z którego ta polityka pochodzi.
+   *
+   * Nie jest to „łaskawsze ustawienie", tylko warunek odtworzenia referencji: przy odstępie 1
+   * seed 33 kończy na ticku **24 133**, co do ticka zgodnie z §11.1; przy 20 — na 24 340
+   * i trzy z pięciu seedów piątki przegrywają. Sufit mierzony dławioną polityką nie jest
+   * sufitem (Z1).
+   */
+  readonly decisionIntervalTicks = 1;
 
   private readonly orders: Command[];
 
