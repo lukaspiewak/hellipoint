@@ -1,12 +1,13 @@
 import { fork } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { cpus } from 'node:os';
-import { DEFAULT_RUN } from '@heliopolis/sim';
+import { DEFAULT_RUN, type RunConfig } from '@heliopolis/sim';
 import { MAX_TICKS, mergeBatches, runBatch, splitRange } from './batch.js';
 import { BeginnerPolicy } from './policy.js';
 import { SkilledPolicy } from './skilledPolicy.js';
 import { formatReport } from './report.js';
 import { assessHealth } from './health.js';
+import { AXES, isAxisName } from './sweep.js';
 import type { PolicyFactory } from './policy.js';
 import type { RunResult } from './run.js';
 
@@ -84,6 +85,30 @@ if (process.argv.includes('--combine')) {
   process.exit(0);
 }
 
+/**
+ * Konfiguracja partii: `DEFAULT_RUN`, opcjonalnie z nałożoną jedną osią przemiatania.
+ *
+ * Liczona TU, przed rozwidleniem, i przekazywana dziecku jako te same dwa argumenty —
+ * dziecko nakłada oś samo, z tej samej tabeli. Gdyby rodzic serializował gotową
+ * konfigurację, a dziecko ją parsowało, powstałby drugi opis tej samej rzeczy; tak
+ * jest jeden, a `configFingerprint` i tak wyłapałby rozjazd.
+ */
+function konfiguracja(): RunConfig {
+  const i = process.argv.indexOf('--axis');
+  if (i < 0) return DEFAULT_RUN;
+  const nazwa = process.argv[i + 1];
+  if (nazwa === undefined || !isAxisName(nazwa)) {
+    throw new Error(`batchCli: nieznana oś ${nazwa} (jest: ${Object.keys(AXES).join(', ')})`);
+  }
+  const wartosc = Number(arg('value'));
+  if (!Number.isFinite(wartosc)) {
+    throw new Error(`batchCli: --value ${arg('value')} nie jest liczbą skończoną`);
+  }
+  return AXES[nazwa].apply(DEFAULT_RUN, wartosc);
+}
+
+const cfg = konfiguracja();
+
 const policyName = arg('policy', 'beginner');
 const makePolicy = POLICIES[policyName];
 if (makePolicy === undefined) {
@@ -102,7 +127,7 @@ if (sliceArg >= 0) {
   if (!Number.isInteger(from) || !Number.isInteger(to) || to < from) {
     throw new Error(`batchCli: --slice ${process.argv[sliceArg + 1]} nie jest zakresem liczb całkowitych`);
   }
-  const results = runBatch({ from, to }, DEFAULT_RUN, MAX_TICKS, makePolicy);
+  const results = runBatch({ from, to }, cfg, MAX_TICKS, makePolicy);
   writeFileSync(arg('out'), JSON.stringify(results));
   process.exit(0);
 }
@@ -121,10 +146,15 @@ const done = await Promise.all(
     (slice, i) =>
       new Promise<RunResult[]>((resolve, reject) => {
         const file = `${out}.slice${i}.json`;
+        const osArg = process.argv.indexOf('--axis');
         const child = fork(process.argv[1], [
           '--slice', `${slice.from}:${slice.to}`,
           '--policy', policyName,
           '--out', file,
+          // Oś idzie dalej tymi samymi dwoma argumentami. Pominięcie ich tutaj dałoby
+          // partię policzoną na DEFAULT_RUN mimo `--axis` — czyli przemiatanie, w którym
+          // wszystkie punkty są tym samym punktem, a tabela wygląda wiarygodnie.
+          ...(osArg >= 0 ? ['--axis', process.argv[osArg + 1], '--value', arg('value')] : []),
         ], { stdio: 'inherit' });
         child.on('exit', (code) => {
           if (code !== 0) {

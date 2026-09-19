@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_RUN } from '@heliopolis/sim';
 import { MAX_TICKS, mergeBatches, runBatch, splitRange } from '../src/batch.js';
 import { BeginnerPolicy } from '../src/policy.js';
+import { configFingerprint, type RunResult } from '../src/run.js';
+import { AXES } from '../src/sweep.js';
 
 /**
  * Zrównoleglenie sprowadza się do PODZIAŁU ZAKRESU SEEDÓW. Testowany jest niezmiennik,
@@ -148,4 +150,41 @@ describe('3. [SZEW] partia RÓWNOLEGŁA daje to samo, co sekwencyjna', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  /**
+   * Oś przemiatania musi przejść przez granicę procesu — inaczej KAŻDY punkt tabeli
+   * liczyłby się na `DEFAULT_RUN`, wszystkie wyszłyby takie same, a tabela wyglądałaby
+   * całkowicie wiarygodnie. To jest ta sama klasa, co szew polityki: wynik prawdopodobny
+   * zamiast błędu (CLAUDE.md §4).
+   *
+   * Asercja jest na `configFingerprint`, bo to JEDYNA rzecz w wyniku, która mówi, na jakiej
+   * nastawie run powstał — i jest liczona po stronie dziecka, z konfiguracji, której
+   * dziecko naprawdę użyło.
+   */
+  it('3c. --axis dociera do procesów POTOMNYCH, nie tylko do rodzica', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'heliopolis-os-'));
+    try {
+      const odciskPartii = (args: string[]) => {
+        execFileSync(process.execPath, [
+          CLI, '--runs', '4', '--policy', 'beginner', '--workers', '2',
+          '--out', join(dir, 'r.txt'), ...args,
+        ], { stdio: 'pipe' });
+        const wyniki = JSON.parse(readFileSync(join(dir, 'r.txt.json'), 'utf8')) as RunResult[];
+        const odciski = new Set(wyniki.map((r) => r.configFingerprint));
+        expect(odciski.size, 'partia ma być jednorodna').toBe(1);
+        return [...odciski][0];
+      };
+
+      const bezOsi = odciskPartii([]);
+      const zOsia = odciskPartii(['--axis', 'killRewardScale', '--value', '0.25']);
+
+      expect(zOsia, 'oś przechodząca przez fork MUSI zmienić odcisk').not.toBe(bezOsi);
+      // Sedno: odcisk dziecka zgadza się z konfiguracją nałożoną W TYM procesie. Sama
+      // różnica nie wystarczy — dziecko mogłoby nałożyć oś inną wartością.
+      expect(zOsia).toBe(configFingerprint(AXES.killRewardScale.apply(DEFAULT_RUN, 0.25)));
+      expect(bezOsi).toBe(configFingerprint(DEFAULT_RUN));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });
