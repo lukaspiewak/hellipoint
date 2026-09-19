@@ -118,6 +118,15 @@ Autoryzacja merge'a tej bramki nie znosi.
 
 - **Testy widzą źródło, nie `dist`.** Aliasy w `vitest.config.ts` celowo kierują nazwy
   pakietów na `src/index.ts`. Bez tego zielony test znaczyłby „ostatni build był poprawny".
+- **Niezmiennik serializowalności `SimState`** (30-linijkowy doc-comment w
+  [`packages/sim/src/sim/state.ts`](packages/sim/src/sim/state.ts)): nigdy `Infinity`/`NaN`,
+  `TypedArray`, `Map`/`Set` — sentinel `-1` zamiast „brak", wyjście BFS/Dijkstry przeliczane
+  co tick, nie trzymane w stanie. Strażnik w `state.test.ts` pilnuje **wyłącznie pól
+  najwyższego poziomu** (`Object.keys(SimState)` plus wyczerpujący `switch` w `perturb` —
+  nowe pole daje TS2366, ale **tylko pod `tsc`**, nie pod `vitest`). Pole dołożone do
+  `Unit`/`Building`/`PentagonState` jest poza jego zasięgiem. Zmierzone: `Unit.pathDistance
+  = Infinity` przechodzi **744/744 testów i czysty typecheck**, a round-trip JSON zamienia je
+  na `null` w 24 z 24 jednostek. Pathfinding Fazy 3 celuje wprost w tę dziurę.
 - **`noUncheckedIndexedAccess` wyłączone świadomie** (`tsconfig.base.json`) — kod geometryczny
   to gęste indeksowanie w pętlach o niezmiennych granicach.
 - **jsdom nie liczy layoutu.** Układ panelu nie jest strzeżony żadnym testem, a ta klasa wady
