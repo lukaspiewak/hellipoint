@@ -86,13 +86,28 @@ describe('1. [ZDROWIE] każde kryterium ma parę po obu stronach progu', () => {
     expect(verdict('H3', batch(1_000, 400, minutes(40)), HEALTHY_BEGINNER).ok).toBe(false);
   });
 
+  /**
+   * **H4 mierzy politykę POCZĄTKUJĄCĄ** — i ten test to wiąże, bo pierwsza wersja liczyła
+   * ją na wprawnej. Zobaczone dopiero w raporcie bazowym: wprawna nigdy nie ginie w cyklu 1,
+   * więc kryterium raportowało 0,0 % i OK, podczas gdy początkująca ginęła tam w 10 000
+   * na 10 000 przebiegów. Kryterium napisane po to, żeby złapać dokładnie tę wadę,
+   * przepuszczało ją — bo patrzyło nie na tę populację.
+   */
   it('1f. [PARA] H4 — 10 % porażek w cyklu 1 przechodzi, 20 % oblewa', () => {
     const withCycle1 = (share: number): RunResult[] =>
       Array.from({ length: 1_000 }, (_, i) =>
-        run({ phase: 'DEFEAT', cycle: i < share * 1_000 ? 1 : 5 }),
+        run({ phase: 'DEFEAT', cycle: i < share * 1_000 ? 1 : 5, policy: 'beginner' }),
       );
-    expect(verdict('H4', withCycle1(0.1), HEALTHY_BEGINNER).ok).toBe(true);
-    expect(verdict('H4', withCycle1(0.2), HEALTHY_BEGINNER).ok).toBe(false);
+    expect(verdict('H4', batch(1_000, 400), withCycle1(0.1)).ok).toBe(true);
+    expect(verdict('H4', batch(1_000, 400), withCycle1(0.2)).ok).toBe(false);
+  });
+
+  it('1g. H4 patrzy na POCZĄTKUJĄCĄ — zdrowa wprawna nie może go uratować', () => {
+    const wprawnaBezPorazek = batch(1_000, 1_000); // same zwycięstwa
+    const poczatkujacaGinacaOdRazu = Array.from({ length: 1_000 }, () =>
+      run({ phase: 'DEFEAT', cycle: 1, policy: 'beginner' }),
+    );
+    expect(verdict('H4', wprawnaBezPorazek, poczatkujacaGinacaOdRazu).ok).toBe(false);
   });
 });
 

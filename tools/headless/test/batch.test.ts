@@ -10,11 +10,21 @@ describe('1. [PARTIA] podział i sklejenie nie zmieniają ANI JEDNEGO wyniku', (
   const RANGE = { from: 0, to: 12 };
   const TICKS = 800;
 
+  /**
+   * Limit WYPROWADZONY, nie zgadnięty — ten sam rachunek, co w `policy.test.ts`.
+   *
+   * Każdy z tych testów przepuszcza 24–36 przebiegów po 800 ticków; bezczynnie to ~3 s,
+   * a domyślne 5 s vitesta **oblewało pod obciążeniem pakietu** (pliki idą równolegle).
+   * Współczynnik obciążeniowy zmierzony w Fazie 2C: 3,2×. Stąd 3 × 3,2 × 2 ≈ 20 s,
+   * zaokrąglone w górę.
+   */
+  const BUDGET_MS = 30_000;
+
   it('1a. sklejone kawałki są IDENTYCZNE z przebiegiem całości — run po runie', () => {
     const calosc = runBatch(RANGE, DEFAULT_RUN, TICKS);
     const kawalki = splitRange(RANGE, 4).map((r) => runBatch(r, DEFAULT_RUN, TICKS));
     expect(mergeBatches(kawalki)).toEqual(calosc);
-  });
+  }, BUDGET_MS);
 
   /**
    * Kontrola na fiksturę: porównanie dwóch pustych partii też byłoby „identyczne", a partia
@@ -24,14 +34,14 @@ describe('1. [PARTIA] podział i sklejenie nie zmieniają ANI JEDNEGO wyniku', (
     const calosc = runBatch(RANGE, DEFAULT_RUN, TICKS);
     expect(calosc).toHaveLength(12);
     expect(new Set(calosc.map((r) => r.ticks + ':' + r.peakBuildings)).size).toBeGreaterThan(1);
-  });
+  }, BUDGET_MS);
 
   it('1c. KOLEJNOŚĆ jest częścią kontraktu — kawałki w odwrotnej kolejności dają to samo', () => {
     const calosc = runBatch(RANGE, DEFAULT_RUN, TICKS);
     const kawalki = splitRange(RANGE, 4).map((r) => runBatch(r, DEFAULT_RUN, TICKS));
     // Procesy wracają w kolejności, w jakiej skończyły — czyli dowolnej.
     expect(mergeBatches([...kawalki].reverse())).toEqual(calosc);
-  });
+  }, BUDGET_MS);
 });
 
 describe('2. [PARTIA] podział jest szczelny', () => {
@@ -58,7 +68,7 @@ describe('2. [PARTIA] podział jest szczelny', () => {
     const a = runBatch({ from: 0, to: 3 }, DEFAULT_RUN, 300);
     const b = runBatch({ from: 2, to: 5 }, DEFAULT_RUN, 300); // seed 2 w obu
     expect(() => mergeBatches([a, b])).toThrow(/zakładkę/);
-  });
+  }, 30_000);
 
   it('2d. zły podział rzuca zamiast po cichu oddać pusty zakres', () => {
     expect(() => splitRange({ from: 0, to: 10 }, 0)).toThrow(/dodatnią/);

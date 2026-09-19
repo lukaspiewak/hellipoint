@@ -42,7 +42,11 @@ export const HEALTH_THRESHOLDS = {
   H2: { minPct: 2, maxShareOfH1: 0.5 },
   /** Mediana długości runu WYGRANEGO, w minutach. Wprost z filaru D4. */
   H3: { minMinutes: 25, maxMinutes: 35 },
-  /** Odsetek porażek w cyklu 1 — run kończący się przed pierwszą decyzją nie jest runem. */
+  /**
+   * Odsetek porażek w cyklu 1 **polityki POCZĄTKUJĄCEJ** — run kończący się przed pierwszą
+   * decyzją nie jest runem. Populacja jest tu częścią progu: mierzone na wprawnej wychodzi
+   * trywialne zero i kryterium przestaje cokolwiek znaczyć.
+   */
   H4: { maxPct: 15 },
   /** Ile RÓŻNYCH otwarć wygrywa ≥ 20 % seedów. Celuje w główną wadę zmierzoną w §11.1. */
   H5: { minOpenings: 3 },
@@ -171,10 +175,21 @@ export function assessHealth(input: HealthInput): HealthVerdict[] {
         })();
 
   // --- H4: czy run w ogóle się zaczyna ---------------------------------------------
-  const defeats = skilled.filter((r) => r.phase === 'DEFEAT');
+  //
+  // **Mierzone na polityce POCZĄTKUJĄCEJ, nie wprawnej** — i to jest naprawa wady, którą
+  // zobaczyłem dopiero w raporcie bazowym, nie w kodzie.
+  //
+  // Uzasadnienie H4 w planie brzmi „dziś jest ~100 % (§11.1)", a ta setka to bot
+  // POCZĄTKUJĄCY: ginie w cyklu 1 w 10 000 na 10 000 przebiegów. Liczone na polityce
+  // wprawnej wychodziło **0,0 % i raportowało OK** — czyli kryterium napisane po to, żeby
+  // złapać dokładnie tę wadę, przepuszczało ją, bo patrzyło nie na tę populację.
+  //
+  // Sens H4 jest o PODŁODZE doświadczenia: „run kończący się przed pierwszą decyzją nie
+  // jest runem". Podłogę wyznacza gracz niewprawny, nie ten, który zna zwycięską linię.
+  const defeats = beginner.filter((r) => r.phase === 'DEFEAT');
   const h4: HealthVerdict =
     defeats.length === 0
-      ? unmeasured('H4', 'żaden przebieg polityki wprawnej nie zakończył się porażką')
+      ? unmeasured('H4', 'żaden przebieg polityki początkującej nie zakończył się porażką')
       : (() => {
           const share = pct(defeats.filter((r) => r.cycle === 1).length, defeats.length);
           const ci = ciHalfWidthPp(share / 100, defeats.length);
@@ -185,8 +200,8 @@ export function assessHealth(input: HealthInput): HealthVerdict[] {
             ok: share <= t.H4.maxPct,
             ciHalfWidthPp: ci,
             note:
-              `porażek w cyklu 1: ${share.toFixed(1)}% ±${ci.toFixed(1)} ` +
-              `(n=${defeats.length} porażek), próg <${t.H4.maxPct}%`,
+              `porażek POLITYKI POCZĄTKUJĄCEJ w cyklu 1: ${share.toFixed(1)}% ` +
+              `±${ci.toFixed(1)} (n=${defeats.length} porażek), próg <${t.H4.maxPct}%`,
           };
         })();
 
