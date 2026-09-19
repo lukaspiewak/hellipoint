@@ -6,6 +6,7 @@ import {
   formatSweep,
   isAxisName,
   parseFixed,
+  sprawdzOczekiwania,
   sweepPoint,
   type AxisName,
 } from '../src/sweep.js';
@@ -216,5 +217,54 @@ describe('5. [H5] otwarcie musi mieć z czego wystartować', () => {
     // Bez tej połówki reguła wyżej mogłaby być spełniona przez każdy możliwy budynek.
     const zaDrogie = BUILDINGS.EVACUATION_MODULE.costOre;
     expect(zaDrogie).toBeGreaterThan(DEFAULT_RUN.startingOre);
+  });
+});
+
+describe('6. [SITO] deklaracja „co ma się ruszyć" sprawdzana po pomiarze', () => {
+  const punkt = (v: number, wins: number) =>
+    sweepPoint(v, batch(1_000, wins), batch(1_000, 100, BEGINNER_POLICY_NAME));
+
+  /**
+   * Oba alarmy pochodzą z realnych pomyłek Zadania 3 — patrz doc-comment `Oczekiwania`.
+   */
+  it('6a. [PARA] kryterium, które MIAŁO drgnąć i nie drgnęło, jest zgłaszane', () => {
+    const plaskie = [punkt(0.2, 400), punkt(0.3, 400), punkt(0.4, 400)];
+    expect(sprawdzOczekiwania(plaskie, { rusza: ['H1'] })[0]).toContain('H1 ma REAGOWAĆ');
+    // Połówka „ma milczeć": gdy naprawdę drga, żadnego alarmu.
+    const ruchome = [punkt(0.2, 200), punkt(0.3, 400), punkt(0.4, 600)];
+    expect(sprawdzOczekiwania(ruchome, { rusza: ['H1'] })).toEqual([]);
+  });
+
+  it('6b. [PARA] kryterium zadeklarowane jako NIERUCHOME, które drgnęło, jest zgłaszane', () => {
+    const ruchome = [punkt(0.2, 200), punkt(0.3, 400), punkt(0.4, 600)];
+    const alarm = sprawdzOczekiwania(ruchome, { stoi: ['H1'] });
+    expect(alarm.some((a) => a.includes('H1 zadeklarowano jako NIERUCHOME'))).toBe(true);
+    // …i milczy, gdy faktycznie stoi.
+    const plaskie = [punkt(0.2, 400), punkt(0.3, 400)];
+    expect(sprawdzOczekiwania(plaskie, { stoi: ['H1'] })).toEqual([]);
+  });
+
+  it('6e. kryterium NIEWYMIENIONE jest nieobjęte — ruch nie jest alarmem', () => {
+    // Bez tego każde przemiatanie sypałoby alarmami o kryteriach, które słusznie drgnęły.
+    const ruchome = [punkt(0.2, 200), punkt(0.3, 400), punkt(0.4, 600)];
+    expect(sprawdzOczekiwania(ruchome, { rusza: ['H1'] })).toEqual([]);
+  });
+
+  it('6f. sprzeczna deklaracja rzuca, zamiast po cichu wybrać jedną stronę', () => {
+    const plaskie = [punkt(0.2, 400), punkt(0.3, 400)];
+    expect(() => sprawdzOczekiwania(plaskie, { rusza: ['H1'], stoi: ['H1'] })).toThrow(/sprzeczna/);
+  });
+
+  it('6c. pojedynczy punkt nie jest diagnozowany — nie ma czego porównać', () => {
+    expect(sprawdzOczekiwania([punkt(0.3, 400)], { rusza: ['H1'] })).toEqual([]);
+  });
+
+  it('6d. alarm trafia na SAMĄ GÓRĘ tabeli, przed liczby', () => {
+    const plaskie = [punkt(0.2, 400), punkt(0.3, 400)];
+    const pierwsza = formatSweep(AXES.killRewardScale, plaskie, [], { rusza: ['H1'] })
+      .split('\n')[0];
+    expect(pierwsza).toContain('PRZYRZĄD');
+    // …a bez deklaracji tabela wygląda jak dotąd.
+    expect(formatSweep(AXES.killRewardScale, plaskie).split('\n')[0]).toContain('oś:');
   });
 });

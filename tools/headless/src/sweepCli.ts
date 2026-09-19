@@ -2,7 +2,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { cpus } from 'node:os';
 import { dirname, join } from 'node:path';
-import { AXES, formatSweep, isAxisName, parseFixed, sweepPoint, type SweepPoint } from './sweep.js';
+import {
+  AXES, formatSweep, isAxisName, parseFixed, sweepPoint,
+  type HealthIdLista, type SweepPoint,
+} from './sweep.js';
 import type { RunResult } from './run.js';
 
 /**
@@ -52,6 +55,27 @@ for (let i = 0; i < process.argv.length; i++) {
 }
 const fixed = parseFixed(fixSpecs); // rzuca tu, zanim ruszy pierwsza partia
 
+/**
+ * `--expect H1,H3` — deklaracja, którymi kryteriami ta oś MA ruszać.
+ *
+ * Nieobowiązkowa, ale warto jej używać zawsze: sprawdzana jest po pomiarze i łapie dwie
+ * rzeczy naraz — oś, która nie dotyka kryterium (czyli przemiatanie do wyrzucenia), oraz
+ * kryterium, które drgnęło, choć nie miało prawa (czyli zepsuty przyrząd).
+ */
+const lista = (nazwa: string): HealthIdLista[] | undefined => {
+  if (process.argv.indexOf(`--${nazwa}`) < 0) return undefined;
+  return arg(nazwa)
+    .split(',')
+    .map((x) => x.trim().toUpperCase())
+    .map((x) => {
+      if (!/^H[1-6]$/.test(x)) throw new Error(`sweepCli: --${nazwa} ${x} nie jest kryterium H1–H6`);
+      return x as HealthIdLista;
+    });
+};
+const rusza = lista('expect');
+const stoi = lista('expect-fixed');
+const oczekiwania = rusza === undefined && stoi === undefined ? undefined : { rusza, stoi };
+
 const skilledRuns = Number(arg('skilled', '250'));
 const beginnerRuns = Number(arg('beginner', '1000'));
 const workers = Number(arg('workers', String(Math.max(1, cpus().length - 2))));
@@ -90,7 +114,7 @@ const minutes = ((Date.now() - started) / 60_000).toFixed(1);
 writeFileSync(
   out,
   [
-    formatSweep(axis, punkty, fixed),
+    formatSweep(axis, punkty, fixed, oczekiwania),
     '',
     `czas przemiatania: ${minutes} min, ${workers} procesów, ` +
       `${skilledRuns} przebiegów wprawnej i ${beginnerRuns} początkującej na punkt`,

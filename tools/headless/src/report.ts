@@ -1,4 +1,5 @@
 import { TICK_SECONDS } from '@heliopolis/sim';
+import { diagnozuj } from './diagnostics.js';
 import type { RunResult } from './run.js';
 
 /**
@@ -40,6 +41,15 @@ export function formatReport(results: RunResult[]): string {
       `!!! UWAGA: ta partia MIESZA ${policies.length} polityki (${policies.join(', ')}).`,
     );
     lines.push('!!! Rozkłady poniżej nie opisują żadnej z nich. Rozdziel partie.');
+    lines.push('');
+  }
+
+  // DIAGNOZY PRZYRZĄDU idą przed ostrzeżeniami o treści partii, bo mówią o czymś
+  // poważniejszym: że tej partii w ogóle nie wolno czytać jako wyniku. Ostrzeżenie
+  // „mieszasz polityki" znaczy „rozdziel i przeczytaj"; diagnoza zakleszczenia znaczy
+  // „nie czytaj, popraw i policz od nowa".
+  for (const d of diagnozuj(results)) {
+    lines.push(`!!! PRZYRZĄD [${d.kod}]: ${d.opis}`);
     lines.push('');
   }
 

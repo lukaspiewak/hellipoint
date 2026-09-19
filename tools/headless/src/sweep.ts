@@ -149,6 +149,88 @@ export function sweepPoint(
 
 const KOLUMNY: readonly HealthId[] = ['H1', 'H2', 'H3', 'H4'];
 
+/**
+ * Co ta oś MA ruszyć, a czego NIE MA PRAWA — deklaracja sprawdzana po pomiarze.
+ *
+ * ## Skąd to się wzięło
+ *
+ * Dwie pomyłki z Zadania 3, obie kosztowne, obie tej samej rodziny.
+ *
+ * **Raz nie ruszyło się nic, a wyglądało to na wynik.** Przemiatanie `growthPerCycle`
+ * dało H4 = 82,5 % w każdym z czterech punktów. Wyglądało jak odkrycie („eskalacja nie
+ * wpływa na podłogę"), a było arytmetyką: tempo to `base × growth^(cykl−1)`, więc w cyklu 1
+ * wykładnik wynosi zero i ta oś NIE MOŻE tam wpłynąć. Straciłem na to całe przemiatanie.
+ *
+ * **Raz ruszyło się coś, co nie miało prawa.** Podczas kalibracji drugiej wieży linia
+ * laserowa — która tej wieży w ogóle nie używa — skoczyła z 36,8 na 79,2 %. To nie był
+ * wynik, tylko podmiana wyrażeniem regularnym, która zmieniła nie ten budynek, co trzeba.
+ * **Złapałem to wyłącznie dlatego, że przypadkiem patrzyłem na liczbę, która miała stać
+ * w miejscu.**
+ *
+ * Deklaracja zamienia oba spojrzenia w sito: mówisz z góry, czego się spodziewasz,
+ * a tabela sprawdza, czy pomiar to potwierdził.
+ */
+/** Nazwa kryterium w deklaracji — te same identyfikatory, co w `assessHealth`. */
+export type HealthIdLista = HealthId;
+
+export interface Oczekiwania {
+  /** Kryteria, którymi ta oś MA ruszać. Brak ruchu = oś nie działa albo nie może działać. */
+  readonly rusza?: readonly HealthId[];
+  /**
+   * Kryteria, które NIE MAJĄ PRAWA drgnąć — jawnie zadeklarowana kontrola.
+   *
+   * Osobne od `rusza`, bo to są dwa różne twierdzenia, a nie dwie strony jednego.
+   * Kryterium niewymienione w żadnej liście jest **nieobjęte**: pomiar o nim nie orzeka.
+   * Gdyby „nie wymienione" znaczyło „ma stać", każde przemiatanie sypałoby alarmami
+   * o kryteriach, które słusznie się poruszyły.
+   */
+  readonly stoi?: readonly HealthId[];
+}
+
+const wartosci = (punkty: readonly SweepPoint[], id: HealthId): (number | null)[] =>
+  punkty.map((p) => p.health.find((v) => v.id === id)?.value ?? null);
+
+const drgnelo = (v: readonly (number | null)[]): boolean =>
+  new Set(v.map((x) => (x === null ? 'null' : x.toFixed(4)))).size > 1;
+
+/**
+ * Sprawdza deklarację wobec pomiaru. Pusta tablica = deklaracja się potwierdziła.
+ *
+ * Nie rozstrzyga, KTÓRA strona się myli — oś może nie działać albo przyrząd może być
+ * zepsuty, i to są dwie różne naprawy. Mówi tylko, że jedno z dwojga zaszło.
+ */
+export function sprawdzOczekiwania(
+  punkty: readonly SweepPoint[],
+  oczekiwania: Oczekiwania,
+): string[] {
+  if (punkty.length < 2) return [];
+  const out: string[] = [];
+  for (const id of KOLUMNY) {
+    const ruch = drgnelo(wartosci(punkty, id));
+    const miało = oczekiwania.rusza?.includes(id) ?? false;
+    const miałoStać = oczekiwania.stoi?.includes(id) ?? false;
+    if (miało && miałoStać) {
+      throw new Error(`Oczekiwania: ${id} jest naraz w „rusza" i „stoi" — sprzeczna deklaracja`);
+    }
+    if (miało && !ruch) {
+      out.push(
+        `${id} ma REAGOWAĆ na tę oś, a jest identyczne we wszystkich ${punkty.length} punktach. ` +
+          'Albo oś nie dotyka tego kryterium (sprawdź arytmetykę, zanim uznasz to za wynik), ' +
+          'albo wartość osi nie dociera do przebiegów.',
+      );
+    }
+    if (miałoStać && ruch) {
+      out.push(
+        `${id} zadeklarowano jako NIERUCHOME na tej osi, a drgnęło. Liczba, która miała stać ` +
+          'w miejscu, ' +
+          'jest najtańszym detektorem zepsutego przyrządu — sprawdź, co jeszcze zmieniła ' +
+          'ostatnia podmiana w plikach balansu.',
+      );
+    }
+  }
+  return out;
+}
+
 const komorka = (v: HealthVerdict | undefined): string => {
   if (v === undefined || !v.measured || v.value === null) return '—';
   const ci = v.ciHalfWidth === null ? '' : ` ±${v.ciHalfWidth < 0.05 ? v.ciHalfWidth.toFixed(2) : v.ciHalfWidth.toFixed(1)}`;
@@ -169,6 +251,7 @@ export function formatSweep(
   axis: Axis,
   points: readonly SweepPoint[],
   fixed: readonly FixedAxis[] = [],
+  oczekiwania?: Oczekiwania,
 ): string {
   const trzymane =
     fixed.length === 0
@@ -181,7 +264,12 @@ export function formatSweep(
     ).join(' ');
     return `${String(p.value).padStart(8)} ${komorki}   n=${p.skilledRuns}/${p.beginnerRuns}`;
   });
+  const alarmy = oczekiwania === undefined ? [] : sprawdzOczekiwania(points, oczekiwania);
   return [
+    // Alarmy przyrządu na SAMEJ GÓRZE, przed tabelą — ta sama kolejność i ten sam powód,
+    // co w `formatReport`: czytelnik ma dowiedzieć się, że nie wolno ufać liczbom, ZANIM
+    // je przeczyta.
+    ...alarmy.flatMap((a) => [`!!! PRZYRZĄD: ${a}`, '']),
     naglowek,
     `${'wartość'.padStart(8)} ${KOLUMNY.map((id) => id.padStart(12)).join(' ')}   n=wprawna/początkująca`,
     `${'—'.repeat(8)} ${KOLUMNY.map(() => '—'.repeat(12)).join(' ')}`,
