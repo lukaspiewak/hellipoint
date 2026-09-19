@@ -41,11 +41,34 @@ export interface RunConfig {
    *
    * Zadanie 3 zmierzyło, że H4 (porażki w cyklu 1) nie rusza się od ŻADNEJ liczby balansowej:
    * `updateSpawning` daje w cyklu 1 pełne natężenie fali w sekundzie zerowej, przeciw bazie
-   * złożonej z samego CORE. Start o świcie daje graczowi okno, w którym **słońce broni za
-   * niego** — wrogowie muszą wejść w światło, żeby dojść do bazy, a tam płoną (§4.4).
-   * To rozbieg opowiedziany mechaniką tej gry, nie ukryty mnożnik trudności.
+   * złożonej z samego CORE. Faza słońca jest jedyną znalezioną dźwignią, która to rusza —
+   * i rusza mocno.
    *
-   * Wartość jest okresowa: 0,5 znaczy pół obrotu po świcie, czyli start w pełnej nocy.
+   * ## Zmierzone, i NIE to, czego się spodziewałem
+   *
+   * Hipoteza brzmiała „start o świcie", bo wtedy słońce broni od razu. **Pomiar ją obalił.**
+   * Przy 250 przebiegach wprawnej i 1 000 początkującej na punkt, H4 wg fazy:
+   *
+   * ```
+   *   0      (dzień od razu)   92,2 %      0,625  (68 s nocy)   82,3 %
+   *   0,125                    88,5 %      0,6875 (56 s nocy)   67,1 %
+   *   0,25   (południe)        85,9 %      0,75   (45 s nocy)   59,8 %  ← minimum
+   *   0,5    (zmierzch)        88,2 %      0,8125 (34 s nocy)   66,9 %
+   *                                        0,875  (22 s nocy)   77,1 %
+   *                                        0,9375 (11 s nocy)   89,8 %
+   * ```
+   *
+   * Minimum jest czyste: obaj sąsiedzi 0,75 dają po ~67 % przy przedziałach ±2,9, więc
+   * siedmiopunktowa różnica nie jest wahaniem próbki. Sens wychodzi z zestawienia z czasem
+   * zgonu: **mediana porażki początkującej leży w okolicy 50–65 s, a przy fazie 0,75 wschód
+   * przychodzi po 45 s** — dokładnie wtedy, gdy gracz przestaje sobie radzić. Świt od razu
+   * jest najgorszy, bo stawia bazę NA TERMINATORZE, tuż przy całej nocnej półkuli, która
+   * jako jedyna spawnuje (D1), a zanim baza dojedzie w głąb dnia, jest już po wszystkim.
+   *
+   * To nie jest ukryty mnożnik trudności, tylko czytelna reguła: **zaczynasz w nocy,
+   * a pierwszy wschód jest twoją pierwszą ulgą.**
+   *
+   * Wartość jest okresowa; 0 znaczy „CORE wchodzi w światło w ticku zero".
    */
   sunPhaseAtStart: number;
   /**
@@ -101,8 +124,12 @@ export const DEFAULT_RUN: RunConfig = {
    * 1,2 → 87 %, 1,8 → 94 %.
    */
   killRewardScale: 0.5,
-  /** [STROJENIE] Start O ŚWICIE — uzasadnienie i pomiar przy polu w `RunConfig` wyżej. */
-  sunPhaseAtStart: 0,
+  /**
+   * [STROJENIE] 45 sekund nocy, potem wschód — **minimum H4 zmierzone na dziesięciu fazach**
+   * (59,8 % wobec 85–92 % przy starcie w dzień). Tabela i uzasadnienie przy polu w
+   * `RunConfig` wyżej.
+   */
+  sunPhaseAtStart: 0.75,
   cyclesPerRun: 10,       // 10 × 180 s = 30 min, zgodnie z D4
   evacUnlockFraction: 0.67,
   evacEnergyRequired: 1000,

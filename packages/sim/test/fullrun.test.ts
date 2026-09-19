@@ -313,19 +313,21 @@ describe('kolejność systemów w step()', () => {
    * właśnie zaktualizował. Zmierzone na seedzie 3 (cała okolica d ≤ 3 komórki startowej
    * jest CIEMNA na ticku 0 — w świetle jednostka porzuca cel i ucieka, więc ogniwo w ogóle
    * by się nie ujawniło): jednostka wypuszczona 3 kroki od CORE zadaje pierwsze obrażenia
-   * na iteracji **99**; po zamianie ruchu z walką — na 100, bo atakuje z komórki sprzed kroku.
-   * (Przed wprowadzeniem fazy słońca było to 36/37 — liczba zależy od tego, którą ciemną
-   * komórkę wybierze fikstura, a ta zmienia się razem z fazą. Teza testu jest o RÓŻNICY
-   * jednego ticka, nie o wartości bezwzględnej.)
+   * na iteracji **36**; po zamianie ruchu z walką — na 37, bo atakuje z komórki sprzed kroku.
+   * Liczba zależy od tego, którą ciemną komórkę wybierze fikstura, a to idzie za fazą
+   * słońca — dlatego faza jest tu PRZYPIĘTA. Teza testu jest o RÓŻNICY jednego ticka.
    */
   it('jednostka atakuje z komórki, do której właśnie weszła — walka widzi ruch z TEGO ticka', () => {
     const planet = createPlanet({ seed: 3 });
     const fromCore = multiSourceDistances(planet.cells.map((c) => c.neighbors), [planet.startCell]);
-    const sim = new Sim(planet, DEFAULT_RUN);
-    // Światło czytane Z SYMULACJI (`sim.sunAt`), nie własnym `sunDirection(0, …)`.
-    // Od czasu, gdy run zaczyna się o świcie, faza ma przesunięcie zależne od planety —
-    // fikstura wybierająca komórkę po naiwnej fazie wskazywałaby ciemną tam, gdzie
-    // symulacja ma jasną, i test oblewałby z powodu, który z jego tezą nie ma nic wspólnego.
+    // Konfiguracja PRZYPIĘTA: teza tego bloku jest o KOLEJNOŚCI systemów w `step()`,
+    // nie o nastawie gry. Faza **0,5** dobrana do PRZESŁANKI tego testu — potrzebna jest
+    // ciemna komórka trzy kroki od CORE, a przy fazie fikstur (0,25, czyli południe) baza
+    // stoi w głębi dnia i takiej komórki nie ma. Przesłanka niżej to sprawdza głośno.
+    const sim = new Sim(planet, { ...gestyRun(DEFAULT_RUN), sunPhaseAtStart: 0.5 });
+    // Światło czytane Z SYMULACJI (`sim.sunAt`), nie własnym `sunDirection(0, …)`:
+    // faza ma przesunięcie zależne od planety, więc naiwne wywołanie wskazywałoby ciemną
+    // komórkę tam, gdzie symulacja ma jasną.
     const light0 = lightField(planet, sim.sunAt(0));
     const core = planet.startCell;
 
@@ -346,7 +348,7 @@ describe('kolejność systemów w step()', () => {
 
     expect(sim.state.buildings[core]!.hp).toBeLessThan(fullHp);
     // Dokładna liczba, nie „mniej niż 300": po zamianie ruchu z walką wychodzi 37.
-    expect(iteracje).toBe(99);
+    expect(iteracje).toBe(36);
   });
 
   /**
@@ -358,11 +360,11 @@ describe('kolejność systemów w step()', () => {
    */
   it('jednostka gasnąca od słońca zadaje jeszcze swój ostatni cios — spalanie biegnie PO walce', () => {
     const planet = createPlanet({ seed: 7 });
-    const sim = new Sim(planet, DEFAULT_RUN);
+    // Konfiguracja PRZYPIĘTA (`gestyRun`, faza 0,25 = południe): ten test potrzebuje
+    // komórki OŚWIETLONEJ, żeby ekspozycja zdążyła dobiec końca — i dlatego bierze fazę
+    // przeciwną niż blok wyżej. Obie są przypięte, więc kolejne strojenie ich nie ruszy.
+    const sim = new Sim(planet, gestyRun(DEFAULT_RUN));
     // Światło czytane Z SYMULACJI (`sim.sunAt`), nie własnym `sunDirection(0, …)`.
-    // Od czasu, gdy run zaczyna się o świcie, faza ma przesunięcie zależne od planety —
-    // fikstura wybierająca komórkę po naiwnej fazie wskazywałaby ciemną tam, gdzie
-    // symulacja ma jasną, i test oblewałby z powodu, który z jego tezą nie ma nic wspólnego.
     const light0 = lightField(planet, sim.sunAt(0));
 
     // Komórka OŚWIETLONA (inaczej ekspozycja nie rośnie i jednostka nie zginie w tym ticku).
@@ -521,11 +523,26 @@ const times = <T,>(n: number, v: T): T[] => Array.from({ length: n }, () => v);
  * [STROJENIE-niezależne] ~1,7× zmierzonej długości zwycięskiego przebiegu.
  *
  * Zadanie 3 Fazy 3 przestroiło balans (`killRewardScale` 0,5, `baseRatePerPentagon` 0,05)
- * i seed 33 kończy teraz na **35 483** tickach zamiast 24 133 — run jest dłuższy o połowę,
+ * i zwycięski przebieg kończy się koło **32 800** ticka zamiast 24 133 — dłużej o połowę,
  * bo taki był cel H3 (mediana 25–35 min; zmierzona 27,3 ±0,3). Stary limit 40 000 zostawiał
  * nad tą liczbą 13 % zapasu, czyli za mało, żeby kolejne strojenie nie obcięło zwycięstwa.
  */
 const WIN_CAP = 60_000;
+
+/**
+ * Seed, na którym zwycięskie otwarcie wygrywa przy DZISIEJSZEJ nastawie.
+ *
+ * Do Zadania 3 był to **33** — liczba z §11.1, gdzie otwarcie wygrywało na 85 % planet.
+ * Po strojeniu H1 wynosi ~36 %, więc „otwarcie wygrywa" przestało znaczyć „wygrywa
+ * wszędzie", a seed 33 wpadł do tych 64 %, na których przegrywa. **To nie jest osłabienie
+ * asercji** — teza „broniony run dochodzi do ZWYCIĘSTWA" trzyma się nadal i dalej jest
+ * sprawdzana w całości; zmienia się tylko planeta, na której się ją pokazuje.
+ *
+ * Wybrane pomiarem: na seedach 0–59 otwarcie wygrywa m.in. na 4, 5, 6, 7, 10, 11.
+ * Piątka dlatego, że na niej początkująca ginie w CYKLU 1 — ten sam seed niesie więc
+ * obie strony kontrastu, którego pilnuje `policy.test.ts`.
+ */
+const WIN_SEED = 5;
 
 /**
  * Deliverable całego Taska 5 brzmi: run da się rozegrać OD STARTU DO ZWYCIĘSTWA
@@ -537,7 +554,7 @@ const WIN_CAP = 60_000;
  */
 describe('broniony run dochodzi do ZWYCIĘSTWA', () => {
   it('kolejka zabudowy z odbudową prowadzi run od startu do VICTORY, a dwa jego przebiegi są identyczne co do bitu', () => {
-    const a = playPlan(33, WINNING_OPENING, WIN_CAP);
+    const a = playPlan(WIN_SEED, WINNING_OPENING, WIN_CAP);
     const core = a.sim.state.planet.startCell;
 
     expect(a.sim.state.phase).toBe('VICTORY');
@@ -545,7 +562,7 @@ describe('broniony run dochodzi do ZWYCIĘSTWA', () => {
 
     // Bramka §5.6 NAPRAWDĘ działała w trakcie runu, nie tylko w teście jednostkowym:
     // plan prosi o Evac od pierwszego ticka, a moduł staje dopiero po progu.
-    // Zmierzone po strojeniu i starcie o świcie: próg 21 600, Evac postawiony na 30 168.
+    // Zmierzone na `WIN_SEED`: próg 21 600, Evac postawiony na ticku 30 770.
     expect(a.evacBuiltTick).toBeGreaterThanOrEqual(a.sim.state.evacUnlockTick);
     expect(a.sim.cycle).toBeGreaterThanOrEqual(
       Math.ceil(DEFAULT_RUN.cyclesPerRun * DEFAULT_RUN.evacUnlockFraction),
@@ -553,12 +570,12 @@ describe('broniony run dochodzi do ZWYCIĘSTWA', () => {
 
     // Zwycięstwo WYWALCZONE, nie odczekane w pustce.
     //
-    // Liczby PRZEMIERZONE po strojeniu Zadania 3 — ten blok jako jedyny w pliku ma iść
-    // za balansem, bo jego teza brzmi „na DOMYŚLNYM balansie". Zmierzone po strojeniu
-    // i po wprowadzeniu startu o świcie: **2100 zrodzonych** (przed strojeniem 5044),
-    // szczyt 140 żywych naraz (481), 86 żywych na końcu (375), 403 odbudowy muru (2320).
-    // Spadek idzie za tempem spawnu i za tym, że oświetlone pentagony nie spawnują wcale —
-    // oblężenie dalej trwa, mur dalej pada i wstaje.
+    // Liczby PRZEMIERZONE — ten blok jako jedyny w pliku ma iść za balansem, bo jego teza
+    // brzmi „na DOMYŚLNYM balansie". Zmierzone na `WIN_SEED` przy dzisiejszej nastawie:
+    // **2220 zrodzonych** (przed strojeniem Zadania 3: 5044), szczyt 145 żywych naraz (481),
+    // 114 żywych na końcu (375), 272 odbudowy muru (2320). Spadek idzie za tempem spawnu
+    // i za tym, że oświetlone pentagony nie spawnują wcale (D1) — oblężenie dalej trwa,
+    // mur dalej pada i wstaje.
     //
     // **Otwarcie NADAL WYGRYWA** — i to jest tu rzecz najważniejsza, bo rozstrzygnięcie R2
     // planu wymaga, by polityka wprawna była co najmniej tak dobra jak `WINNING_OPENING`,
@@ -568,7 +585,7 @@ describe('broniony run dochodzi do ZWYCIĘSTWA', () => {
     expect(a.sim.state.units.length).toBeGreaterThan(50);
     // Mur był realnie rozbijany i realnie odbudowywany — bez tego „obrona" mogłaby
     // po prostu stać nietknięta i test nie odróżniłby oblężenia od spokoju.
-    expect(a.rebuilds).toBeGreaterThan(300);
+    expect(a.rebuilds).toBeGreaterThan(200);
     // CORE przeżył — to jest warunek zwycięstwa, nie skutek uboczny.
     expect(a.sim.state.buildings[core]).not.toBeNull();
     // Ewakuacja doszła do końca: ładunek pełny, alarm odliczony do zera.
@@ -582,7 +599,7 @@ describe('broniony run dochodzi do ZWYCIĘSTWA', () => {
     // ticków z walką, spalaniem, siedmioma cyklami, wszystkimi trzema typami wroga
     // i przejściem fazy do VICTORY, a nie 1978 ticków zakończonych porażką jak
     // w teście z seedem 102.
-    const b = playPlan(33, WINNING_OPENING, WIN_CAP);
+    const b = playPlan(WIN_SEED, WINNING_OPENING, WIN_CAP);
     expect(b.ticks).toBe(a.ticks);
     expect(stateHash(b.sim.state)).toBe(stateHash(a.sim.state));
   // Jawny limit czasu: dwa przebiegi po ~24 tysiące ticków przy setkach żywych jednostek

@@ -29,6 +29,16 @@ import { WINNING_OPENING } from '../../../packages/sim/test/support/openings.js'
 const WIN_CAP = 60_000;
 
 /**
+ * Seed odniesienia: wprawna WYGRYWA, początkująca ginie w CYKLU 1.
+ *
+ * Do Zadania 3 było to 33 — liczba z §11.1. Po strojeniu H1 wynosi ~36 %, więc otwarcie
+ * nie wygrywa już wszędzie, a 33 wpadł do tych planet, na których przegrywa. Wybrane
+ * pomiarem na seedach 0–59 (wygrywają m.in. 4, 5, 6, 7, 10, 11); piątka niesie OBIE
+ * strony kontrastu naraz. Ten sam seed przypina `fullrun.test.ts` jako `WIN_SEED`.
+ */
+const REF_SEED = 5;
+
+/**
  * Limity czasu WYPROWADZONE Z POMIARU POD OBCIĄŻENIEM, nie z bezczynnej maszyny.
  *
  * Zmierzone bezczynnie (`tools/headless/dist`, pięć seedów): pojedynczy przebieg polityki
@@ -46,9 +56,9 @@ const ONE_RUN_MS = 60_000; // 1 przebieg: 6,4 × 3,2 × 2 ≈ 41 s, zaokrąglone
 const FIVE_RUNS_MS = 240_000; // 5 przebiegów: 32 × 3,2 × 2 ≈ 205 s, zaokrąglone w górę
 
 describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie', () => {
-  it('1a. SkilledPolicy wygrywa na seedzie 33, BeginnerPolicy na tym samym ginie w cyklu 1', () => {
-    const skilled = simulateRun(33, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim));
-    const beginner = simulateRun(33, DEFAULT_RUN, WIN_CAP, (sim) => new BeginnerPolicy(sim));
+  it('1a. SkilledPolicy wygrywa na seedzie odniesienia, BeginnerPolicy na tym samym ginie w cyklu 1', () => {
+    const skilled = simulateRun(REF_SEED, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim));
+    const beginner = simulateRun(REF_SEED, DEFAULT_RUN, WIN_CAP, (sim) => new BeginnerPolicy(sim));
 
     expect(skilled.phase).toBe('VICTORY');
     expect(beginner.phase).toBe('DEFEAT');
@@ -94,10 +104,11 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
     // eslint-disable-next-line no-console
     console.log(`[PRZYRZĄD] wprawna ${wprawna.length}/5 ${wprawna}, początkująca ${poczatkujaca.length}/5`);
 
-    // Przypięte co do seeda: po strojeniu i starcie o świcie wygrywa sam 33. Sama liczba byłaby
-    // zielona także wtedy, gdyby wygrywały dwie INNE planety, czyli gdyby polityka
-    // przestała być tą samą polityką.
-    expect(wprawna).toEqual([33]);
+    // Przypięte co do seeda: na tej próbce wygrywa sam 303. Sama liczba „1 z 5" byłaby
+    // zielona także wtedy, gdyby wygrywała INNA planeta, czyli gdyby polityka przestała
+    // być tą samą polityką. Próbka jest arbitralna i stara — wiążącym pomiarem sufitu
+    // jest 1 000 przebiegów, nie te pięć.
+    expect(wprawna).toEqual([303]);
     expect(poczatkujaca, 'podłoga: H2 = 0,0 % na 1 000 przebiegów').toEqual([]);
   }, FIVE_RUNS_MS);
 
@@ -116,15 +127,16 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
    * oczekiwane** — przepnij ją razem z resztą strojenia. Gdy przestanie się zgadzać BEZ
    * zmiany balansu, przyrząd się popsuł i pomiary z niego są nieważne.
    */
-  it('1e. seed 33 kończy na ticku 32 167 — liczba przepięta ze strojeniem Zadania 3', () => {
-    const r = simulateRun(33, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim));
+  it('1e. seed odniesienia kończy na ticku 32 769 — liczba przepięta ze strojeniem Zadania 3', () => {
+    const r = simulateRun(REF_SEED, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim));
     expect(r.phase).toBe('VICTORY');
-    // 24 133 przy balansie sprzed Zadania 3; 35 483 po strojeniu liczb; 32 167 po dołożeniu
-    // startu o świcie (§5.3 — mechanika, nie liczba). Przepięte zgodnie z instrukcją
+    // 24 133 na seedzie 33 przy balansie sprzed Zadania 3; dziś 32 769 na seedzie
+    // odniesienia. Zmieniły się i nastawa, i planeta — powód zmiany seeda stoi przy
+    // `REF_SEED`. Przepięte zgodnie z instrukcją
     // w doc-commencie wyżej — zmiana PO strojeniu jest oczekiwana, BEZ strojenia znaczy
     // zepsuty przyrząd. `fullrun.test.ts` przypina tę samą liczbę z drugiej strony,
     // przez `playPlan`, więc rozjazd polityki z otwarciem oblewa w dwóch miejscach.
-    expect(r.ticks).toBe(32_167);
+    expect(r.ticks).toBe(32_769);
   }, ONE_RUN_MS);
 
   /**
@@ -149,8 +161,8 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
    * dotychczasowe pomiary (raport z 1000 runów, `pnpm bench`) zmieniłyby po cichu znaczenie.
    */
   it('1c. domyślna polityka to dalej POCZĄTKUJĄCA — stare pomiary nie zmieniają znaczenia', () => {
-    const domyslna = simulateRun(33, DEFAULT_RUN, WIN_CAP);
-    const jawna = simulateRun(33, DEFAULT_RUN, WIN_CAP, (sim) => new BeginnerPolicy(sim));
+    const domyslna = simulateRun(REF_SEED, DEFAULT_RUN, WIN_CAP);
+    const jawna = simulateRun(REF_SEED, DEFAULT_RUN, WIN_CAP, (sim) => new BeginnerPolicy(sim));
     expect(domyslna.policy).toBe('beginner');
     expect(domyslna.ticks).toBe(jawna.ticks);
     expect(domyslna.phase).toBe(jawna.phase);
@@ -161,7 +173,7 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
    * polityk wyglądają identycznie; bez nazwy przy wierszu nie da się ich potem rozdzielić.
    */
   it('1d. wynik niesie nazwę polityki, na której powstał', () => {
-    expect(simulateRun(33, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim)).policy).toBe(
+    expect(simulateRun(REF_SEED, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim)).policy).toBe(
       'skilled',
     );
   }, ONE_RUN_MS);

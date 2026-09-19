@@ -230,3 +230,81 @@ fikstur, ta sama decyzja co `GOLDEN_RUN_CONFIG`. Następne strojenie balansu ju�
 Wyjątkiem są dwa miejsca, które mają iść za grą i zostały PRZEMIERZONE: test zwycięstwa
 w `fullrun.test.ts` (seed 33 kończy teraz na ticku 35 483, nie 24 133) i liczba referencyjna
 w `policy.test.ts`. **Zwycięskie otwarcie nadal wygrywa** — rozstrzygnięcie R2 trzyma.
+
+
+---
+
+# Start w nocy, świt jako pierwsza ulga (Zadanie 3, część mechaniczna)
+
+**Nastawa:** dochodzi `sunPhaseAtStart` = **0,75** — trzy czwarte obrotu po świcie komórki
+startowej, czyli **45 sekund nocy, a potem wschód**. Odcisk `321c77c8`, 1 000 przebiegów
+na politykę.
+
+```
+H1  OK    zwycięstw polityki wprawnej: 37.7% ±3.0 (n=1000 runów), próg 25–60%
+H2  BŁĄD  zwycięstw polityki początkującej: 0.0% ±0.2 (n=1000 runów), próg >2% i <18.9% (połowa H1 = 37.7%)
+H3  OK    mediana runu wygranego POLITYKI WPRAWNEJ: 27.4 min ±0.04 (n=377 zwycięstw), próg 25–35 min
+H4  BŁĄD  runów POLITYKI POCZĄTKUJĄCEJ ginących w cyklu 1: 59.8% ±3.0 (n=1000 runów), próg <15%
+H5  NIEZMIERZONE  wymaga wyników wielu OTWARĆ — Zadanie 3
+H6  NIEZMIERZONE  wymaga wyników z pulą i bez niej — Zadanie 5
+```
+
+| | baza | po strojeniu liczb | po dołożeniu fazy | próg |
+|---|---|---|---|---|
+| **H1** sufit | 76,0 % | 35,5 % | **37,7 % ±3,0** | 25–60 % ✓ |
+| **H3** mediana runu | 20,2 min | 27,3 min | **27,4 min ±0,04** | 25–35 min ✓ |
+| **H4** porażki w cyklu 1 | 94,2 % | 82,5 % | **59,8 % ±3,0** | <15 % |
+| H2 podłoga | 0,0 % | 0,0 % | 0,0 % | >2 % |
+
+## Faza słońca była wariancją, o której nikt nie decydował
+
+Przed tą zmianą moment startu względem dnia **różnił się planeta od planety i to
+przypadkiem**: seed 7 zaczynał w pełnym świetle, seed 101 miał przed sobą 90 sekund
+ciemności, seed 33 startował o świcie. Nie było to niczyim wyborem — brało się z tego,
+gdzie generator postawił komórkę startową. `sunPhaseAtStart` liczy się **względem świtu tej
+komórki**, więc ta sama liczba znaczy to samo na każdej planecie, a oś daje się przemiatać.
+
+## Hipoteza była odwrotna do prawdy
+
+Spodziewałem się, że najlepszy jest **start o świcie** — słońce broni od razu. Pomiar to
+obalił. H4 według fazy (250 przebiegów wprawnej i 1 000 początkującej na punkt):
+
+```
+  0      (dzień od razu)  92,2 %      0,625  (68 s nocy)  82,3 %
+  0,125                   88,5 %      0,6875 (56 s nocy)  67,1 %
+  0,25   (południe)       85,9 %      0,75   (45 s nocy)  59,8 %  ← minimum
+  0,5    (zmierzch)       88,2 %      0,8125 (34 s nocy)  66,9 %
+                                      0,875  (22 s nocy)  77,1 %
+                                      0,9375 (11 s nocy)  89,8 %
+```
+
+Minimum jest czyste: obaj sąsiedzi dają po ~67 % przy przedziałach ±2,9, więc różnica
+siedmiu punktów nie jest wahaniem próbki. **Świt od razu jest najgorszy**, bo stawia bazę
+NA TERMINATORZE, tuż obok całej nocnej półkuli — a tylko ciemne pentagony spawnują (D1).
+Zanim baza dojedzie w głąb dnia, jest już po wszystkim.
+
+Najlepiej działa faza, przy której **wschód przychodzi w chwili, gdy początkujący przestaje
+sobie radzić**. To jest reguła, którą gracz zobaczy: zaczynasz w nocy, pierwszy świt jest
+twoją pierwszą ulgą.
+
+## Najważniejsza liczba tej rundy nie jest w tabeli
+
+`moment porażki` polityki początkującej, p10/p50/p90:
+
+| | p10 | p50 | p90 |
+|---|---|---|---|
+| przed Zadaniem 3 | 30,9 s | 50,2 s | 117,7 s |
+| **po** | **149,1 s** | **173,3 s** | **205,8 s** |
+
+**Początkująca żyje niemal pięć razy dłużej.** I stąd bierze się cała poprawa H4: mediana
+zgonu (173,3 s) leży **siedem sekund przed granicą cyklu 1** (180 s). Kryterium siedzi więc
+dziś dokładnie na krawędzi — drobna dalsza poprawa przeżywalności przełoży się na duży
+spadek H4, a drobne pogorszenie na duży wzrost. To też znaczy, że `rotationPeriod` przestał
+być neutralny: ta sama liczba wyznacza i długość dnia, i to, co znaczy „cykl 1".
+
+## Czego nadal nie ma
+
+H2 stoi na zerze. Początkująca przeżywa teraz pierwszy cykl w 40 % przebiegów, ale nie
+wygrywa **ani razu na tysiąc**. Podłoga przesunęła się z „ginie zanim zacznie" na „gra
+i przegrywa" — to postęp w tę stronę, w którą trzeba, ale kryterium wymaga, żeby czasem
+wygrała, a do tego potrzeba czegoś innego niż przeżycie pierwszej nocy.
