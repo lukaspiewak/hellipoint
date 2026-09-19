@@ -7,6 +7,7 @@ import { stateHash } from '../src/sim/hash.js';
 import { DEFAULT_RUN } from '../src/sim/rules.js';
 import { Sim } from '../src/sim/loop.js';
 import type { Command } from '../src/sim/commands.js';
+import { skanujSerializowalnosc } from './support/serializable.js';
 
 const planet = createPlanet({ seed: 1 });
 
@@ -219,7 +220,9 @@ describe('stateHash', () => {
  * `state.test.ts` strażnikiem niezmiennika serializowalności, ale ten strażnik
  * (test round-trip JSON niżej) porównuje `stateHash` PRZED i PO — czyli widzi TYLKO
  * pola, które `stateHash` faktycznie czyta. Ustaw nowe pole na `Infinity`, `Map`
- * albo `Float64Array`, i round-trip pozostanie zielony.
+ * albo `Float64Array`, i round-trip pozostanie zielony. (Dla pól ZAGNIEŻDŻONYCH domyka to
+ * dziś skaner strukturalny — patrz dwa bloki `skaner serializowalności` na końcu pliku;
+ * blok poniżej zostaje osią dla kluczy najwyższego poziomu.)
  *
  * Ten blok odwraca kierunek dowodu: startuje od `Object.keys(state)` — czyli od tego,
  * co `SimState` FAKTYCZNIE ma w danej chwili — zamiast od listy pól, o których ktoś
@@ -372,5 +375,162 @@ describe('niezmiennik serializowalności (round-trip JSON)', () => {
     const before = stateHash(sim.state);
     const roundTripped = JSON.parse(JSON.stringify(sim.state));
     expect(stateHash(roundTripped)).toBe(before);
+  });
+});
+
+/**
+ * Domknięcie osi, której dwa strażniki wyżej nie obejmują: pola ZAGNIEŻDŻONE.
+ *
+ * Test kompletności `stateHash` startuje od `Object.keys(state)`, a round-trip porównuje
+ * hasze — obie osie kończą się na kluczach najwyższego poziomu. Zmierzone przed napisaniem
+ * tego bloku: `Unit.pathDistance = Infinity` przechodziło 744/744 przy czystym `tsc`,
+ * a round-trip zamieniał je na `null` w 24 z 24 jednostek. Uzasadnienie skanera i lista
+ * rzeczy, których świadomie NIE zgłasza: `support/serializable.ts`.
+ */
+describe('skaner serializowalności — sam przyrząd', () => {
+  /** Stan-nośnik: skaner ma znajdować rzeczy ZAGNIEŻDŻONE, nie pola korzenia. */
+  function nosnik(): SimState {
+    return withBuildingAndUnit();
+  }
+
+  /**
+   * PARY, nie pojedyncze przypadki. Każdy zakazany kształt ma obok siebie legalnego
+   * sąsiada, który MA PRZEJŚĆ — połówka „ma przejść" wykrywała w tym projekcie wadę
+   * siedem razy, zawsze wtedy, gdy pierwsza połówka pokazywała komplet czerwonych.
+   */
+  const pary: Array<{
+    nazwa: string;
+    rodzaj: string;
+    zakazane: unknown;
+    legalne: unknown;
+  }> = [
+    { nazwa: 'Infinity', rodzaj: 'Infinity', zakazane: Infinity, legalne: Number.MAX_VALUE },
+    { nazwa: '-Infinity', rodzaj: 'Infinity', zakazane: -Infinity, legalne: -Number.MAX_VALUE },
+    { nazwa: 'NaN', rodzaj: 'NaN', zakazane: NaN, legalne: 0 },
+    { nazwa: 'TypedArray', rodzaj: 'TypedArray', zakazane: new Float64Array([1, 2]), legalne: [1, 2] },
+    { nazwa: 'Map', rodzaj: 'Map', zakazane: new Map([['a', 1]]), legalne: { a: 1 } },
+    { nazwa: 'Set', rodzaj: 'Set', zakazane: new Set([1]), legalne: [1] },
+    { nazwa: 'Date', rodzaj: 'Date', zakazane: new Date(0), legalne: '1970-01-01' },
+    { nazwa: 'undefined', rodzaj: 'undefined', zakazane: undefined, legalne: -1 },
+    { nazwa: 'bigint', rodzaj: 'bigint', zakazane: 10n, legalne: 10 },
+    { nazwa: 'funkcja', rodzaj: 'function', zakazane: () => 1, legalne: 'f' },
+  ];
+
+  for (const { nazwa, rodzaj, zakazane, legalne } of pary) {
+    it(`${nazwa}: zakazany w polu zagnieżdżonym — ZGŁASZANY, ze ścieżką`, () => {
+      const s = nosnik();
+      (s.units[0] as unknown as Record<string, unknown>).nowePole = zakazane;
+      const { naruszenia } = skanujSerializowalnosc(s);
+      expect(naruszenia.map((n) => n.rodzaj)).toContain(rodzaj);
+      expect(naruszenia.find((n) => n.rodzaj === rodzaj)?.sciezka).toBe('state.units[0].nowePole');
+    });
+
+    it(`${nazwa}: legalny sąsiad w tym samym miejscu — NIE zgłaszany`, () => {
+      const s = nosnik();
+      (s.units[0] as unknown as Record<string, unknown>).nowePole = legalne;
+      expect(skanujSerializowalnosc(s).naruszenia).toEqual([]);
+    });
+  }
+
+  it('cykl jest zgłaszany, a współdzielona referencja NIE — `JSON.stringify` rzuca tylko na tym pierwszym', () => {
+    const zCyklem = nosnik();
+    const gniazdo = zCyklem.units[0] as unknown as Record<string, unknown>;
+    gniazdo.wstecz = zCyklem;
+    expect(skanujSerializowalnosc(zCyklem).naruszenia.map((n) => n.rodzaj)).toContain('cykl');
+    expect(() => JSON.stringify(zCyklem)).toThrow();
+
+    const zeWspoldzieleniem = nosnik();
+    const wspolny = { x: 1 };
+    const rec = zeWspoldzieleniem.units[0] as unknown as Record<string, unknown>;
+    rec.a = wspolny;
+    rec.b = wspolny;
+    expect(skanujSerializowalnosc(zeWspoldzieleniem).naruszenia).toEqual([]);
+    expect(() => JSON.stringify(zeWspoldzieleniem)).not.toThrow();
+  });
+
+  it('instancja klasy jest zgłaszana JAKO PROTOTYP, a naruszenia POD NIĄ nie giną', () => {
+    class Cos { constructor(public gdzies: number) {} }
+    const s = nosnik();
+    (s.units[0] as unknown as Record<string, unknown>).obiekt = new Cos(Infinity);
+    const rodzaje = skanujSerializowalnosc(s).naruszenia.map((n) => n.rodzaj);
+    expect(rodzaje).toContain('prototyp');
+    expect(rodzaje).toContain('Infinity');
+  });
+
+  it('czysty stan-nośnik nie daje ŻADNEGO naruszenia — inaczej wszystkie pary wyżej byłyby bez wartości', () => {
+    expect(skanujSerializowalnosc(nosnik()).naruszenia).toEqual([]);
+  });
+});
+
+describe('skaner serializowalności — na ROZEGRANYM stanie', () => {
+  /**
+   * Fikstura dobrana POMIAREM, nie na oko. Pierwsza próba (samo CORE, bez obrony)
+   * kończyła się PORAŻKĄ na ticku 587 z ZEREM budynków — skan przechodziłby wtedy
+   * nad pustą tablicą `buildings` i byłby zielony z niewiedzy, dokładnie tak jak
+   * „przebieg pod obciążeniem", w którym obciążenie nie ugryzło. Wieże utrzymują
+   * CORE przy życiu, więc stan ma jednocześnie budynki, jednostki i przebytą walkę.
+   */
+  function rozegranyStan(): SimState {
+    const sim = new Sim(planet, { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 5000 });
+    sim.state.buildings[planet.startCell] = {
+      cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
+    };
+    const wolne = planet.cells
+      .filter((c) => c.cellType === 'HEXAGON' && c.oreCapacity === 0 && c.id !== planet.startCell)
+      .map((c) => c.id);
+    const przyCore = planet.cells[planet.startCell].neighbors;
+    const script: Array<[number, Command]> = [
+      [5, { kind: 'BUILD', cellId: wolne[0], type: 'PYLON' }],
+      [10, { kind: 'BUILD', cellId: wolne[1], type: 'SOLAR_PANEL' }],
+      [20, { kind: 'BUILD', cellId: przyCore[0], type: 'KINETIC_TURRET' }],
+      [25, { kind: 'BUILD', cellId: przyCore[1], type: 'KINETIC_TURRET' }],
+      [30, { kind: 'BUILD', cellId: przyCore[2], type: 'LASER_TURRET' }],
+      [60, { kind: 'BUILD', cellId: wolne[2], type: 'BARRICADE' }],
+      [150, { kind: 'DEMOLISH', cellId: wolne[0] }],
+    ];
+    for (let t = 0; t < 1200; t++) {
+      for (const [at, cmd] of script) if (at === t) sim.enqueue(cmd);
+      sim.step();
+    }
+    return sim.state;
+  }
+
+  it('fikstura jest BOGATA — bez tego zielony skan niżej nic nie znaczy', () => {
+    const s = rozegranyStan();
+    const budynki = s.buildings.filter((b) => b !== null);
+    expect(s.phase).toBe('RUNNING');
+    expect(s.units.length).toBeGreaterThan(0);
+    expect(budynki.length).toBeGreaterThanOrEqual(3);
+    // OBIE gałęzie `powered`: stan, w którym wszystko jest zasilone, nie ćwiczy `false`.
+    expect(budynki.some((b) => b!.powered)).toBe(true);
+    expect(budynki.some((b) => !b!.powered)).toBe(true);
+    expect(s.killsByTurret).toBeGreaterThan(0);
+    // Sentinel „alarm nieaktywny" MUSI być obecny — to jedyna wartość, na której skaner
+    // mógłby dać fałszywy alarm, bo jest umownym zamiennikiem `Infinity`/`null`.
+    expect(s.evacAlarmRemaining).toBe(-1);
+    expect(s.pentagons.some((p) => p.spawnAccumulator > 0)).toBe(true);
+  });
+
+  it('rozegrany stan nie zawiera NICZEGO, czego round-trip JSON by nie odtworzył', () => {
+    const { naruszenia, wezlow } = skanujSerializowalnosc(rozegranyStan());
+    expect(naruszenia).toEqual([]);
+    // Skan na dwóch węzłach też dałby pustą listę. Ta liczba odróżnia „nic nie ma"
+    // od „nic nie sprawdzono".
+    expect(wezlow).toBeGreaterThan(10_000);
+  });
+
+  it('KONTROLA POZYTYWNA: skan tej konkretnej fikstury sięga do jednostek i budynków', () => {
+    const zJednostka = rozegranyStan();
+    (zJednostka.units[0] as unknown as Record<string, unknown>).podrzucone = Infinity;
+    expect(skanujSerializowalnosc(zJednostka).naruszenia).toHaveLength(1);
+
+    const zBudynkiem = rozegranyStan();
+    const idx = zBudynkiem.buildings.findIndex((b) => b !== null);
+    (zBudynkiem.buildings[idx] as unknown as Record<string, unknown>).podrzucone = NaN;
+    expect(skanujSerializowalnosc(zBudynkiem).naruszenia).toHaveLength(1);
+
+    const zPentagonem = rozegranyStan();
+    (zPentagonem.pentagons[0] as unknown as Record<string, unknown>).podrzucone = new Map();
+    expect(skanujSerializowalnosc(zPentagonem).naruszenia).toHaveLength(1);
   });
 });

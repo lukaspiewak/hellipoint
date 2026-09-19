@@ -80,6 +80,10 @@ export interface Unit {
  * pole `SimState` musi zostać zahashowane w `hash.ts` (albo świadomie dopisane do
  * `UNHASHED_FIELDS` w `state.test.ts`) — inaczej test kompletności `stateHash` tamże
  * przestaje się kompilować lub nie przechodzi w runtime.
+ * Obie te osie kończą się jednak na kluczach NAJWYŻSZEGO POZIOMU. Pola zagnieżdżone
+ * (`Unit`, `Building`, `PentagonState`) pilnuje trzeci strażnik: skaner strukturalny
+ * `test/support/serializable.ts`, chodzący po WARTOŚCIACH rozegranego stanu — dlatego
+ * nowe pole zagnieżdżone nie musi dopisywać się do żadnej listy, żeby było sprawdzone.
  */
 export interface SimState {
   tick: number;
