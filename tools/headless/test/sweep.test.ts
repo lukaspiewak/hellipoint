@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RUN } from '@heliopolis/sim';
+import { BUILDINGS, DEFAULT_RUN } from '@heliopolis/sim';
 import {
   applyFixed,
   AXES,
@@ -11,6 +11,7 @@ import {
 } from '../src/sweep.js';
 import { BEGINNER_POLICY_NAME } from '../src/policy.js';
 import { SKILLED_POLICY_NAME } from '../src/skilledPolicy.js';
+import { OTWARCIA, skladOtwarcia } from '../src/openings.js';
 import type { RunResult } from '../src/run.js';
 
 /**
@@ -140,5 +141,80 @@ describe('3. [OŚ] osie TRZYMANE na stałe podczas przemiatania innej', () => {
     expect(bez, 'brak trzymanych też ma być NAPISANY, nie przemilczany').toContain(
       'trzymane: nic',
     );
+  });
+});
+
+describe('4. [H5] warianty otwarcia są NAPRAWDĘ różne', () => {
+  /**
+   * Kryterium H5 pyta o RÓŻNORODNOŚĆ STRATEGII, nie o liczbę permutacji: §11.1 zmierzył,
+   * że gra „dopuszcza dokładnie jedną linię", i to jest wada, którą H5 ma łapać. Pięć
+   * przetasowań tej samej listy dałoby „pięć otwarć" i zero informacji — a co gorsza,
+   * kryterium wyszłoby SPEŁNIONE i wada zostałaby zamknięta jako nieistniejąca.
+   */
+  it('4a. każde otwarcie ma skład, którego nie ma żadne inne', () => {
+    const sklady = OTWARCIA.map(([nazwa, o]) => [nazwa, skladOtwarcia(o)] as const);
+    for (const [nazwaA, a] of sklady) {
+      for (const [nazwaB, b] of sklady) {
+        if (nazwaA === nazwaB) continue;
+        const rozne = [...a].some((t) => !b.has(t)) || [...b].some((t) => !a.has(t));
+        expect(rozne, `„${nazwaA}" i „${nazwaB}" mają identyczny skład budynków`).toBe(true);
+      }
+    }
+  });
+
+  it('4b. nazwy są unikalne — `--opening` wybiera po nazwie', () => {
+    expect(new Set(OTWARCIA.map(([n]) => n)).size).toBe(OTWARCIA.length);
+  });
+
+  it('4c. każde otwarcie kończy się modułem ewakuacyjnym — bez niego run nie może wygrać', () => {
+    for (const [nazwa, o] of OTWARCIA) {
+      expect(o.some(([, t]) => t === 'EVACUATION_MODULE'), `„${nazwa}" bez Evaca`).toBe(true);
+    }
+  });
+
+  it('4d. każde otwarcie ma ŹRÓDŁO ENERGII i coś, co strzela', () => {
+    // Kontrola na fiksturę: wariant bez panelu albo bez wieży przegrywałby z powodu,
+    // który nie ma nic wspólnego z testowaną hipotezą, a wyglądałby jak jej obalenie.
+    for (const [nazwa, o] of OTWARCIA) {
+      const s = skladOtwarcia(o);
+      expect(s.has('SOLAR_PANEL'), `„${nazwa}" bez źródła energii`).toBe(true);
+      expect(
+        s.has('LASER_TURRET') || s.has('KINETIC_TURRET'),
+        `„${nazwa}" bez wieży`,
+      ).toBe(true);
+    }
+  });
+});
+
+describe('5. [H5] otwarcie musi mieć z czego wystartować', () => {
+  /**
+   * ## Reguła, którą próbowałem napisać — i którą obalił własny test
+   *
+   * Trzy z pięciu pierwszych szkiców zakleszczały się: polityka nie przeskakuje pozycji,
+   * na którą jej nie stać, więc otwarcie żądające czegoś drogiego przed pierwszym dochodem
+   * staje NA ZAWSZE. W raporcie widać to jako `szczyt zabudowy p10 = p50 = p90`.
+   *
+   * Napisałem na to sito statyczne: „pobór nie przekracza wydajności CORE przed pierwszym
+   * panelem". **Połówka „ma przejść" oblała natychmiast** — znana linia prosi o dwa lasery
+   * (pobór 24 przy wydajności 10) i mimo to jako JEDYNA wygrywa. Przeżywa, bo CORE ma
+   * magazyn 200, a brownout zrzuca obciążenie w kolejności (`BROWNOUT_ORDER`), więc deficyt
+   * jest kryty z zapasu dokładnie tak długo, żeby zdążyły stanąć panele.
+   *
+   * Czyli warunek jest DYNAMICZNY („dochód rusza, zanim skończy się ruda i zapas"), a nie
+   * statyczny, i sito, które go udaje, odrzuciłoby jedyną działającą linię. Zostaje tu
+   * jedyna reguła, która jest naprawdę statyczna; resztę łapie pomiar, po `szczycie
+   * zabudowy` niezmiennym między planetami.
+   */
+  it('5a. na PIERWSZĄ pozycję kolejki stać bez ani jednego zabójstwa', () => {
+    for (const [nazwa, o] of OTWARCIA) {
+      expect(BUILDINGS[o[0][1]].costOre, `„${nazwa}": nie stać na pierwszą pozycję`)
+        .toBeLessThanOrEqual(DEFAULT_RUN.startingOre);
+    }
+  });
+
+  it('5b. [PARA] i to sito naprawdę coś odrzuca', () => {
+    // Bez tej połówki reguła wyżej mogłaby być spełniona przez każdy możliwy budynek.
+    const zaDrogie = BUILDINGS.EVACUATION_MODULE.costOre;
+    expect(zaDrogie).toBeGreaterThan(DEFAULT_RUN.startingOre);
   });
 });

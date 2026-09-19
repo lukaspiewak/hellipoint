@@ -5,6 +5,7 @@ import { DEFAULT_RUN, type RunConfig } from '@heliopolis/sim';
 import { MAX_TICKS, mergeBatches, runBatch, splitRange } from './batch.js';
 import { BeginnerPolicy } from './policy.js';
 import { SkilledPolicy } from './skilledPolicy.js';
+import { OTWARCIA } from './openings.js';
 import { formatReport } from './report.js';
 import { assessHealth } from './health.js';
 import { applyFixed, AXES, isAxisName, parseFixed } from './sweep.js';
@@ -25,9 +26,29 @@ import type { RunResult } from './run.js';
  * identyczne z przebiegiem całości, run po runie. Tutaj zostaje samo okablowanie.
  */
 
+/**
+ * Wariant otwarcia dla polityki wprawnej — kryterium H5 („ile RÓŻNYCH otwarć wygrywa").
+ *
+ * Wybierany OSOBNO od polityki, a nie jako kolejna polityka, bo `assessHealth` weryfikuje
+ * populację po `RunResult.policy`: gdyby każdy wariant miał własną nazwę, każda partia
+ * wyglądałaby jak obca populacja i strażnik z Zadania 2 krzyczałby na poprawne dane.
+ *
+ * **Czego to NIE robi: nie wchodzi do `configFingerprint`.** Otwarcie jest własnością
+ * POLITYKI, nie nastawy gry — dwie partie na różnych otwarciach mają ten sam odcisk
+ * konfiguracji i to jest poprawne. Nazwa wariantu idzie za to do nagłówka raportu, żeby
+ * wynik dało się przypisać do pytania, na które odpowiadał.
+ */
+const openingName = arg('opening', 'laserowe (znana linia)');
+const wariant = OTWARCIA.find(([nazwa]) => nazwa === openingName);
+if (wariant === undefined) {
+  throw new Error(
+    `batchCli: nieznane otwarcie „${openingName}" (jest: ${OTWARCIA.map(([n]) => n).join(' | ')})`,
+  );
+}
+
 const POLICIES: Record<string, PolicyFactory> = {
   beginner: (sim) => new BeginnerPolicy(sim),
-  skilled: (sim) => new SkilledPolicy(sim),
+  skilled: (sim) => new SkilledPolicy(sim, wariant[1]),
 };
 
 
@@ -76,7 +97,16 @@ if (process.argv.includes('--combine')) {
     '## ZDROWIE (progi z R1 planu)',
     '',
   ];
-  for (const v of assessHealth({ skilled, beginner })) {
+  // H5 („ile RÓŻNYCH otwarć wygrywa ≥20 % seedów") nie da się policzyć z jednej partii —
+  // wchodzi liczbą z osobnego pomiaru wariantów otwarcia. Bez niej kryterium zostaje
+  // NIEZMIERZONE, co jest uczciwsze niż zero.
+  const winningOpenings = process.argv.includes('--winning-openings')
+    ? Number(arg('winning-openings'))
+    : undefined;
+  if (winningOpenings !== undefined && !Number.isInteger(winningOpenings)) {
+    throw new Error(`batchCli: --winning-openings ${arg('winning-openings')} nie jest liczbą całkowitą`);
+  }
+  for (const v of assessHealth({ skilled, beginner, winningOpenings })) {
     const mark = v.ok === null ? 'NIEZMIERZONE' : v.ok ? 'OK  ' : 'BŁĄD';
     lines.push(`${v.id}  ${mark}  ${v.note}`);
   }
@@ -168,6 +198,10 @@ const done = await Promise.all(
           // Trzymane osie idą tą samą drogą i z tego samego powodu: pominięte tutaj
           // dałyby partię policzoną na DEFAULT_RUN mimo `--fix`.
           ...fixArgs().flatMap((f) => ['--fix', f]),
+          // Wariant otwarcia tą samą drogą i z tego samego powodu: pominięty tutaj dałby
+          // partię liczoną ZNANĄ LINIĄ mimo `--opening`, czyli pięć „różnych" otwarć
+          // o identycznych wynikach i tabelę wyglądającą wiarygodnie.
+          '--opening', openingName,
         ], { stdio: 'inherit' });
         child.on('exit', (code) => {
           if (code !== 0) {
@@ -202,6 +236,8 @@ if (brak >= 0) {
 const minutes = ((Date.now() - started) / 60_000).toFixed(1);
 
 const lines = [
+  `otwarcie: ${openingName}`,
+  '',
   formatReport(results),
   '',
   `czas partii: ${minutes} min na ${workers} procesach`,

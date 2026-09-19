@@ -38,8 +38,21 @@ import type { Policy } from './policy.js';
  * a nie osłabiać asercje**. Dokładnie ten sam zapis stoi przy `WINNING_OPENING`.
  */
 
-/** Pierścienie grafowe wokół CORE, z których kolejka bierze komórki. */
-export type Pool = 'hex1' | 'hex2' | 'hex3' | 'hex4';
+/**
+ * Pule komórek, z których kolejka otwarcia bierze miejsca.
+ *
+ * `hex1`–`hex4` to pierścienie grafowe wokół CORE, liczone po zwykłych heksach bez rudy.
+ * `ore` i `pent` doszły w Kroku 3 Zadania 3, bo kryterium H5 pyta o **różne otwarcia**,
+ * a bez nich nie da się zapisać ani otwarcia ekonomicznego (ekstraktor stoi wyłącznie na
+ * `ORE_HEXAGON`), ani zatykania pentagonów (`GEOTHERMAL_CAP` wyłącznie na `PENTAGON`).
+ * Otwarcia różniące się samą KOLEJNOŚCIĄ tych samych budynków nie są różnymi otwarciami
+ * w sensie §11.1 — tam chodzi o to, że dopuszczalna jest dokładnie jedna LINIA.
+ *
+ * Obie nowe pule są uporządkowane po odległości grafowej od CORE, a przy remisie po id —
+ * tak samo jak pierścienie, żeby wybór był deterministyczny i niezależny od kolejności
+ * w tablicy komórek.
+ */
+export type Pool = 'hex1' | 'hex2' | 'hex3' | 'hex4' | 'ore' | 'pent';
 
 /**
  * Najdalszy pierścień, do którego wolno przelać zabudowę, gdy bliższe są pełne.
@@ -76,7 +89,7 @@ export const SKILLED_OPENING: ReadonlyArray<readonly [Pool, BuildingType]> = [
  * `applyCommand`, a polityka „grałaby" dalej, nie zbudowawszy obrony — i wyglądałoby to
  * na wynik balansu.
  */
-function ordersFor(planet: Planet): Command[] {
+function ordersFor(planet: Planet, opening: Opening): Command[] {
   const fromCore = multiSourceDistances(
     planet.cells.map((c) => c.neighbors),
     [planet.startCell],
@@ -111,10 +124,38 @@ function ordersFor(planet: Planet): Command[] {
    * Wyjątek zostaje na przypadek, w którym zabrakło heksów we WSZYSTKICH pierścieniach do
    * ósmego włącznie — to nie jest już ciasna planeta, tylko zepsuta.
    */
-  const taken: Partial<Record<number, number>> = {};
-  const ringOf: Record<Pool, number> = { hex1: 1, hex2: 2, hex3: 3, hex4: 4 };
+  /** Komórki danego typu, od najbliższej CORE. Remis rozstrzyga id — determinizm. */
+  const byDistance = (pick: (c: Planet['cells'][number]) => boolean): number[] =>
+    planet.cells
+      .filter(pick)
+      .map((c) => c.id)
+      .sort((a, b) => fromCore[a] - fromCore[b] || a - b);
 
-  return SKILLED_OPENING.map(([pool, type]) => {
+  const oreCells = byDistance((c) => c.cellType === 'HEXAGON' && c.oreCapacity > 0);
+  const pentCells = byDistance((c) => c.cellType === 'PENTAGON');
+  let oreTaken = 0;
+  let pentTaken = 0;
+
+  const taken: Partial<Record<number, number>> = {};
+  const ringOf: Record<'hex1' | 'hex2' | 'hex3' | 'hex4', number> = {
+    hex1: 1, hex2: 2, hex3: 3, hex4: 4,
+  };
+
+  return opening.map(([pool, type]) => {
+    if (pool === 'ore' || pool === 'pent') {
+      const lista = pool === 'ore' ? oreCells : pentCells;
+      const i = pool === 'ore' ? oreTaken++ : pentTaken++;
+      const cellId = lista[i];
+      // Głośno, tak jak przy pierścieniach: `undefined` dałby komendę ignorowaną przez
+      // `applyCommand`, a polityka „grałaby" dalej, nie postawiwszy tego, co zaplanowała.
+      if (cellId === undefined) {
+        throw new Error(
+          `SkilledPolicy: pula ${pool} wyczerpana przy ${type} (planeta seed ${planet.seed}, ` +
+            `dostępnych ${lista.length}).`,
+        );
+      }
+      return { kind: 'BUILD', cellId, type } as Command;
+    }
     for (let k = ringOf[pool]; k <= MAX_SPILL_RING; k++) {
       const ring = pools[k] ?? (pools[k] = plainHexRing(k));
       const i = taken[k] ?? 0;
@@ -134,6 +175,9 @@ function ordersFor(planet: Planet): Command[] {
 /** Nazwa, pod którą polityka wprawna podpisuje każdy wynik. Patrz `BEGINNER_POLICY_NAME`. */
 export const SKILLED_POLICY_NAME = 'skilled';
 
+/** Kolejka zabudowy: co i z której puli, w kolejności stawiania. */
+export type Opening = ReadonlyArray<readonly [Pool, BuildingType]>;
+
 export class SkilledPolicy implements Policy {
   readonly name = SKILLED_POLICY_NAME;
 
@@ -149,10 +193,18 @@ export class SkilledPolicy implements Policy {
 
   private readonly orders: Command[];
 
-  constructor(private readonly sim: Sim) {
+  /**
+   * @param opening Kolejka zabudowy. Domyślnie `SKILLED_OPENING` — jedyna linia znana
+   *   z §11.1. Parametr istnieje dla kryterium H5, które pyta, ILE różnych otwarć wygrywa;
+   *   bez niego „różne otwarcia" nie dałyby się w ogóle zmierzyć tym samym przyrządem.
+   */
+  constructor(
+    private readonly sim: Sim,
+    opening: Opening = SKILLED_OPENING,
+  ) {
     // RAZ, nie co tick: komórki są funkcją samej planety, a `decide()` biegnie 20 razy
     // na sekundę symulacji przez dziesiątki tysięcy ticków.
-    this.orders = ordersFor(sim.state.planet);
+    this.orders = ordersFor(sim.state.planet, opening);
   }
 
   decide(): Command[] {

@@ -195,6 +195,22 @@ describe('3. [SZEW] partia RÓWNOLEGŁA daje to samo, co sekwencyjna', () => {
           AXES.startingOre.apply(AXES.killRewardScale.apply(DEFAULT_RUN, 0.35), 600),
         ),
       );
+
+      // To samo dla WARIANTU OTWARCIA: `--opening` pominięte przy rozwidleniu dałoby pięć
+      // „różnych" otwarć o identycznych wynikach i tabelę H5 wyglądającą wiarygodnie.
+      // Odcisk konfiguracji tego NIE złapie — otwarcie jest własnością polityki, nie
+      // nastawy gry — więc kontrolą jest SKUTEK: znana linia nie wydobywa ani jednej
+      // jednostki rudy (zmierzone w każdym raporcie Zadania 3), a ekonomiczna wydobywa.
+      const ruda = (args: string[]) => {
+        execFileSync(process.execPath, [
+          CLI, '--runs', '4', '--policy', 'skilled', '--workers', '2',
+          '--out', join(dir, 'o.txt'), ...args,
+        ], { stdio: 'pipe' });
+        const w = JSON.parse(readFileSync(join(dir, 'o.txt.json'), 'utf8')) as RunResult[];
+        return w.reduce((n, r) => n + r.oreMined, 0);
+      };
+      expect(ruda(['--opening', 'laserowe (znana linia)']), 'znana linia nie kopie').toBe(0);
+      expect(ruda(['--opening', 'ekonomiczne']), 'ekonomiczne kopie').toBeGreaterThan(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

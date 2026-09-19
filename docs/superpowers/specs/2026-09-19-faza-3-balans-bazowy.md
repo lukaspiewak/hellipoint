@@ -308,3 +308,84 @@ H2 stoi na zerze. Początkująca przeżywa teraz pierwszy cykl w 40 % przebiegó
 wygrywa **ani razu na tysiąc**. Podłoga przesunęła się z „ginie zanim zacznie" na „gra
 i przegrywa" — to postęp w tę stronę, w którą trzeba, ale kryterium wymaga, żeby czasem
 wygrała, a do tego potrzeba czegoś innego niż przeżycie pierwszej nocy.
+
+
+---
+
+# H5: ile różnych otwarć wygrywa (Zadanie 3, Krok 3)
+
+**Odpowiedź: jedno. Próg wymaga trzech.**
+
+```
+H1  OK    zwycięstw polityki wprawnej: 37.7% ±3.0 (n=1000 runów), próg 25–60%
+H2  BŁĄD  zwycięstw polityki początkującej: 0.0% ±0.2 (n=1000 runów), próg >2% i <18.9% (połowa H1 = 37.7%)
+H3  OK    mediana runu wygranego POLITYKI WPRAWNEJ: 27.4 min ±0.04 (n=377 zwycięstw), próg 25–35 min
+H4  BŁĄD  runów POLITYKI POCZĄTKUJĄCEJ ginących w cyklu 1: 59.8% ±3.0 (n=1000 runów), próg <15%
+H5  BŁĄD  otwarć wygrywających ≥20% seedów: 1, próg ≥3
+H6  NIEZMIERZONE  wymaga wyników z pulą i bez niej — Zadanie 5
+```
+
+| otwarcie | zwycięstw z 250 | szczyt zabudowy p10/p50/p90 |
+|---|---|---|
+| **laserowe (znana linia)** | **36,8 %** | 5 / 39 / 43 |
+| kinetyczne | 0,0 % | 6 / 6 / 7 |
+| mur najpierw | 0,0 % | 12 / 16 / 19 |
+| ekonomiczne | 0,0 % | 5 / 7 / 29 |
+| czapy na pentagonach | 0,0 % | 6 / 10 / 22 |
+
+§11.1 zmierzył przed strojeniem, że „otwarcie dopuszcza dokładnie jedną linię". **Po całym
+strojeniu Zadania 3 to nadal prawda** — i to jest najmocniejszy wynik tego kroku, bo
+strojenie miało tę wadę ruszyć.
+
+## Trzy z pięciu pierwszych szkiców były ZEPSUTE, nie przegrane
+
+Pokazała to jedna liczba: `szczyt zabudowy p10 = p50 = p90`. Polityka stawia pozycje
+kolejki po kolei i **nie przeskakuje** tej, na którą jej nie stać — więc otwarcie żądające
+czegoś drogiego przed pierwszym dochodem staje na zawsze, na każdej planecie w tym samym
+miejscu. Wariant kinetyczny prosił o cztery wieże (pobór 12) przed pierwszym panelem przy
+wydajności CORE równej 10: wieże gasły, nic nie ginęło, nie było z czego kupić panelu.
+
+**Zero zwycięstw z takiego przebiegu nie jest wynikiem o grze, tylko o szkicu — a wygląda
+identycznie.** Po przeprojektowaniu trzy z nich zaczęły grać naprawdę (szczyt zabudowy
+zaczął się różnić między planetami) i **nadal przegrywają wszystkie 250 przebiegów**.
+
+Próbowałem zamienić to w sito statyczne („pobór nie może przekroczyć wydajności CORE przed
+pierwszym panelem"). **Połówka „ma przejść" obaliła regułę natychmiast:** znana linia prosi
+o dwa lasery, pobór 24 przy wydajności 10, i jako jedyna wygrywa — przeżywa, bo CORE ma
+magazyn 200, a brownout zrzuca obciążenie w ustalonej kolejności, więc deficyt jest kryty
+z zapasu dokładnie tak długo, żeby zdążyły stanąć panele. Warunek jest DYNAMICZNY, a sito,
+które go udaje, odrzuciłoby jedyną działającą linię.
+
+## Co naprawdę rozstrzyga: ZASIĘG, nie obrażenia
+
+Najostrzejsza para w tym pomiarze. Za 150 rudy startowej można kupić:
+
+| | koszt | dps | zasięg | pobór | wynik |
+|---|---|---|---|---|---|
+| 1 × LASER_TURRET (+50 zapasu) | 100 | 60 | **3** | 12 | **36,8 % zwycięstw** |
+| 3 × KINETIC_TURRET | 150 | **75** | 2 | **9** | 0,0 % |
+
+Kinetyczne mają **więcej obrażeń i mniejszy pobór**, a mimo to nie potrafią uruchomić
+ekonomii: zabudowa staje na szóstym budynku. Jedyną istotną różnicą zostaje **zasięg 3
+wobec 2**. Wieża sięgająca dalej trafia jednostki, zanim dojdą do muru, i to ona — a nie
+siła ognia — decyduje, czy run w ogóle wystartuje.
+
+To nie jest wada balansu w sensie „za mocny laser". To jest **wąskie gardło projektowe**:
+dopóki tylko jeden budynek ma zasięg 3, każde otwarcie musi się od niego zacząć, a H5 nie
+ma jak zostać spełnione.
+
+## Wniosek, który wychodzi poza strojenie liczb
+
+Cztery hipotezy padły z czterech różnych powodów i wszystkie prowadzą do tego samego:
+
+- **kinetyczne** — zasięg 2 nie zarabia (opisane wyżej),
+- **mur najpierw** — barykady nie zabijają, więc opóźniają falę, nie finansując obrony,
+- **ekonomiczne** — ekstraktory są zbyt wolne: cztery z nich wydobywają mniej, niż
+  w tym samym czasie daje jedna wieża w nagrodach. Ekonomia wydobywcza pozostaje martwa
+  dokładnie tak, jak w raporcie bazowym,
+- **czapy** — zatkanie pentagonów zamienia strumień na erupcje, ale kosztuje 75 rudy
+  w momencie, w którym każdy grosz jest potrzebny na wieżę.
+
+Wspólny mianownik: **w tej grze istnieje jedno źródło pieniędzy (nagrody za zabicie)
+i jeden budynek, który je otwiera (laser).** Dopóki tak jest, wariantów otwarcia nie będzie,
+niezależnie od tego, jak ustawione są liczby.
