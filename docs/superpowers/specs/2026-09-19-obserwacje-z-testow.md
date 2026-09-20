@@ -144,9 +144,16 @@ przemiatania. Mechanika jest zaimplementowana, związana testami i mierzalna nor
 przyrządem; gra zachowuje dzisiejszy balans do czasu decyzji. Przy zerze zachowanie jest
 odtworzone **co do bitu** — złota trajektoria wróciła do wartości sprzed zmiany.
 
-**Do decyzji:** czy płacimy pełne przestrojenie za pas śmierci. Argument za: §4.4 obiecuje
-go od początku, a dzień/noc przestaje być immunitetem. Argument przeciw: przestrojenie
-trzeba zrobić przed serią testów, a nie w jej trakcie — a serii jeszcze nie zaczęliśmy.
+**DECYZJA (2026-09-20, właściciel): zostaje wyłączone, przestrojenie po testach.**
+
+Powód jest ten sam, który zamyka cały ten dziennik: **seria testów ma mierzyć jedną grę.**
+Przestrojenie balansu pod pas śmierci zmieniłoby to, na czym grają testerzy, a przy
+trzech–pięciu osobach nie ma z czego odbudować próby. Mechanika czeka gotowa — oś
+`lightPermeability` jest w `AXES`, przemiatanie kosztuje kilka godzin maszyny i zero
+projektowania, bo wszystkie pomiary z 19 września są zapisane wyżej.
+
+Kolejność jest więc: **seria testów na dzisiejszym balansie → przestrojenie hurtem →
+dopiero wtedy decyzja, czy pas śmierci wchodzi razem z resztą poprawek.**
 
 ### Dlaczego O3 czeka na O1, a nie odwrotnie
 
