@@ -138,7 +138,7 @@ describe('złoty hasz determinizmu', () => {
  * Podmiana tej liczby, żeby „testy przeszły", kasuje jedyny strażnik, jaki ta własność ma.
  */
 const GOLDEN_RUN_TICKS = 1200;
-const GOLDEN_RUN_SHA256 = 'b6a638a0f3df21e66122cdc645855b7963437bc297836313ee1ae980a02da22c';
+const GOLDEN_RUN_SHA256 = 'bd751f934f6ad0bfc546ef039f727a61497117a5f6d44637b9ae7bde24a4467f';
 
 /**
  * Konfiguracja przebiegu — **ZAMROŻONY LITERAŁ, nie `DEFAULT_RUN`**.
@@ -152,6 +152,32 @@ const GOLDEN_RUN_SHA256 = 'b6a638a0f3df21e66122cdc645855b7963437bc297836313ee1ae
 const GOLDEN_RUN_CONFIG: RunConfig = {
   rotationPeriod: 180,
   startingOre: 100_000,
+  // 1 = tożsamość. Suwak dodany w Zadaniu 3 Fazy 3; przy jedynce mnożenie `reward * 1`
+  // jest dokładne, więc TRAJEKTORIA nie ma prawa drgnąć — i to jest kontrola pozytywna
+  // tej zmiany. Rusza się wyłącznie ODCISK, bo literał zyskał pole.
+  killRewardScale: 1,
+  /**
+   * Ćwierć obrotu po świcie — **wybrane pomiarem, nie domyślne**.
+   *
+   * W odróżnieniu od `killRewardScale: 1` to nie jest tożsamość: symulacja liczy teraz
+   * słońce z przesunięciem względem świtu komórki startowej, więc trajektoria tego
+   * przebiegu MUSIAŁA się zmienić i została przepięta razem z odciskiem. Zmiana silnika,
+   * zamierzona i jednorazowa.
+   *
+   * Dlaczego akurat 0,25, a nie 0 (nastawa gry): przy świcie ten scenariusz przestaje
+   * ćwiczyć wieże. Zmierzone na 1200 tickach, zabójstwa wieże/słońce przy kolejnych fazach:
+   * 0 → **0/53**, 0,125 → 6/34, **0,25 → 46/10**, 0,375 → 60/2, 0,5 → 71/**0**,
+   * 0,75 → 49/5, 0,875 → 16/43. Skrajne fazy zostawiają JEDNĄ ścieżkę śmierci martwą,
+   * a trajektoria ma strzec obu. 0,25 jest jedyną wartością z obiema wyraźnie dodatnimi.
+   *
+   * To także powód, dla którego `GOLDEN_RUN_CONFIG` nie idzie za `DEFAULT_RUN`: gra stoi
+   * dziś na **0,75** (45 s nocy, potem wschód), a ten scenariusz ma ćwiczyć silnik, nie
+   * balans — więc trzyma własną fazę niezależnie od tego, gdzie wyląduje strojenie.
+   */
+  sunPhaseAtStart: 0.25,
+  // Zero = ściana, czyli zachowanie sprzed mechaniki pasa śmierci. Zamrożone tutaj celowo:
+  // gdy gra kiedyś tę mechanikę włączy, ten scenariusz ma dalej ćwiczyć to, co ćwiczył.
+  lightPermeability: 0,
   cyclesPerRun: 10,
   evacUnlockFraction: 0.67,
   evacEnergyRequired: 1000,
@@ -191,7 +217,7 @@ const GOLDEN_RUN_CONFIG: RunConfig = {
  * Przestawienie pól bez zmiany wartości zgłosi „balans się zmienił" — kierunek zachowawczy
  * (każe spojrzeć), nie przeoczenie.
  */
-const GOLDEN_BALANCE_SHA256 = '1f9b4bbb941c2f5d4c4b11dbd2145969efb3a1a9f9d6ff1948fee2b2088e9998';
+const GOLDEN_BALANCE_SHA256 = 'd19faf5a0034794e3453e94f281ebd51d1efda47e5f9ee431f5a12a2c7bf536c';
 
 function balanceFingerprint(): string {
   return createHash('sha256')
@@ -203,6 +229,18 @@ function balanceFingerprint(): string {
  * Skrypt budowy — stały, nie losowy, i dobrany tak, żeby przebieg **dotykał wszystkich
  * systemów**: ekonomii (EXTRACTOR), sieci (PYLON), walki (wieże) i kaskady (cztery lasery
  * przy produkcji 10/s wymuszają brownout, gdy magazyn siądzie).
+ *
+ * ## Dwa panele doszły, bo bez nich strażnik BYŁ ŚLEPY na kinetyczną
+ *
+ * Zmierzone w Fazie 3: podmiana `KINETIC_TURRET.dps` na **999** nie zmieniała trajektorii
+ * ani o bit. Powód: `BROWNOUT_ORDER` zrzuca kinetyczną PRZED laserami, a przy produkcji
+ * 10/s i popycie 51,5 zrzucane było wszystko — kinetyczna nie oddała ani jednego strzału
+ * przez 1200 ticków. Cała jej ścieżka walki była dla złotego haszu niewidoczna, a hasz
+ * twierdził, że strzeże silnika.
+ *
+ * Panele naprawiają to, NIE usuwając kaskady: w dzień podaż rośnie do ~90 i wszystko
+ * działa, w nocy spada do 10 i zrzut wraca. Scenariusz ćwiczy teraz OBIE strony.
+ * Kontrola tej naprawy jest w teście niżej — mutacja `dps` MUSI ruszyć trajektorię.
  */
 const GOLDEN_RUN_SCRIPT: readonly (readonly [number, BuildingType])[] = [
   [0, 'BARRICADE'],
@@ -212,6 +250,8 @@ const GOLDEN_RUN_SCRIPT: readonly (readonly [number, BuildingType])[] = [
   [4, 'LASER_TURRET'],
   [5, 'LASER_TURRET'],
   [6, 'LASER_TURRET'],
+  [7, 'SOLAR_PANEL'],
+  [8, 'SOLAR_PANEL'],
 ];
 
 /**
@@ -232,11 +272,22 @@ const GOLDEN_RUN_SCRIPT: readonly (readonly [number, BuildingType])[] = [
 function goldenRunHashes(): string[] {
   const planet = createPlanet({ seed: GOLDEN_SEED });
   const sim = new Sim(planet, GOLDEN_RUN_CONFIG);
-  const free = planet.cells[planet.startCell].neighbors.filter(
-    (c) => planet.cells[c].cellType === 'HEXAGON',
-  );
+  // Pula: sąsiedzi CORE ORAZ ich sąsiedzi. Sami sąsiedzi to najwyżej sześć komórek,
+  // więc `slot % free.length` ZAWIJAŁO się już przy siódmej pozycji skryptu i kolejne
+  // budowy trafiały w zajęte komórki, gdzie `canBuild` je po cichu odrzucał. Skrypt
+  // deklarował siedem budynków, a stawiał sześć — i nikt tego nie widział, bo odrzucona
+  // komenda niczego nie zgłasza. Każdy slot musi mieć WŁASNĄ komórkę.
+  const sasiedzi = planet.cells[planet.startCell].neighbors;
+  const free = [...new Set([...sasiedzi, ...sasiedzi.flatMap((c) => planet.cells[c].neighbors)])]
+    .filter((c) => c !== planet.startCell && planet.cells[c].cellType === 'HEXAGON')
+    .sort((a, b) => a - b);
+  if (free.length < GOLDEN_RUN_SCRIPT.length) {
+    throw new Error(
+      `złoty scenariusz: ${GOLDEN_RUN_SCRIPT.length} pozycji, a wolnych heksów ${free.length}`,
+    );
+  }
   for (const [slot, type] of GOLDEN_RUN_SCRIPT) {
-    const cellId = free[slot % free.length];
+    const cellId = free[slot];
     if (BUILDINGS[type].allowedCells === 'HEXAGON') {
       sim.enqueue({ kind: 'BUILD', cellId, type });
     }
@@ -292,6 +343,10 @@ describe('złoty hasz TRAJEKTORII', () => {
     }
     for (let t = 0; t < GOLDEN_RUN_TICKS; t++) sim.step();
     expect(sim.state.killsByTurret, 'wieże muszą realnie strzelać').toBeGreaterThan(20);
+    // Dodane po wprowadzeniu fazy słońca: bez tego scenariusz z CORE w pełnej nocy
+    // przechodziłby z ZEREM zgonów od ekspozycji, a trajektoria przestałaby strzec
+    // `updateBurning`. Zmierzone przy fazie 0,5: 71 zgonów od wież i dokładnie 0 od słońca.
+    expect(sim.state.killsBySun, 'słońce musi realnie palić').toBeGreaterThan(0);
     expect(sim.state.nextUnitId - 1, 'fale muszą realnie spawnować').toBeGreaterThan(50);
   });
 });

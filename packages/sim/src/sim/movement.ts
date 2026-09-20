@@ -133,6 +133,7 @@ export function updateMovement(
   light: Float32Array,
   sunDir: Vec3,
   ctx: MotionContext,
+  przepuszczalnoscSwiatla: number,
 ): void {
   const cells = s.planet.cells;
   // Niezmiennik, na którym stoi nearestLocalCell (patrz jej doc-comment niżej):
@@ -165,21 +166,38 @@ export function updateMovement(
       );
     }
 
-    let targetDir: Vec3;
-
-    if (light[u.cellId] > 0) {
-      // W świetle jednostka porzuca cel i biegnie najkrótszą drogą do cienia,
-      // czyli wzdłuż wielkiego okręgu ku punktowi antypodycznemu do słońca (§4.4).
-      targetDir = scale(sunDir, -1);
-    } else {
+    /** Kierunek do celu z pola przepływu; `null`, gdy trasa się urwała. */
+    const celMarszu = (): Vec3 | null => {
       const next = fields[u.type].next[u.cellId];
-      // Brak celu, albo następna komórka jest zabudowana — stoimy.
-      // Zabudowa nie jest przeszkodą absolutną: zajmie się nią walka (Task 2).
-      // Ten wczesny `continue` musi zostać — Task 2 czyta `next` już PO tym
-      // wywołaniu (`ahead = buildings[next]`), żeby wybrać cel walki.
-      if (next < 0 || s.buildings[next] !== null) continue;
-      targetDir = cells[next].normal;
-    }
+      return next < 0 ? null : cells[next].normal;
+    };
+
+    /**
+     * Kierunek marszu — MIESZANKA celu i ucieczki, sterowana poparzeniem.
+     *
+     * **Liczona ZAWSZE, nie tylko w świetle**, i to jest sedno. Pierwsza wersja tej naprawy
+     * trzymała mieszanie pod warunkiem `light[u.cellId] > 0` i wygładziła wyłącznie WEJŚCIE
+     * w światło: przy wyjściu jednostka wracała do pościgu natychmiast, czyli drugi raz
+     * obracała się o 180° w jednym ticku. Zmierzone wtedy: **21,85 % ticków ze zwrotem
+     * ostrzejszym niż 90°**, p90 = 175,6°. Poparzenie opada w cieniu stopniowo
+     * (`SHADOW_RECOVERY_RATE`), więc użyte jako parametr daje ciągłość po OBU stronach
+     * terminatora — jednostka odwraca się wchodząc i prostuje wychodząc.
+     *
+     * Zabudowa nie jest tu powodem do stania w miejscu — patrz kontrola ogonowa niżej
+     * (naprawa O2). Brak trasy jest: wtedy zostaje sama ucieczka, bo stanie w świetle
+     * znaczy śmierć, a w cieniu przy zerowym poparzeniu ucieczka i tak nie ma dokąd wieść.
+     */
+    const cel = celMarszu();
+    const wSwietle = light[u.cellId] > 0;
+    if (cel === null && !wSwietle && u.exposure <= 0) continue;
+    const targetDir = kierunekMarszu(
+      u.exposure,
+      ENEMIES[u.type].burnTime,
+      cel,
+      sunDir,
+      wSwietle,
+      przepuszczalnoscSwiatla,
+    );
 
     const from = scale(u.pos, 1 / ctx.radius);
     const moved = slerpToward(from, targetDir, angleStep);
@@ -187,10 +205,91 @@ export function updateMovement(
     // Zabudowa blokuje tak samo w ucieczce, jak w marszu do celu (D3). Warunek
     // `candidate !== u.cellId` jest konieczny: bez niego jednostka, pod którą ktoś
     // postawi budynek, zamarza na zawsze zamiast z niego zejść.
+    //
+    // Od naprawy O2 ta kontrola jest JEDYNYM strażnikiem wejścia w mur — wcześniej
+    // dublował ją wczesny `continue` w gałęzi wyżej. Walka czyta `next` PO tym wywołaniu
+    // (`ahead = buildings[next]`), więc `u.cellId` jednostki stojącej pod murem musi
+    // zostać nietknięty; zapewnia to sama odmowa przejścia.
     if (candidate !== u.cellId && s.buildings[candidate] !== null) continue;
     u.pos = scale(moved, ctx.radius);
     u.cellId = candidate;
   }
+}
+
+/**
+ * Kierunek marszu jednostki STOJĄCEJ W ŚWIETLE — mieszanka celu i ucieczki.
+ *
+ * ## Co to zmienia i dlaczego
+ *
+ * Do tej pory jednostka w świetle **porzucała cel natychmiast** i biegła ku punktowi
+ * antypodycznemu do słońca. Dawało to dwie rzeczy, obie zgłoszone przez gracza w sesji 1
+ * testów: wrogowie **odbijali się od terminatora jak od ściany** (zmierzone: głębokość
+ * wejścia ZAWSZE dokładnie 1 krok, przez 20 000 ticków ani razu głębiej), a obrót o 180°
+ * następował w jednym ticku, więc ruch czytał się szarpnięciem.
+ *
+ * Co ważniejsze, **ściana nie jest tym, co opisuje spec**. §4.4 definiuje PAS ŚMIERCI
+ * `D = burnTime · (v − v_term)` — „maksymalną głębokość, z której wróg zdąży uciec" —
+ * czyli światło jako RYZYKO, nie jako granicę nie do przejścia. Przy głębokości zawsze ≤ 1
+ * ten wzór nie opisywał niczego, co zachodzi w grze, a test N3 sprawdzał wyłącznie jego
+ * arytmetykę, nigdy zachowania.
+ *
+ * ## Jak
+ *
+ * Kierunek jest interpolowany **proporcjonalnie do POPARZENIA**, które stan już niesie
+ * (`Unit.exposure`, naliczane w `burning.ts`): świeżo wszedłszy w światło jednostka wciąż
+ * idzie do celu, a zawraca tym mocniej, im dłużej się piecze. Pełny odwrót przy
+ * `PROG_ZAWROTU · burnTime`, czyli z drugą połową budżetu poparzenia na drogę powrotną.
+ *
+ * **Zero nowych pól w `SimState`** — i to nie jest oszczędność dla samej oszczędności:
+ * każde nowe pole przechodzi przez niezmiennik serializowalności, kompletność `stateHash`
+ * i skaner strukturalny, a `exposure` już tam jest i już jest haszowane.
+ *
+ * Ciągłość mieszania daje przy okazji **płynny obrót zamiast skoku o 180°** — ta sama
+ * zmiana odpowiada więc na oba zgłoszenia gracza naraz.
+ *
+ * @param cel Kierunek do celu z pola przepływu, albo `null`, gdy trasa się urwała —
+ *   wtedy zostaje sama ucieczka, bo stanie w świetle znaczy śmierć.
+ */
+export function kierunekMarszu(
+  exposure: number,
+  burnTime: number,
+  cel: Vec3 | null,
+  sunDir: Vec3,
+  wSwietle: boolean,
+  przepuszczalnosc: number,
+): Vec3 {
+  const ucieczka = scale(sunDir, -1);
+  // Bez trasy zostaje sama ucieczka — także w cieniu przy zerowym poparzeniu, bo `cel`
+  // jest wtedy `null` i nie ma czego mieszać. Poprzednia wersja miała tu `cel ?? ucieczka`,
+  // czyli gałąź nieosiągalną: w tym miejscu `cel` jest z definicji `null`.
+  if (cel === null) return ucieczka;
+  const prog = przepuszczalnosc * burnTime;
+  // `prog <= 0` to ŚCIANA: zawracaj natychmiast, ale tylko stojąc w świetle. To jest
+  // zachowanie sprzed tej zmiany, zachowane co do bitu jako wartość domyślna gry.
+  const t = prog <= 0 ? (wSwietle ? 1 : 0) : Math.min(1, Math.max(0, exposure / prog));
+  if (t <= 0) return cel;
+  if (t >= 1) return ucieczka;
+  return slerpFraction(cel, ucieczka, t);
+}
+
+/**
+ * Interpolacja sferyczna między dwoma kierunkami jednostkowymi, ułamkiem `t` kąta.
+ *
+ * Osobna od `slerpToward`, bo tamta bierze KĄT BEZWZGLĘDNY (krok ruchu), a tutaj potrzebny
+ * jest UŁAMEK kąta między kierunkami. Wyrażenie jednego przez drugie wymagałoby liczenia
+ * `acos` po stronie wołającego i dawało dwa miejsca z tą samą trygonometrią.
+ */
+function slerpFraction(a: Vec3, b: Vec3, t: number): Vec3 {
+  const cosTheta = Math.min(1, Math.max(-1, dot(a, b)));
+  const theta = Math.acos(cosTheta);
+  // Kierunki (prawie) zgodne albo (prawie) przeciwne: interpolacja liniowa jest tu
+  // numerycznie bezpieczniejsza, a przy theta ≈ 0 i tak nie ma czego obracać.
+  if (theta < 1e-9) return a;
+  if (Math.PI - theta < 1e-9) return t < 0.5 ? a : b;
+  const sinTheta = Math.sin(theta);
+  const wa = Math.sin((1 - t) * theta) / sinTheta;
+  const wb = Math.sin(t * theta) / sinTheta;
+  return normalize(add(scale(a, wa), scale(b, wb)));
 }
 
 /** Obrót `from` ku `to` wzdłuż wielkiego okręgu o zadany kąt. Oba argumenty jednostkowe. */

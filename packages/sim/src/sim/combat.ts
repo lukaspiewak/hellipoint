@@ -42,10 +42,14 @@ export function cellsWithinSteps(s: SimState, origin: number, steps: number): nu
  * Gdyby kiedyś któraś mechanika zaczęła to czytać, przeniesienie do stanu będzie świadomą
  * zmianą, a nie skutkiem ubocznym ekranu.
  */
-export function updateCombat(s: SimState, fields: Record<EnemyType, FlowField>): EnemyType | null {
+export function updateCombat(
+  s: SimState,
+  fields: Record<EnemyType, FlowField>,
+  killRewardScale: number,
+): EnemyType | null {
   const coreDamager = unitsAttackBuildings(s, fields);
   turretsAttackUnits(s);
-  removeDeadUnits(s);
+  removeDeadUnits(s, killRewardScale);
   removeDeadBuildings(s);
   return coreDamager;
 }
@@ -127,7 +131,7 @@ function turretsAttackUnits(s: SimState): void {
   }
 }
 
-function removeDeadUnits(s: SimState): void {
+function removeDeadUnits(s: SimState, killRewardScale: number): void {
   // Nalicza rudę za KAŻDĄ jednostkę z hp<=0, nie tylko za te, które walka sama
   // zabiła — bezpieczne wyłącznie dlatego, że walka jest dziś PIERWSZYM systemem
   // zabijającym jednostki w ticku (§ kolejność systemów, global-constraints.md);
@@ -146,7 +150,7 @@ function removeDeadUnits(s: SimState): void {
   for (const u of s.units) {
     if (u.hp > 0) survivors.push(u);
     else {
-      s.ore += ENEMIES[u.type].oreReward;
+      s.ore += ENEMIES[u.type].oreReward * killRewardScale;
       s.killsByTurret++;
     }
   }

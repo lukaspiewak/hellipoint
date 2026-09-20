@@ -44,6 +44,7 @@ import {
   headlineText,
   powerRowText,
   resourceRowText,
+  SEGMENT_SEPARATOR,
   MAX_MENU_TYPES,
   menuRowText,
   powerLine,
@@ -1689,6 +1690,63 @@ describe('31. [UKŁAD] żaden wiersz panelu nie zawija się w minimalnym oknie',
 });
 
 // ---------------------------------------------------------------------------------------
+// 31e-h. Cel runu widoczny bez wskazywania komórki
+// ---------------------------------------------------------------------------------------
+describe('31e. [CEL] wiersz zasobów mówi, KIEDY wolno się ewakuować', () => {
+  /**
+   * Sesja 1 testów z ludźmi: odliczanie do ewakuacji było wyłącznie w wierszu MENU, czyli
+   * pojawiało się dopiero po wskazaniu komórki i spojrzeniu na dziewiątą pozycję listy.
+   * Tester skanujący ekran nie miał jak się dowiedzieć, że wygrywa się ewakuacją — a to
+   * jedyny warunek zwycięstwa (§5.6), i onboardingu w MVP nie ma (§8.2).
+   */
+  it('31e. przy runie TRWAJĄCYM niesie odliczanie, bez wskazanej komórki', () => {
+    const { s } = richRun();
+    s.tick = 0;
+    s.evacUnlockTick = 21_600;
+    const wiersz = resourceRowText(s, null);
+    expect(wiersz).toContain('ewakuacja za');
+    expect(wiersz, 'ma działać BEZ wskazanej komórki — o to cała rzecz').toContain('—');
+  });
+
+  it('31f. [PARA] po odblokowaniu mówi GOTOWA, a nie „za 0:00"', () => {
+    const { s } = richRun();
+    s.tick = 21_600;
+    s.evacUnlockTick = 21_600;
+    expect(resourceRowText(s, null)).toContain('EWAKUACJA GOTOWA');
+    expect(resourceRowText(s, null)).not.toContain('ewakuacja za');
+  });
+
+  it('31g. po KOŃCU runu segment znika — inaczej dwa komunikaty walczą o ten sam wiersz', () => {
+    const { s } = richRun();
+    s.tick = 0;
+    s.evacUnlockTick = 21_600;
+    s.phase = 'DEFEAT';
+    const wiersz = resourceRowText(s, null);
+    expect(wiersz).not.toContain('ewakuacja');
+    expect(wiersz, 'zamiast niego ma być zdanie o końcu runu').toContain('run zakończony');
+  });
+
+  /**
+   * Asercja NOŚNA dla budżetu: oba segmenty wykluczają się w czasie, więc najgorszy wiersz
+   * się nie zmienia. Gdyby kiedyś mogły wystąpić naraz, wiersz przekroczyłby budżet i zawinął
+   * się w minimalnym oknie — klasa wady, która unieważniła cztery pomiary bramki 2B.
+   */
+  it('31h. odliczanie i zdanie o końcu runu NIGDY nie stoją w tym samym wierszu', () => {
+    const { s } = richRun();
+    s.evacUnlockTick = 21_600;
+    for (const phase of ['RUNNING', 'VICTORY', 'DEFEAT'] as const) {
+      s.phase = phase;
+      s.tick = 0;
+      const w = resourceRowText(s, 1441);
+      expect(
+        w.includes('ewakuacja') && w.includes('run zakończony'),
+        `faza ${phase}: oba segmenty naraz`,
+      ).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------
 // 32. Separatory — segmenty w jednym wierszu nie mogą się zlewać
 // ---------------------------------------------------------------------------------------
 describe('32. [SEPARATOR] segmenty składane w jeden wiersz są rozdzielone', () => {
@@ -1755,11 +1813,20 @@ describe('32. [SEPARATOR] segmenty składane w jeden wiersz są rozdzielone', ()
     s.phase = 'DEFEAT';
     const finished = headlineText(s, cell);
 
-    // Kontrola na fiksturę: ostrzeżenie faktycznie doszło, a wskazanie zostało.
-    expect(finished.startsWith(running)).toBe(true);
-    const tail = finished.slice(running.length);
-    expect(tail.length).toBeGreaterThan(0);
-    expect(tail).not.toMatch(/^\S/);
+    // Kontrola na fiksturę: nagłówki faktycznie się RÓŻNIĄ, czyli ostrzeżenie doszło.
+    // Poprzednia wersja brała nagłówek runu trwającego jako PRZEDROSTEK zakończonego —
+    // przestało to być prawdą, gdy doszedł segment ewakuacji, widoczny wyłącznie przy
+    // RUNNING. Nowa asercja sprawdza WSZYSTKIE styki naraz i nadal nie wymienia ani
+    // separatora, ani sąsiadujących słów.
+    expect(finished).not.toBe(running);
+    for (const naglowek of [running, finished]) {
+      const segmenty = naglowek.split(SEGMENT_SEPARATOR).slice(1);
+      expect(segmenty.length, `„${naglowek}" nie ma ani jednego styku`).toBeGreaterThan(0);
+      for (const seg of segmenty) {
+        expect(seg.length, `pusty segment w „${naglowek}"`).toBeGreaterThan(0);
+        expect(seg, `zlepiony styk w „${naglowek}"`).not.toMatch(/^\s/);
+      }
+    }
 
     const panel = makePanel();
     panel.view.update(s, IDLE_POWER, cell, 'BARRICADE', null);

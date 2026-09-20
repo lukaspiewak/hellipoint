@@ -6,7 +6,8 @@ import {
   type Phase,
   type RunConfig,
 } from '@heliopolis/sim';
-import { ScriptedPolicy } from './policy.js';
+import { createHash } from 'node:crypto';
+import { BeginnerPolicy, type PolicyFactory } from './policy.js';
 import { formatReport } from './report.js';
 
 export interface RunResult {
@@ -26,19 +27,71 @@ export interface RunResult {
    * Czytany z `Sim`, nie ze stanu: to raport z ticku, nie wielkość, od której coś zależy.
    */
   coreDamager: EnemyType | null;
+  /**
+   * Nazwa polityki, na której ten wynik powstał (Faza 3, Zadanie 1).
+   *
+   * Przy KAŻDYM wyniku, nie tylko w nagłówku raportu: dwa wiersze z dwóch polityk wyglądają
+   * identycznie, a §11.1 ma gotowy przykład, co kosztuje ich pomylenie — tabela ekstraktorów
+   * powstała na słabszej polityce i jej progi bezwzględne nie są wiążące.
+   */
+  policy: string;
+  /**
+   * Odcisk `RunConfig`, na którym ten przebieg powstał (Faza 3, naprawa Z5).
+   *
+   * Raport krzyczał na mieszanie POLITYK, a był ślepy na mieszanie KONFIGURACJI — i to
+   * mimo że Zadanie 3 polega właśnie na przemiataniu konfiguracji. Partia z dwóch różnych
+   * `startingOre` dawała spokojny raport bez jednego słowa ostrzeżenia, a jej rozkłady
+   * nie opisywały żadnej z tych dwóch nastaw.
+   *
+   * Odcisk, nie cała konfiguracja: do raportu trafia osiem znaków, a nie osiemnaście pól.
+   * Do NAZWANIA nastawy służy etykieta partii, którą nadaje przemiatanie — odcisk ma
+   * wyłącznie wykrywać, że w jednej partii są dwie.
+   */
+  configFingerprint: string;
+  /**
+   * Nazwa OTWARCIA, którym grała polityka — przy KAŻDYM wyniku, nie tylko w nagłówku.
+   *
+   * Ten sam argument, co przy `policy`: nagłówek raportu tekstowego nie trafia do `.json`,
+   * a `--combine` czyta właśnie `.json`. Bez tego pola partia policzona innym otwarciem
+   * wchodziła do raportu bazowego bez słowa — pokazane uruchomieniem w bramce gałęzi.
+   */
+  opening: string;
 }
 
 /**
- * [STROJENIE] Bot podejmuje decyzję co sekundę, nie co tick — inaczej stawiałby budynki
- * szybciej, niż zarabia. 20 ticków = 1 s przy `TICK_SECONDS = 0,05`; sam ODSTĘP jest
- * pokrętłem zachowania bota (Faza 3 może go zmienić), nie stałą wynikającą z czegokolwiek.
+ * Osiem znaków odcisku `RunConfig` — tyle, żeby dwie różne nastawy w jednej partii rzucały
+ * się w oczy, i za mało, żeby ktoś próbował z tego odczytać samą nastawę.
+ *
+ * `JSON.stringify` zależy od kolejności pól, więc przestawienie ich w `DEFAULT_RUN` zgłosi
+ * „inna konfiguracja" bez zmiany wartości. Kierunek zachowawczy: każe spojrzeć.
  */
-const DECISION_INTERVAL_TICKS = 20;
+export function configFingerprint(cfg: RunConfig): string {
+  return createHash('sha256').update(JSON.stringify(cfg)).digest('hex').slice(0, 8);
+}
 
-export function simulateRun(seed: number, cfg: RunConfig, maxTicks: number): RunResult {
+/**
+ * Odstęp decyzji NIE jest już stałą tego pliku — czyta się go z polityki
+ * (`Policy.decisionIntervalTicks`). Przegląd Zadania 1 Fazy 3 (Z1) zmierzył, ile kosztowała
+ * jedna wspólna wartość: `SkilledPolicy` dławiona odstępem 20 wygrywała 39 % grywalnych
+ * seedów zamiast 78 %, czyli przyrząd zaniżał sufit o połowę.
+ */
+
+/**
+ * Jeden przebieg.
+ *
+ * `makePolicy` jest OPCJONALNE i domyślnie daje politykę początkującą — bez tego wszystkie
+ * dotychczasowe pomiary (raport z 1000 runów, `pnpm bench`) po cichu zmieniłyby znaczenie.
+ * Fabryka, a nie gotowa polityka, bo polityka potrzebuje `Sim`, który powstaje tutaj.
+ */
+export function simulateRun(
+  seed: number,
+  cfg: RunConfig,
+  maxTicks: number,
+  makePolicy: PolicyFactory = (sim) => new BeginnerPolicy(sim),
+): RunResult {
   const planet = createPlanet({ seed });
   const sim = new Sim(planet, cfg);
-  const policy = new ScriptedPolicy(sim);
+  const policy = makePolicy(sim);
 
   const capacities = planet.cells.map((c) => c.oreCapacity);
   let peakBuildings = 0;
@@ -46,7 +99,7 @@ export function simulateRun(seed: number, cfg: RunConfig, maxTicks: number): Run
   let ticks = 0;
 
   while (sim.state.phase === 'RUNNING' && ticks < maxTicks) {
-    if (ticks % DECISION_INTERVAL_TICKS === 0) {
+    if (ticks % policy.decisionIntervalTicks === 0) {
       for (const cmd of policy.decide()) sim.enqueue(cmd);
     }
 
@@ -82,6 +135,9 @@ export function simulateRun(seed: number, cfg: RunConfig, maxTicks: number): Run
     killsByTurret: sim.state.killsByTurret,
     firstDepletionTick,
     coreDamager: sim.lastCoreDamager,
+    policy: policy.name,
+    configFingerprint: configFingerprint(cfg),
+    opening: policy.opening,
   };
 }
 

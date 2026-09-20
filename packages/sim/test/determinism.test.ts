@@ -7,6 +7,7 @@ import { minRotationPeriod } from '../src/sim/movement.js';
 import type { Command } from '../src/sim/commands.js';
 import { DEFAULT_RUN } from '../src/sim/rules.js';
 import { DEFAULT_SPAWN } from '../src/sim/spawning.js';
+import { GESTA_FAZA_SLONCA, GESTY_SPAWN, gestyRun } from './support/gestySpawn.js';
 
 /**
  * Pola `rotationPeriod`/`startingOre` wypisane JAWNIE, mimo że `DEFAULT_RUN` ma dziś
@@ -16,7 +17,12 @@ import { DEFAULT_SPAWN } from '../src/sim/spawning.js';
  * PYLON+BARRICADE). Bez jawnego nadpisania przestrojenie `DEFAULT_RUN` po cichu
  * zmieniałoby sens tych testów.
  */
-const CONFIG = { ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 150 };
+/**
+ * Tempo spawnu i faza słońca PRZYPIĘTE — patrz `gestyRun`. Determinizm ma być dowodzony na przebiegu
+ * BOGATYM w zdarzenia; kontrolę tego bogactwa niesie `fullrun.test.ts` i musi ona opisywać
+ * TĘ SAMĄ konfigurację.
+ */
+const CONFIG = gestyRun({ ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 150 });
 
 /**
  * `withCommands = false` daje IDENTYCZNĄ pętlę step() bez żadnej komendy w kolejce —
@@ -402,5 +408,75 @@ describe('RunConfig.spawn — walidacja pól SpawnConfig', () => {
       expect(build({ [pole]: Infinity }), pole).toThrow(RangeError);
       expect(build({ [pole]: 1 }), pole).not.toThrow();
     }
+  });
+});
+
+/**
+ * # Mnożnik nagród za zabicie — walidacja (Faza 3, Zadanie 3)
+ *
+ * `killRewardScale` jest suwakiem, którym Zadanie 3 stroi trudność: §11.1 wskazał stopę
+ * nagród jako PRAWDZIWY regulator, z progiem między 0,25× a 0,1×. Mieszka w `RunConfig`,
+ * a nie w `ENEMIES`, żeby przemiatanie mogło zmieniać go per przebieg i żeby widział go
+ * `configFingerprint`.
+ *
+ * Tu stoi wyłącznie walidacja konstruktora — że suwak naprawdę DOCIERA do rudy, wiąże
+ * `fullrun.test.ts`, bo do zabicia kogokolwiek potrzebna jest obrona, a bez niej CORE
+ * pada w ~1000 ticków, zanim słońce kogokolwiek dopadnie (zmierzone: przy każdej stopie
+ * spawnu od 0,25 do 0,02 wychodzi `killsBySun = 0`).
+ */
+describe('RunConfig.killRewardScale — walidacja w konstruktorze Sim', () => {
+  const planet = createPlanet({ seed: 7 });
+
+  it('odrzuca wartość zdegenerowaną — NaN rozlałby się po rudzie i uciszył `canBuild`', () => {
+    for (const zly of [NaN, Infinity, -Infinity, -0.5]) {
+      expect(
+        () => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: zly }),
+        `killRewardScale=${zly}`,
+      ).toThrow(RangeError);
+    }
+  });
+
+  it('akceptuje 0 — stawka zerowa jest legalną nastawą przemiatania, nie błędem', () => {
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: 0 })).not.toThrow();
+  });
+
+  it('komunikat nazywa pole i wartość', () => {
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: -5 })).toThrow(
+      /killRewardScale.*-5/,
+    );
+  });
+});
+
+/**
+ * # Wielkości POCHODNE też mają straż (bramka gałęzi Fazy 3, znalezisko #2)
+ *
+ * `Number.isFinite(pole)` nie wystarcza, gdy pole wchodzi do iloczynu: `killRewardScale`
+ * równe `1e308` przechodzi walidację, a przemnożone przez nagrodę daje `Infinity`
+ * w `SimState.ore` — i łamie niezmiennik serializowalności wprost, bo `JSON.stringify`
+ * zamienia nieskończoność na `null`. Migawka Fazy 5 wróciłaby wtedy z inną rudą niż
+ * zapisano, a `stateHash` przestałby się zgadzać.
+ *
+ * Ta sama nauka stoi już w `spawning.ts` (`assertReleasable` na wielkości pochodnej,
+ * nie na polu) — nowe pola Fazy 3 dostały drugie piętro dopiero tutaj.
+ */
+describe('RunConfig — straż na wielkościach POCHODNYCH, nie tylko na polach', () => {
+  const planet = createPlanet({ seed: 7 });
+
+  it('[PARA] killRewardScale przepełniający iloczyn z nagrodą jest odrzucany', () => {
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: 1e308 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: 1e308 })).toThrow(/overflow/);
+    // Połówka „ma przejść": wartość duża, ale nieprzepełniająca, zostaje legalna.
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: 1e300 })).not.toThrow();
+  });
+
+  it('[PARA] sunPhaseAtStart przepełniający iloczyn z okresem obrotu — w KONSTRUKTORZE', () => {
+    // Bez tej straży `sunDirection` rzuca dopiero ze `step()`. Ten sam układ uznano
+    // za wadę przy `rotationPeriod` i przeniesiono do konstruktora.
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, sunPhaseAtStart: 1e307 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, sunPhaseAtStart: 1e300 })).not.toThrow();
+  });
+
+  it('KONTROLA: DEFAULT_RUN nie wywołuje żadnej z tych straży', () => {
+    expect(() => new Sim(planet, DEFAULT_RUN)).not.toThrow();
   });
 });

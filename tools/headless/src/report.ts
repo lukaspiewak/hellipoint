@@ -1,4 +1,5 @@
 import { TICK_SECONDS } from '@heliopolis/sim';
+import { diagnozuj } from './diagnostics.js';
 import type { RunResult } from './run.js';
 
 /**
@@ -23,6 +24,35 @@ export function formatReport(results: RunResult[]): string {
   const truncated = results.filter((r) => r.phase === 'RUNNING');
 
   const lines: string[] = [];
+
+  // NAZWA POLITYKI wyprowadzona z samych wyników, nie podana parametrem — parametr dałoby
+  // się pomylić z zawartością, a to jest dokładnie ta pomyłka, która unieważniła tabelę
+  // ekstraktorów w §11.1 specu.
+  const policies = [...new Set(results.map((r) => r.policy))].sort();
+  if (policies.length > 1) {
+    // Partia z dwóch polityk nie opisuje ŻADNEJ z nich. Głośno i na samej górze, bo taki
+    // raport wygląda dokładnie jak poprawny — dwie liczby z dwóch botów są nierozróżnialne.
+    //
+    // KOLEJNOŚĆ: ostrzeżenia idą PRZED nazwą polityki i przed liczbami. Wstawienie tu
+    // wiersza kontekstowego zepchnęło ostrzeżenie o obcięciu z pierwszej linii i oblało
+    // test, który tamtej pozycji pilnuje — słusznie, bo „ostrzeżenie w pierwszej linii,
+    // nie schowane w środku tabeli" jest kontraktem tego raportu.
+    lines.push(
+      `!!! UWAGA: ta partia MIESZA ${policies.length} polityki (${policies.join(', ')}).`,
+    );
+    lines.push('!!! Rozkłady poniżej nie opisują żadnej z nich. Rozdziel partie.');
+    lines.push('');
+  }
+
+  // DIAGNOZY PRZYRZĄDU idą przed ostrzeżeniami o treści partii, bo mówią o czymś
+  // poważniejszym: że tej partii w ogóle nie wolno czytać jako wyniku. Ostrzeżenie
+  // „mieszasz polityki" znaczy „rozdziel i przeczytaj"; diagnoza zakleszczenia znaczy
+  // „nie czytaj, popraw i policz od nowa".
+  for (const d of diagnozuj(results)) {
+    lines.push(`!!! PRZYRZĄD [${d.kod}]: ${d.opis}`);
+    lines.push('');
+  }
+
   if (truncated.length > 0) {
     lines.push(
       `!!! UWAGA: ${truncated.length} z ${n} runów (${pct(truncated.length / n)}) NIE ZAKOŃCZYŁO SIĘ —`,
@@ -31,6 +61,26 @@ export function formatReport(results: RunResult[]): string {
     lines.push('!!! Rozkłady porażki niżej opisują wyłącznie runy zakończone, więc są NIEPEŁNE.');
     lines.push('');
   }
+  // To samo dla OTWARCIA. Odcisk konfiguracji tego NIE łapie i słusznie — otwarcie jest
+  // własnością polityki, nie nastawy — więc bez osobnego strażnika partia z dwóch linii
+  // wygląda dokładnie jak partia z jednej (pokazane uruchomieniem w bramce gałęzi Fazy 3).
+  const otwarcia = [...new Set(results.map((r) => r.opening))].sort();
+  if (otwarcia.length > 1) {
+    lines.push(`!!! UWAGA: ta partia MIESZA ${otwarcia.length} otwarcia (${otwarcia.join(', ')}).`);
+    lines.push('!!! Rozkłady poniżej nie opisują żadnego z nich. Rozdziel partie.');
+    lines.push('');
+  }
+  // To samo dla KONFIGURACJI: Zadanie 3 przemiata nastawy, a partia z dwóch nastaw nie
+  // opisuje żadnej z nich — dokładnie tak samo jak partia z dwóch polityk (Z5).
+  const configs = [...new Set(results.map((r) => r.configFingerprint))].sort();
+  if (configs.length > 1) {
+    lines.push(`!!! UWAGA: ta partia MIESZA ${configs.length} konfiguracje (${configs.join(', ')}).`);
+    lines.push('!!! Rozkłady poniżej nie opisują żadnej z nich. Rozdziel partie.');
+    lines.push('');
+  }
+
+  if (policies.length === 1) lines.push(`polityka: ${policies[0]}`);
+  if (configs.length === 1) lines.push(`konfiguracja: ${configs[0]}`);
   lines.push(`runów: ${n}`);
   lines.push(`  zwycięstw: ${wins} (${pct(wins / n)})`);
   lines.push(`  porażek:   ${defeats.length} (${pct(defeats.length / n)})`);
@@ -59,8 +109,19 @@ export function formatReport(results: RunResult[]): string {
   return lines.join('\n');
 }
 
+/**
+ * Odsetek do wydruku — **nigdy „0.0%" dla wartości niezerowej**.
+ *
+ * Ta sama ochrona, co w `health.ts`, i z tego samego powodu: liczba prawdziwa nie powinna
+ * być nieodróżnialna od liczby fałszywej. `report.ts` jej nie miał i **już raz skłamał
+ * w opublikowanym raporcie bazowym**: wiersz „wyczerpanie 1. złoża: 0.0% runów, czas [s]
+ * p10=134.1 …" — kwantyle mogą istnieć tylko przy co najmniej jednym wyczerpaniu, więc
+ * złoże wyczerpało się w 1–49 runach na 10 000, a wiersz czytał się jak „nigdy".
+ */
 function pct(v: number): string {
-  return Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : 'n/d';
+  if (!Number.isFinite(v)) return 'n/d';
+  const p = v * 100;
+  return p > 0 && p < 0.05 ? `${p.toFixed(2)}%` : `${p.toFixed(1)}%`;
 }
 
 function quantiles(values: number[]): string {

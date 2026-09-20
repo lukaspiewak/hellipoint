@@ -68,18 +68,33 @@ Z konkretów, każdy z przebytej wpadki:
   potrafią nie dopasować wzorca i nie krzyknąć.
 - Kontrola musi **czytać** to, co sprawdza. Napis „mutacja na dysku" wypisany bezwarunkowo
   wygląda jak kontrola, a jest napisem.
+- **Podmiana wzorcem regularnym bez asercji na LICZBĘ dopasowań** zmieniła nie ten budynek,
+  co trzeba: wzorzec bez zakotwiczenia pasował do czterech wpisów w `defs.ts` i zrobił
+  z panelu słonecznego wieżę AOE. Wykryło to dopiero to, że liczba, która **nie miała
+  prawa drgnąć**, drgnęła. Każda podmiana: dokładny ciąg, `count == 1`, odczyt z dysku.
 - Nie łączyć kontroli z przebiegiem przez `&&` — `grep -c` zwracające 0 urywa łańcuch,
   testy nie ruszają, wygląda na „przeszło".
 - Pomiar pod obciążeniem ma mieć **sondę pokazującą, że obciążenie gryzie**. 5 procesów
   na 10 rdzeniach nie zmieniło niczego; przy 20 jeden test oblewał we wszystkich sześciu przebiegach.
 - Zanim uznasz „brak efektu" — uruchom zmianę, o której wiadomo, że efekt dać musi.
 - Próbkowanie łapie wyłącznie to, co trwa dłużej niż odstęp między próbkami.
+- **Naprawa znaleziska domyka instancję; mechanizm, który je wyprodukował, zostaje.**
+  H4 liczone na niewłaściwej populacji naprawiono, licząc je na właściwej — a populacje
+  nadal przychodziły do `assessHealth` POZYCYJNIE, więc zamiana dwóch ścieżek w wierszu
+  poleceń odtwarzała tę samą wadę bez jednego ostrzeżenia. Po każdej naprawie pytanie
+  brzmi: *co jeszcze mogłoby wejść tą samą drogą?*
 
 ### 3. Progi wiąże się parą mutacji
 
 Dla każdego progu dwie mutacje: **tuż za** (ma oblać) i **tuż przed** (ma przejść).
 Połówka „ma przejść" wykryła wadę siedem razy — zawsze wtedy, gdy pierwsza pokazywała
 komplet czerwonych i wyglądało to na sukces.
+
+**„Tuż" jest częścią reguły, nie stylem.** Para stojąca daleko od progu wiąże PASMO,
+nie próg: dla 25–60 % para 40 % / 85 % świeci na zielono i przepuszcza mutację
+`minPct = 35`. Osiem progów z dziewięciu miało tę wadę w Zadaniu 2 Fazy 3 — para ma stać
+o najmniejszy krok od liczby, którą wiąże, a osobnej pary potrzebuje też **operator**
+(`<` podmienione na `<=` to mutacja, której nie widzi żadna para odległa od granicy).
 
 Złoty hasz: [`packages/sim/test/golden-hash.test.ts`](packages/sim/test/golden-hash.test.ts).
 Zamrożona konfiguracja + osobny odcisk tabel balansu — strojenie `DEFAULT_RUN` go nie rusza,

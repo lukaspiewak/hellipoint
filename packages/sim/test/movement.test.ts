@@ -3,10 +3,15 @@ import { createPlanet } from '../src/world/planet.js';
 import { createState, TICK_SECONDS } from '../src/sim/state.js';
 import { applyCommand } from '../src/sim/commands.js';
 import { buildAllFlowFields } from '../src/sim/flowfield.js';
-import { spawnUnit, updateMovement, type MotionContext } from '../src/sim/movement.js';
+import {
+  kierunekMarszu,
+  spawnUnit,
+  updateMovement,
+  type MotionContext,
+} from '../src/sim/movement.js';
 import { cellSpacing, terminatorSpeedCells } from '../src/world/scale.js';
 import { BUILDINGS, ENEMIES } from '../src/sim/defs.js';
-import { length, scale, sub, normalize, dot } from '../src/math/vec3.js';
+import { length, scale, sub, normalize, dot, vec3 } from '../src/math/vec3.js';
 import { multiSourceDistances } from '../src/world/graph.js';
 
 const planet = createPlanet({ seed: 51 });
@@ -90,7 +95,7 @@ describe('updateMovement', () => {
     const s = withCore();
     spawnUnit(s, 'SWARM', atSteps(6));
     const fields = buildAllFlowFields(s);
-    for (let i = 0; i < 200; i++) updateMovement(s, fields, dark, sunDir, ctx);
+    for (let i = 0; i < 200; i++) updateMovement(s, fields, dark, sunDir, ctx, 0);
     expect(length(s.units[0].pos)).toBeCloseTo(planet.radius, 6);
   });
 
@@ -100,7 +105,7 @@ describe('updateMovement', () => {
     const fields = buildAllFlowFields(s);
     let prev = s.units[0].cellId;
     for (let i = 0; i < 400 && s.units.length > 0; i++) {
-      updateMovement(s, fields, dark, sunDir, ctx);
+      updateMovement(s, fields, dark, sunDir, ctx, 0);
       const cur = s.units[0].cellId;
       if (cur !== prev) {
         expect(planet.cells[prev].neighbors).toContain(cur);
@@ -115,7 +120,7 @@ describe('updateMovement', () => {
     const fields = buildAllFlowFields(s);
     let reached = false;
     for (let i = 0; i < 3000 && !reached; i++) {
-      updateMovement(s, fields, dark, sunDir, ctx);
+      updateMovement(s, fields, dark, sunDir, ctx, 0);
       const next = fields.SWARM.next[s.units[0].cellId];
       if (next === planet.startCell || s.units[0].cellId === planet.startCell) reached = true;
     }
@@ -130,7 +135,7 @@ describe('updateMovement', () => {
 
     const start = s.units[0].pos;
     const ticks = 100;
-    for (let i = 0; i < ticks; i++) updateMovement(s, fields, dark, sunDir, ctx);
+    for (let i = 0; i < ticks; i++) updateMovement(s, fields, dark, sunDir, ctx, 0);
 
     const travelled = arcLength(start, s.units[0].pos, planet.radius);
     const expected = ENEMIES.ARMOR.speedFactor * ctx.termSpeedCells * ctx.spacing * ticks * TICK_SECONDS;
@@ -167,7 +172,7 @@ describe('updateMovement', () => {
     // Zmierzone: ARMOR (speedFactor 0,85, najwolniejszy typ) osiąga ścianę i
     // zamraża się na niej po 34 tickach — budżet 2000 ma ~58× zapasu, nie jest
     // dobrany "w ciemno".
-    for (let i = 0; i < 2000; i++) updateMovement(s, fields, dark, sunDir, ctx);
+    for (let i = 0; i < 2000; i++) updateMovement(s, fields, dark, sunDir, ctx, 0);
 
     const finalCell = s.units[0].cellId;
     const finalNext = fields.ARMOR.next[finalCell];
@@ -209,7 +214,7 @@ describe('updateMovement', () => {
     // Zmierzone PRZED poprawką (gałąź ucieczki bez sprawdzenia `s.buildings`):
     // jednostka wchodziła w tę samą barykadę na ticku o indeksie 12. 100 ticków
     // to spory zapas ponad ten moment.
-    for (let i = 0; i < 100; i++) updateMovement(s, fields, light, sunDir, ctx);
+    for (let i = 0; i < 100; i++) updateMovement(s, fields, light, sunDir, ctx, 0);
 
     expect(s.units[0].cellId).not.toBe(blocker);
     // Zamarła dokładnie tam, gdzie stała — jedyny sąsiad, do którego ucieczka ją
@@ -232,7 +237,7 @@ describe('updateMovement', () => {
     for (let i = 0; i < N; i++) light[i] = Math.max(0, dot(planet.cells[i].normal, sunDir));
     const fields = buildAllFlowFields(s);
 
-    for (let i = 0; i < 300; i++) updateMovement(s, fields, light, sunDir, ctx);
+    for (let i = 0; i < 300; i++) updateMovement(s, fields, light, sunDir, ctx, 0);
 
     // Uwięziona: żaden sąsiad nie jest wolny, więc nigdzie nie weszła — i nadal
     // stoi dokładnie na powierzchni planety, żadnego NaN-a ani ucieczki z celu.
@@ -254,13 +259,20 @@ describe('updateMovement', () => {
       if (dot(planet.cells[i].normal, sunDir) > 0.8) { lit = i; break; }
     }
     spawnUnit(s, 'SWARM', lit);
+    // **POPARZENIE USTAWIONE JAWNIE — i to jest zmiana, nie obejście.** Od naprawy O1
+    // kierunek marszu jest MIESZANKĄ celu i ucieczki, sterowaną przez `exposure`; przy
+    // zerowym poparzeniu jednostka wciąż idzie do celu, bo dopiero co weszła w światło
+    // i nic jej jeszcze nie piecze. Ten test woła sam `updateMovement`, więc `exposure`
+    // nigdy by nie urosło (nalicza je `updateBurning`, osobny system) i gałąź ucieczki
+    // byłaby nieosiągalna. Pełny odwrót zaczyna się od `PROG_ZAWROTU · burnTime`.
+    s.units[0].exposure = ENEMIES.SWARM.burnTime;
 
     const light = new Float32Array(N);
     for (let i = 0; i < N; i++) light[i] = Math.max(0, dot(planet.cells[i].normal, sunDir));
 
     const fields = buildAllFlowFields(s);
     const before = dot(normalize(s.units[0].pos), sunDir);
-    for (let i = 0; i < 300; i++) updateMovement(s, fields, light, sunDir, ctx);
+    for (let i = 0; i < 300; i++) updateMovement(s, fields, light, sunDir, ctx, 0);
     const after = dot(normalize(s.units[0].pos), sunDir);
 
     expect(after).toBeLessThan(before); // oddaliła się od punktu podsłonecznego
@@ -316,6 +328,9 @@ describe('updateMovement', () => {
       const s = withCore();
       const lit = litCell();
       spawnUnit(s, 'SWARM', lit);
+      // Poparzenie jawne — patrz test ucieczki wyżej: bez niego `updateMovement` wołane
+      // samo nie widzi powodu, żeby uciekać, a ten blok bada właśnie gałąź UCIECZKI.
+      s.units[0].exposure = ENEMIES.SWARM.burnTime;
       // Budynek stawiany POD jednostką — `canBuild` patrzy na `buildings`, nie na `units`,
       // więc to jest w pełni legalny ruch gracza, nie hack testu.
       applyCommand(s, { kind: 'BUILD', cellId: lit, type: 'BARRICADE' });
@@ -327,7 +342,7 @@ describe('updateMovement', () => {
 
       let leftAt = -1;
       for (let i = 0; i < 2000 && leftAt < 0; i++) {
-        updateMovement(s, fields, light, sunDir, ctx);
+        updateMovement(s, fields, light, sunDir, ctx, 0);
         if (s.units[0].cellId !== lit) leftAt = i;
       }
 
@@ -337,48 +352,64 @@ describe('updateMovement', () => {
     });
 
     /**
-     * Wczesny strażnik `s.buildings[next] !== null` w gałęzi pola przepływu. Kontrola
-     * ogonowa NIE zastępuje go: ona blokuje WEJŚCIE w mur, on blokuje sam RUCH ku
-     * murowi. Bez niego jednostka nadal nie wchodzi w barykadę, ale dosuwa się do jej
-     * granicy wewnątrz własnej komórki (zmierzone: 0,77 jednostki świata głębiej,
-     * inny stateHash po 2000 tickach) — czyli inna pozycja, inny hash, inny zasięg
-     * walki, a cały dotychczasowy zestaw testów tego nie widział.
+     * Człon `zablokowany` — druga połówka blokowania, po naprawie obserwacji O2 z testów
+     * z ludźmi.
      *
-     * Asercja jest więc o POZYCJI, nie o `cellId`: w ticku, w którym `next` jednostki
-     * po raz pierwszy jest zabudowany, jednostka musi stanąć CO DO BITU i już się nie
-     * ruszyć.
+     * **Zachowanie ZMIENIŁO SIĘ ŚWIADOMIE i to jest ta zmiana.** Poprzednia wersja robiła
+     * w gałęzi pola przepływu `continue`, czyli pomijała CAŁY ruch: jednostka zamarzała
+     * w chwili wejścia w komórkę sąsiadującą z murem, przy jej DALSZEJ krawędzi. Zmierzone
+     * w grze: atak padał z **1,37 rozstawu komórki** zamiast ~0,5 (wspólna krawędź), czyli
+     * z widoczną przerwą jednej trzeciej heksa. Gracz zgłosił to jako wadę i nią było.
+     *
+     * Dziś jednostce wolno dosunąć się do muru WEWNĄTRZ własnej komórki, ale nie wolno jej
+     * komórki ZMIENIĆ. Drugi człon jest konieczny i nie jest kosmetyką: bez niego jednostka
+     * mogłaby zsunąć się bokiem do innego sąsiada, a wtedy `next` przeliczyłby się z nowej
+     * komórki i przestał wskazywać atakowany budynek — walka czyta `next` PO tym wywołaniu
+     * (`ahead = buildings[next]`) i straciłaby cel.
+     *
+     * Stąd asercje są DWIE i obie nośne: pozycja MUSI się ruszyć (inaczej wraca stara
+     * przerwa), a `cellId` MUSI zostać (inaczej walka gubi cel).
      */
-    it('jednostka, której next jest zabudowany, zamiera CO DO BITU — nie dosuwa się do muru we własnej komórce', () => {
+    it('jednostka, której next jest zabudowany, DOSUWA SIĘ do muru, ale nie zmienia komórki', () => {
       const s = withCore();
       const ring = planet.cells[planet.startCell].neighbors;
       for (const n of ring) applyCommand(s, { kind: 'BUILD', cellId: n, type: 'BARRICADE' });
       spawnUnit(s, 'ARMOR', atSteps(3));
       const fields = buildAllFlowFields(s);
 
-      // Krok po kroku aż do ticku, w którym wczesny strażnik po raz PIERWSZY ma prawo
-      // zadziałać: własny `next` jednostki wskazuje na zabudowaną komórkę.
       let blockedAt = -1;
       for (let i = 0; i < 2000 && blockedAt < 0; i++) {
         const next = fields.ARMOR.next[s.units[0].cellId];
         if (next >= 0 && s.buildings[next] !== null) { blockedAt = i; break; }
-        updateMovement(s, fields, dark, sunDir, ctx);
+        updateMovement(s, fields, dark, sunDir, ctx, 0);
       }
       expect(blockedAt, 'jednostka nigdy nie dotarła pod mur').toBeGreaterThanOrEqual(0);
       expect(dark[s.units[0].cellId]).toBe(0); // przesłanka: to gałąź POLA PRZEPŁYWU, nie ucieczki
 
-      const frozen = { ...s.units[0].pos };
+      const przedDosunieciem = { ...s.units[0].pos };
       const cell = s.units[0].cellId;
+      const mur = fields.ARMOR.next[cell];
+      const odleglosc = (p: { x: number; y: number; z: number }) =>
+        Math.hypot(
+          p.x - planet.cells[mur].center.x,
+          p.y - planet.cells[mur].center.y,
+          p.z - planet.cells[mur].center.z,
+        );
+      const przed = odleglosc(przedDosunieciem);
 
-      // Pierwszy tick po zablokowaniu jest tym, który rozróżnia: ze strażnikiem pozycja
-      // nie drgnie, bez niego jednostka rusza ku murowi natychmiast.
-      updateMovement(s, fields, dark, sunDir, ctx);
-      expect(s.units[0].pos).toEqual(frozen);
+      updateMovement(s, fields, dark, sunDir, ctx, 0);
+      expect(s.units[0].pos, 'pozycja MUSI drgnąć — inaczej wraca przerwa O2').not.toEqual(
+        przedDosunieciem,
+      );
+      expect(s.units[0].cellId, 'komórka NIE MOŻE się zmienić — walka czyta z niej cel').toBe(cell);
 
-      // I zostaje zamrożona — nie chodzi o jeden tick, tylko o stan ustalony.
-      for (let i = 0; i < 200; i++) updateMovement(s, fields, dark, sunDir, ctx);
-      expect(s.units[0].pos).toEqual(frozen);
+      // Stan ustalony: dosuwa się do granicy i tam zostaje, BLIŻEJ niż była.
+      for (let i = 0; i < 200; i++) updateMovement(s, fields, dark, sunDir, ctx, 0);
       expect(s.units[0].cellId).toBe(cell);
       expect(s.buildings[cell]).toBeNull(); // stoi PRZED murem, nie w nim
+      expect(odleglosc(s.units[0].pos), 'ma być BLIŻEJ muru niż przed dosunięciem').toBeLessThan(
+        przed,
+      );
     });
   });
 
@@ -388,7 +419,7 @@ describe('updateMovement', () => {
       spawnUnit(s, 'SWARM', atSteps(7));
       spawnUnit(s, 'ARMOR', atSteps(8));
       const fields = buildAllFlowFields(s);
-      for (let i = 0; i < 300; i++) updateMovement(s, fields, dark, sunDir, ctx);
+      for (let i = 0; i < 300; i++) updateMovement(s, fields, dark, sunDir, ctx, 0);
       return s.units.map((u) => [u.cellId, u.pos.x, u.pos.y, u.pos.z]);
     };
     expect(run()).toEqual(run());
@@ -400,7 +431,7 @@ describe('straż niezmiennika nearestLocalCell: angleStep musi być mniejszy ni�
     const s = withCore();
     spawnUnit(s, 'SWARM', atSteps(6)); // najszybszy typ (speedFactor 2,3) — najciaśniejszy margines
     const fields = buildAllFlowFields(s);
-    expect(() => updateMovement(s, fields, dark, sunDir, ctx)).not.toThrow();
+    expect(() => updateMovement(s, fields, dark, sunDir, ctx, 0)).not.toThrow();
   });
 
   it('rzuca RangeError, gdy skonfigurowana prędkość nie jest mniejsza niż rozstaw kątowy komórek', () => {
@@ -414,8 +445,8 @@ describe('straż niezmiennika nearestLocalCell: angleStep musi być mniejszy ni�
       ...ctx,
       termSpeedCells: 2 / (ENEMIES.SWARM.speedFactor * TICK_SECONDS),
     };
-    expect(() => updateMovement(s, fields, dark, sunDir, brokenCtx)).toThrow(RangeError);
-    expect(() => updateMovement(s, fields, dark, sunDir, brokenCtx)).toThrow(/SWARM/);
+    expect(() => updateMovement(s, fields, dark, sunDir, brokenCtx, 0)).toThrow(RangeError);
+    expect(() => updateMovement(s, fields, dark, sunDir, brokenCtx, 0)).toThrow(/SWARM/);
   });
 });
 
@@ -425,3 +456,65 @@ function arcLength(a: { x: number; y: number; z: number }, b: typeof a, radius: 
   void sub;
   return radius * Math.acos(Math.min(1, Math.max(-1, dot(ua, ub))));
 }
+
+/**
+ * # Przepuszczalność światła — pas śmierci z §4.4 (obserwacja O1 z testów z ludźmi)
+ *
+ * Mechanika jest zaimplementowana i **domyślnie WYŁĄCZONA** (`lightPermeability = 0`,
+ * czyli ściana). Powód jest zmierzony, nie proceduralny: jej włączenie zmienia balans
+ * o rząd wielkości — H1 spada z 32,2 na 4,2 %, a udział zabójstw słońca z 35,0 na 11,6 %,
+ * bo mieszanie kierunku po poparzeniu czyni wrogów optymalnymi zarządcami oparzenia.
+ * Przemiatanie samego pokrętła tego nie ratuje (0,5/0,7/0,85/1,0 → 4,2/4,2/0,8/5,8 %).
+ *
+ * Testy poniżej wiążą SAMĄ MECHANIKĘ, żeby nie była martwym kodem czekającym na decyzję.
+ */
+describe('kierunekMarszu — przepuszczalność światła', () => {
+  const cel = vec3(1, 0, 0);
+  const slonce = vec3(0, 0, 1);
+  const ucieczka = scale(slonce, -1);
+  const zgodny = (a: ReturnType<typeof vec3>, b: ReturnType<typeof vec3>) =>
+    dot(normalize(a), normalize(b));
+
+  it('1. [PARA] przy 0 światło jest ŚCIANĄ: w świetle ucieka, w cieniu idzie do celu', () => {
+    expect(zgodny(kierunekMarszu(0, 3, cel, slonce, true, 0), ucieczka)).toBeCloseTo(1, 9);
+    expect(zgodny(kierunekMarszu(0, 3, cel, slonce, false, 0), cel)).toBeCloseTo(1, 9);
+    // Poparzenie NIE ma wtedy znaczenia — to jest cała treść „ściany".
+    expect(zgodny(kierunekMarszu(2.9, 3, cel, slonce, false, 0), cel)).toBeCloseTo(1, 9);
+  });
+
+  it('2. [PARA] przy dodatniej przepuszczalności świeżo wszedłszy IDZIE DO CELU', () => {
+    // To jest różnica wobec ściany: jednostka wchodzi w światło, bo jeszcze nic jej nie piecze.
+    expect(zgodny(kierunekMarszu(0, 3, cel, slonce, true, 0.5), cel)).toBeCloseTo(1, 9);
+    // …a przy ścianie w tej samej sytuacji już zawraca.
+    expect(zgodny(kierunekMarszu(0, 3, cel, slonce, true, 0), ucieczka)).toBeCloseTo(1, 9);
+  });
+
+  it('3. po przekroczeniu progu jest CAŁKOWICIE zawrócona', () => {
+    // próg = 0,5 × 3 s = 1,5 s
+    expect(zgodny(kierunekMarszu(1.5, 3, cel, slonce, true, 0.5), ucieczka)).toBeCloseTo(1, 9);
+    expect(zgodny(kierunekMarszu(9, 3, cel, slonce, true, 0.5), ucieczka)).toBeCloseTo(1, 9);
+  });
+
+  it('4. obrót jest CIĄGŁY — to jest naprawa szarpnięcia (O3), nie ozdoba', () => {
+    const polowa = kierunekMarszu(0.75, 3, cel, slonce, true, 0.5);
+    const doCelu = zgodny(polowa, cel);
+    const doUcieczki = zgodny(polowa, ucieczka);
+    // Pośredni: bliżej OBU niż skrajne kierunki są siebie nawzajem.
+    expect(doCelu).toBeGreaterThan(0);
+    expect(doUcieczki).toBeGreaterThan(0);
+    // Monotoniczność: im więcej poparzenia, tym bliżej ucieczki.
+    const wczesniej = zgodny(kierunekMarszu(0.3, 3, cel, slonce, true, 0.5), ucieczka);
+    const pozniej = zgodny(kierunekMarszu(1.2, 3, cel, slonce, true, 0.5), ucieczka);
+    expect(pozniej).toBeGreaterThan(wczesniej);
+  });
+
+  it('5. bez trasy jednostka w świetle i tak UCIEKA — stanie znaczy śmierć', () => {
+    expect(zgodny(kierunekMarszu(0, 3, null, slonce, true, 0.5), ucieczka)).toBeCloseTo(1, 9);
+  });
+
+  it('6. `burnTime = 0` nie dzieli przez zero — zachowuje się jak ściana', () => {
+    const k = kierunekMarszu(0, 0, cel, slonce, true, 0.5);
+    expect(Number.isFinite(k.x) && Number.isFinite(k.y) && Number.isFinite(k.z)).toBe(true);
+    expect(zgodny(k, ucieczka)).toBeCloseTo(1, 9);
+  });
+});

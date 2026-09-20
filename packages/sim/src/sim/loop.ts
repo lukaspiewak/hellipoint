@@ -3,10 +3,10 @@ import type { Planet } from '../world/planet.js';
 import { updateBurning } from './burning.js';
 import { updateCombat } from './combat.js';
 import { applyCommand, type Command } from './commands.js';
-import { BUILDINGS } from './defs.js';
+import { BUILDINGS, ENEMIES } from './defs.js';
 import { updateEconomy } from './economy.js';
 import { buildAllFlowFields } from './flowfield.js';
-import { lightField, sunDirection } from './light.js';
+import { dawnOffsetSeconds, lightField, sunDirection } from './light.js';
 import type { MotionContext } from './movement.js';
 import {
   minRotationPeriod,
@@ -24,6 +24,7 @@ import {
   type EnemyType,
   type SimState,
 } from './state.js';
+import type { Vec3 } from '../math/vec3.js';
 
 /** [STROJENIE] Co ile ticków przeliczane są pola przepływu. 4 ticki = 5 Hz (§4.5). */
 export const FLOWFIELD_INTERVAL_TICKS = 4;
@@ -263,6 +264,46 @@ export class Sim {
         `RunConfig.evacAlarmSeconds must be finite and positive, got ${config.evacAlarmSeconds}`,
       );
     }
+    // Mnożnik nagród wpływa wprost do `SimState.ore`, więc wartość zdegenerowana nie
+    // wywala się głośno: `NaN` rozlewa się po rudzie i `canBuild` zaczyna po cichu
+    // odmawiać wszystkiego, a run kończy się porażką wyglądającą na balansową. Faza 3
+    // buduje te konfiguracje programowo dla tysięcy przebiegów.
+    if (!Number.isFinite(config.lightPermeability) || config.lightPermeability < 0) {
+      throw new RangeError(
+        `RunConfig.lightPermeability must be finite and non-negative, got ${config.lightPermeability}`,
+      );
+    }
+    if (!Number.isFinite(config.sunPhaseAtStart)) {
+      throw new RangeError(
+        `RunConfig.sunPhaseAtStart must be finite, got ${config.sunPhaseAtStart}`,
+      );
+    }
+    // Znowu wielkość pochodna: `sunPhaseAtStart · rotationPeriod` przy 1e307 daje Infinity,
+    // a `sunDirection` rzuca dopiero ze `step()`. Ten sam układ uznano za wadę przy
+    // `rotationPeriod` i przeniesiono straż do konstruktora — tu tak samo.
+    if (!Number.isFinite(config.sunPhaseAtStart * config.rotationPeriod)) {
+      throw new RangeError(
+        `RunConfig.sunPhaseAtStart=${config.sunPhaseAtStart} overflows when scaled by ` +
+          `rotationPeriod=${config.rotationPeriod}`,
+      );
+    }
+    if (!Number.isFinite(config.killRewardScale) || config.killRewardScale < 0) {
+      throw new RangeError(
+        `RunConfig.killRewardScale must be finite and non-negative, got ${config.killRewardScale}`,
+      );
+    }
+    // Straż na WIELKOŚCI POCHODNEJ, nie tylko na polu — ta sama nauka, co przy spawnie
+    // (`assertReleasable` w spawning.ts). `killRewardScale = 1e308` przechodzi `isFinite`,
+    // a iloczyn z nagrodą przepełnia się do `Infinity` i ląduje w `SimState.ore`, łamiąc
+    // niezmiennik serializowalności: `JSON.stringify` zamienia go na `null`, więc migawka
+    // Fazy 5 wróciłaby z inną rudą niż zapisano, a `stateHash` przestaje się zgadzać.
+    const najwiekszaNagroda = Math.max(...Object.values(ENEMIES).map((e) => e.oreReward));
+    if (!Number.isFinite(najwiekszaNagroda * config.killRewardScale)) {
+      throw new RangeError(
+        `RunConfig.killRewardScale=${config.killRewardScale} overflows when multiplied by the ` +
+          `largest oreReward (${najwiekszaNagroda}) — SimState.ore would become non-finite`,
+      );
+    }
     if (typeof config.spawn !== 'object' || config.spawn === null) {
       throw new RangeError(`RunConfig.spawn must be a SpawnConfig object, got ${config.spawn}`);
     }
@@ -358,6 +399,12 @@ export class Sim {
     }
     this.s.evacUnlockTick = unlockTick;
 
+    // Przesunięcie fazy słońca: świt komórki startowej + żądana faza z konfiguracji.
+    // Liczone RAZ — zależy tylko od normalnej komórki i okresu, więc co tick byłoby stratą.
+    this.sunOffsetSeconds =
+      dawnOffsetSeconds(planet.cells[planet.startCell].normal, config.rotationPeriod) +
+      config.sunPhaseAtStart * config.rotationPeriod;
+
     // CORE na komórce startowej: punkt wyjścia runu, nie decyzja gracza — więc bez kosztu
     // i WPROST do stanu, nie przez `applyCommand`. `canBuild` odrzuca CORE niezależnie od
     // komórki (`playerBuildable: false`), bo inaczej gracz mnożyłby go za darmo — zmierzone
@@ -409,6 +456,26 @@ export class Sim {
    */
   get lastCoreDamager(): EnemyType | null { return this.coreDamager; }
   get elapsedSeconds(): number { return this.s.tick * TICK_SECONDS; }
+
+  /**
+   * Przesunięcie fazy słońca dla TEGO runu na TEJ planecie, w sekundach.
+   *
+   * Liczone raz, w konstruktorze — `dawnOffsetSeconds` zależy wyłącznie od normalnej komórki
+   * startowej i okresu obrotu, więc przeliczanie go co tick byłoby czystą stratą. Publiczne,
+   * bo render MUSI używać tej samej liczby: słońce narysowane w innej fazie niż policzone
+   * dałoby wrogów płonących w cieniu — wynik prawdopodobnie wyglądający, nie błąd.
+   */
+  readonly sunOffsetSeconds: number;
+
+  /**
+   * Kierunek słońca w danej chwili runu. **Jedyna droga do fazy słońca poza symulacją.**
+   *
+   * Render woła to zamiast `sunDirection(t, period)`, bo tamto nie zna przesunięcia.
+   * Jedna formuła, jedno miejsce — inaczej obraz i symulacja rozjeżdżają się po cichu.
+   */
+  sunAt(elapsedSeconds: number): Vec3 {
+    return sunDirection(elapsedSeconds + this.sunOffsetSeconds, this.config.rotationPeriod);
+  }
   get cycle(): number { return currentCycle(this.elapsedSeconds, this.config.rotationPeriod); }
 
   enqueue(cmd: Command): void { this.pending.push(cmd); }
@@ -459,7 +526,7 @@ export class Sim {
     this.pending.length = 0;
 
     // 2. Oświetlenie — liczone raz i podawane pozostałym systemom.
-    const sun = sunDirection(this.elapsedSeconds, this.config.rotationPeriod);
+    const sun = this.sunAt(this.elapsedSeconds);
     const light = lightField(this.s.planet, sun);
 
     // 3. Energia — musi być przed ekonomią i walką, bo ustawia flagi `powered`.
@@ -482,18 +549,18 @@ export class Sim {
     const fields = this.fields;
 
     // 6. Ruch.
-    updateMovement(this.s, fields, light, sun, this.motion);
+    updateMovement(this.s, fields, light, sun, this.motion, this.config.lightPermeability);
 
     // 7. Walka — po ruchu, bo jednostka atakuje z komórki, do której właśnie weszła.
     // Sprawca zapamiętywany tylko wtedy, gdy w TYM ticku ktoś w CORE uderzył — inaczej
     // ostatni znany sprawca byłby kasowany przez każdy spokojny tick, a ekran przegranej
     // pokazywałby `null` zawsze, gdy Core pada od obrażeń zadanych tick wcześniej.
-    const coreDamager = updateCombat(this.s, fields);
+    const coreDamager = updateCombat(this.s, fields, this.config.killRewardScale);
     if (coreDamager !== null) this.coreDamager = coreDamager;
 
     // 8. Spalanie — po walce, bo `updateBurning` nalicza rudę wyłącznie za własne ofiary
     //    i polega na tym, że walka zabrała swoich zabitych wcześniej (patrz burning.ts).
-    updateBurning(this.s, light);
+    updateBurning(this.s, light, this.config.killRewardScale);
 
     // 9. Fale i spawn.
     updateSpawning(this.s, light, this.waveRng, this.cycle, this.config.spawn);

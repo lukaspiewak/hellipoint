@@ -5,6 +5,102 @@ export interface RunConfig {
   rotationPeriod: number;
   startingOre: number;
   /**
+   * [STROJENIE] Mnożnik nagrody rudy za zabicie, nakładany na `ENEMIES[].oreReward`.
+   *
+   * **Suwak, a nie stała, bo §11.1 wskazał go jako PRAWDZIWY regulator trudności** —
+   * z progiem gdzieś między 0,25× a 0,1×, poniżej którego run umiera, bo gracza nie stać
+   * na odbudowę MURU (nie na moduł ewakuacyjny, którego cena okazała się nie być bramką:
+   * 300 → 1200 przesuwa zwycięstwo o 281 ticków).
+   *
+   * Mieszka w `RunConfig`, a nie w `ENEMIES`, z trzech powodów naraz: przemiatanie musi
+   * móc zmieniać go per przebieg, procesy potomne partii dostają konfigurację (a nie
+   * zmutowany moduł), i `configFingerprint` bierze go wtedy pod uwagę — czyli raport
+   * nie da się policzyć na dwóch nastawach, nie zauważając tego.
+   *
+   * `1` = dzisiejsze wartości z tabeli. Ruda jest ułamkowa (ekstraktor nalicza 0,05/tick),
+   * więc mnożnik nie potrzebuje zaokrąglania i nie ma progu, na którym SWARM przestaje
+   * płacić cokolwiek.
+   */
+  killRewardScale: number;
+  /**
+   * [STROJENIE] Faza słońca na starcie runu, **liczona WZGLĘDEM ŚWITU komórki startowej**,
+   * w ułamku pełnego obrotu. `0` = CORE wchodzi w światło dokładnie w ticku zero.
+   *
+   * ## Dlaczego względem świtu, a nie bezwzględnie
+   *
+   * Bo bezwzględna faza startu **różni się planeta od planety i to przypadkiem**. Zmierzone
+   * przy obrocie 180 s: seed 7 zaczyna w pełnym świetle (0,75 i gasnące), seed 101 ma przed
+   * sobą 90 sekund ciemności, seed 33 startuje o świcie. Gracz na seedzie 101 dostawał więc
+   * półtorej minuty nocy, zanim słońce w ogóle zaczęło mu pomagać, a gracz na seedzie 7 —
+   * pomoc natychmiast. Ta wariancja nie była niczyją decyzją; brała się z generowania planety.
+   *
+   * Odniesienie do świtu sprawia, że **ta sama liczba znaczy to samo na każdej planecie**,
+   * a przemiatanie po tej osi mierzy jedną rzecz, a nie dwie naraz.
+   *
+   * ## Po co to istnieje
+   *
+   * Zadanie 3 zmierzyło, że H4 (porażki w cyklu 1) nie rusza się od ŻADNEJ liczby balansowej:
+   * `updateSpawning` daje w cyklu 1 pełne natężenie fali w sekundzie zerowej, przeciw bazie
+   * złożonej z samego CORE. Faza słońca jest jedyną znalezioną dźwignią, która to rusza —
+   * i rusza mocno.
+   *
+   * ## Zmierzone, i NIE to, czego się spodziewałem
+   *
+   * Hipoteza brzmiała „start o świcie", bo wtedy słońce broni od razu. **Pomiar ją obalił.**
+   * Przy 250 przebiegach wprawnej i 1 000 początkującej na punkt, H4 wg fazy:
+   *
+   * ```
+   *   0      (dzień od razu)   92,2 %      0,625  (68 s nocy)   82,3 %
+   *   0,125                    88,5 %      0,6875 (56 s nocy)   67,1 %
+   *   0,25   (południe)        85,9 %      0,75   (45 s nocy)   59,8 %  ← minimum
+   *   0,5    (zmierzch)        88,2 %      0,8125 (34 s nocy)   66,9 %
+   *                                        0,875  (22 s nocy)   77,1 %
+   *                                        0,9375 (11 s nocy)   89,8 %
+   * ```
+   *
+   * Minimum jest czyste: obaj sąsiedzi 0,75 dają po ~67 % przy przedziałach ±2,9, więc
+   * siedmiopunktowa różnica nie jest wahaniem próbki. Sens wychodzi z zestawienia z czasem
+   * zgonu: **mediana porażki początkującej leży w okolicy 50–65 s, a przy fazie 0,75 wschód
+   * przychodzi po 45 s** — dokładnie wtedy, gdy gracz przestaje sobie radzić. Świt od razu
+   * jest najgorszy, bo stawia bazę NA TERMINATORZE, tuż przy całej nocnej półkuli, która
+   * jako jedyna spawnuje (D1), a zanim baza dojedzie w głąb dnia, jest już po wszystkim.
+   *
+   * To nie jest ukryty mnożnik trudności, tylko czytelna reguła: **zaczynasz w nocy,
+   * a pierwszy wschód jest twoją pierwszą ulgą.**
+   *
+   * Wartość jest okresowa; 0 znaczy „CORE wchodzi w światło w ticku zero".
+   */
+  sunPhaseAtStart: number;
+  /**
+   * [STROJENIE] PRZEPUSZCZALNOŚĆ ŚWIATŁA — ułamek `burnTime`, po którym wróg stojący
+   * w świetle jest już całkowicie zawrócony. **Zero znaczy ŚCIANA.**
+   *
+   * ## Skąd się wzięła i dlaczego domyślnie jest zerem
+   *
+   * Gracz w sesji 1 testów zgłosił, że wrogowie „odbijają się od granicy noc/dzień".
+   * Zmierzone: głębokość wejścia w światło **zawsze dokładnie 1 krok**, przez 20 000 ticków
+   * ani razu głębiej. Spec §4.4 obiecuje co innego — PAS ŚMIERCI `D = burnTime · (v − v_term)`,
+   * czyli światło jako RYZYKO, nie granicę nie do przejścia.
+   *
+   * Mechanika jest zaimplementowana: kierunek marszu miesza cel z ucieczką proporcjonalnie
+   * do poparzenia (`kierunekMarszu` w `movement.ts`), więc wróg wchodzi w światło, dopóki
+   * go nie piecze, i zawraca płynnie. Działa: głębokość rośnie z 1 na 2 kroki, a odsetek
+   * ticków ze zwrotem ostrzejszym niż 90° spada z 21,85 % na 1,85 %.
+   *
+   * **Ale ściana okazała się nośna.** Włączenie tej mechaniki zmienia balans o rząd
+   * wielkości: zmierzone H1 spada z 32,2 na **4,2 %**, a udział zabójstw słońca z 35,0
+   * na **11,6 %** — bo mieszanie po poparzeniu czyni wrogów optymalnymi zarządcami
+   * oparzenia: wchodzą, przypiekają się, cofają, regenerują w cieniu i wracają.
+   * Przemiatanie samego pokrętła tego nie ratuje: 0,5 / 0,7 / 0,85 / 1,0 dają H1
+   * kolejno 4,2 / 4,2 / 0,8 / 5,8 %.
+   *
+   * Zero zostaje więc **decyzją zmierzoną, nie zaniechaniem**: włączenie pasa śmierci
+   * wymaga PRZESTROJENIA CAŁEGO balansu (nagrody, tempo spawnu), a to jest osobna robota
+   * i osobna decyzja. Oś `lightPermeability` istnieje w `AXES`, więc da się ją przemieść
+   * razem z resztą, gdy ta decyzja zapadnie.
+   */
+  lightPermeability: number;
+  /**
    * PUNKT ODNIESIENIA DLA PROGU EWAKUACJI, **NIE** DŁUGOŚĆ RUNU. Nazwa sugeruje limit
    * czasu — takiego nie ma i mieć nie powinno: §5.6 zna dokładnie dwa warunki końca,
    * zwycięstwo przez ewakuację i porażkę przez utratę Core. Run, w którym gracz się nie
@@ -27,7 +123,44 @@ export interface RunConfig {
 // [STROJENIE] — cała tabela do wyznaczenia headlessem w Fazie 3.
 export const DEFAULT_RUN: RunConfig = {
   rotationPeriod: 180,
+  /**
+   * [STROJENIE] **Zostaje 150 — bo przemiatanie pokazało, że ta oś jest MARTWA.**
+   *
+   * Zmierzone (Faza 3, Zadanie 3, 250 przebiegów wprawnej i 1 000 początkującej na punkt,
+   * przy `killRewardScale` 0,35): 150 → 300 → 600 → 900 → 1500 daje H4 kolejno
+   * 95,5 / 90,0 / **98,8** / 92,5 / 86,2 %. Dziesięciokrotny wzrost kupuje 9 punktów przy
+   * progu <15 %, a przebieg **nie jest monotoniczny** — przy 600 wychodzi GORZEJ niż przy
+   * 150, i to daleko poza przedziałami (±1,9 wobec ±0,7). H1 nasyca się po 300.
+   *
+   * Rozstrzyga jedna liczba: `moment porażki p10` stoi na **~31 s we wszystkich pięciu
+   * punktach**, podczas gdy początkująca buduje coraz więcej (szczyt zabudowy p50: 9 → 26).
+   * Stać ją, buduje, ginie w tej samej sekundzie. To nie jest brak zasobów.
+   *
+   * Rekomendacja §11.1 („podnieść rudę startową") jest tym pomiarem OBALONA.
+   */
   startingOre: 150,
+  /**
+   * [STROJENIE] **0,5 — wybrane razem z `baseRatePerPentagon`, nie osobno.**
+   *
+   * Stoi na pomiarze 1 000 przebiegów wprawnej przy tempie spawnu 0,05:
+   * **H1 = 35,5 % ±3,0 (próg 25–60) i H3 = 27,3 min ±0,3 (próg 25–35)** — pierwsza nastawa
+   * w całej fazie, w której oba kryteria sufitu są spełnione naraz.
+   *
+   * Dlaczego wyżej niż zgrubne 0,35 z przemiatania samej tej osi: przy rzadszym spawnie
+   * wprawna **ubożeje**, bo nie wydobywa ani jednej rudy (p10=p50=p90=0 w każdym pomiarze)
+   * i finansuje się wyłącznie nagrodami. Dochód to stawka × liczba zabitych, więc obniżenie
+   * liczby trzeba odrobić stawką. Zmierzone przy 0,05: stawka 0,5 → H1 38 %, 0,8 → 71 %,
+   * 1,2 → 87 %, 1,8 → 94 %.
+   */
+  killRewardScale: 0.5,
+  /**
+   * [STROJENIE] 45 sekund nocy, potem wschód — **minimum H4 zmierzone na dziesięciu fazach**
+   * (59,8 % wobec 85–92 % przy starcie w dzień). Tabela i uzasadnienie przy polu w
+   * `RunConfig` wyżej.
+   */
+  sunPhaseAtStart: 0.75,
+  /** [STROJENIE] Zero = ściana — jedyne źródło tej liczby. Uzasadnienie w `RunConfig` wyżej. */
+  lightPermeability: 0,
   cyclesPerRun: 10,       // 10 × 180 s = 30 min, zgodnie z D4
   evacUnlockFraction: 0.67,
   evacEnergyRequired: 1000,

@@ -88,8 +88,44 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   },
   KINETIC_TURRET: {
     hp: 200, costOre: 50, energyDrain: 3, energyOutput: { kind: 'NONE' },
-    energyStorage: 0, allowedCells: 'HEXAGON', connectionRadius: 1, range: 2,
-    dps: 25, targeting: 'SINGLE', energyInfrastructure: false, playerBuildable: true,
+    /*
+     * [STROJENIE] AOE + zasięg 3 + dps 20 — WYPROWADZONE Z POMIARU (Faza 3, H5).
+     *
+     * Wcześniej: `SINGLE`, zasięg 2, dps 25. Przy tamtej nastawie **żadne otwarcie oparte
+     * na tej wieży nie wygrywało ani razu na 250 przebiegów**, a zabudowa stawała na
+     * szóstym budynku na każdej planecie — bez dochodu kolejka nie ruszała.
+     *
+     * Pierwsza diagnoza brzmiała „rozstrzyga zasięg" i **była błędna**. Zmierzone:
+     *
+     * ```
+     *   SINGLE zasięg 2 (stare)   0,0 %      AOE zasięg 1    0,0 %
+     *   SINGLE zasięg 3           0,0 %      AOE zasięg 2    0,0 %
+     *                                        AOE zasięg 3   80,4 %  (przy dps 25)
+     * ```
+     *
+     * To jest URWISKO, nie zbocze: potrzeba AOE **i** zasięgu 3 naraz, każde z osobna daje
+     * zero. Powód jest w `updateCombat`: `AOE` zadaje obrażenia KAŻDEJ jednostce w zasięgu,
+     * `SINGLE` dokładnie jednej. W cyklu 1 fala to same SWARM-y (`armorFromCycle: 5`), więc
+     * przeciw tłumowi przewaga AOE równa się liczebności tłumu — żadna wartość `dps` tego
+     * nie nadrabia.
+     *
+     * `dps` obniżone z 25 na 20, żeby druga linia była RÓWNORZĘDNA, nie lepsza. Zmierzone
+     * przy AOE i zasięgu 3, po 250 przebiegów na punkt, z linią laserową jako kontrolą
+     * (nie używa tej wieży, więc NIE MA PRAWA drgnąć — i nie drgnęła):
+     *
+     * ```
+     *   dps 12 → kinetyczne  0,0 %   laserowe 36,8 %
+     *   dps 20 → kinetyczne 35,2 %   laserowe 36,8 %   ← wybrane, parytet
+     *   dps 25 → kinetyczne 80,4 %   laserowe 36,8 %
+     * ```
+     *
+     * **Cena za to: obie wieże są teraz AOE i różnią się wyłącznie liczbami** (tania,
+     * słaba, oszczędna w energii wobec drogiej, mocnej, prądożernej). To świadomy
+     * kompromis — alternatywą było zostawić `SINGLE`, który w cyklu 1 nie ma żadnej niszy,
+     * bo nisza pojedynczego celu (ARMOR, 250 hp) otwiera się dopiero w cyklu 5.
+     */
+    energyStorage: 0, allowedCells: 'HEXAGON', connectionRadius: 1, range: 3,
+    dps: 20, targeting: 'AOE', energyInfrastructure: false, playerBuildable: true,
   },
   LASER_TURRET: {
     hp: 250, costOre: 100, energyDrain: 12, energyOutput: { kind: 'NONE' },

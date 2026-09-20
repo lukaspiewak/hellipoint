@@ -35,6 +35,66 @@ const RESERVE_ORE = Math.min(BUILDINGS.LASER_TURRET.costOre, BUILDINGS.KINETIC_T
 const EXTRACTOR_EXEMPT_FROM_RESERVE = false;
 
 /**
+ * Polityka headless: co bot chce postawić w tym ticku.
+ *
+ * Interfejs istnieje od Fazy 3, bo od tej fazy polityk są DWIE i każda odpowiada na inne
+ * pytanie (`BeginnerPolicy` — „czy początkujący ma szansę", `SkilledPolicy` — „gdzie jest
+ * sufit"). Mieszanie ich unieważniło już jedną tabelę pomiarową w §11.1 specu, więc
+ * **`name` jest częścią interfejsu, nie ozdobą**: wynik bez nazwy polityki nie da się
+ * potem przypisać do pytania, na które odpowiadał.
+ */
+/**
+ * Nazwa, pod którą polityka początkująca podpisuje KAŻDY swój wynik (`RunResult.policy`).
+ *
+ * Stała, a nie napis w dwóch miejscach, bo `assessHealth` weryfikuje nią **populację**:
+ * H2 i H4 są pomiarami tej polityki i wolno im liczyć wyłącznie jej przebiegi. Napis
+ * przepisany w drugim pliku rozjechałby się cicho — a cicho rozjechana populacja to
+ * dokładnie ta wada, którą H4 już raz przepuściło.
+ */
+export const BEGINNER_POLICY_NAME = 'beginner';
+
+/** Znacznik dla polityk, które nie grają z kolejki otwarcia. */
+export const BRAK_OTWARCIA = '—';
+
+export interface Policy {
+  readonly name: string;
+  /**
+   * Co ile ticków wolno tej polityce podjąć decyzję.
+   *
+   * **Należy do POLITYKI, nie do runnera** — i to jest naprawa znaleziska Z1 z przeglądu
+   * Zadania 1. Odstęp siedział w `simulateRun` jako jedna stała dla wszystkich i **obcinał
+   * sufit o połowę**: zmierzone na pięciu seedach, `SkilledPolicy` wygrywa **5 z 5** przy
+   * odstępie 1 i **2 z 5** przy 20. Na 23 grywalnych seedach: 78 % wobec 39 %.
+   *
+   * Dowód, że odstęp 1 jest tu właściwy, a nie po prostu łaskawszy: przy nim seed 33 kończy
+   * na ticku **24 133** — co do ticka liczba referencyjna z §11.1 specu, wyznaczona przez
+   * `playPlan`, które decyduje w KAŻDYM ticku. Przy odstępie 20 wychodzi 24 340, czyli
+   * `SkilledPolicy` NIE BYŁA „co najmniej tak dobra jak `WINNING_OPENING`", jak wymaga
+   * rozstrzygnięcie R2 planu.
+   *
+   * Gdyby to zostało, H1 zmierzone na tym przyrządzie pokazałoby dziś **39 % („zdrowo")
+   * zamiast 78 % („przechodzi się samo")** — i całe strojenie Fazy 3 celowałoby w zły punkt.
+   */
+  readonly decisionIntervalTicks: number;
+  /**
+   * Nazwa OTWARCIA, którym ta polityka gra — trafia do każdego `RunResult`.
+   *
+   * Dokładnie z tego samego powodu, co `name`: wynik bez niej nie da się przypisać do
+   * pytania, na które odpowiadał. Bramka gałęzi Fazy 3 pokazała uruchomieniem, że bez tego
+   * pola `--combine` skleja partię policzoną INNYM otwarciem w „raport bazowy" bez jednego
+   * ostrzeżenia — odciski konfiguracji są identyczne (otwarcie jest własnością polityki,
+   * nie nastawy), więc strażnik jednorodności jest wobec niego z definicji ślepy.
+   *
+   * Polityki bez otwarcia (zachłanna początkująca) niosą `BRAK_OTWARCIA`.
+   */
+  readonly opening: string;
+  decide(): Command[];
+}
+
+/** Fabryka polityki — `simulateRun` konstruuje ją po zbudowaniu `Sim`. */
+export type PolicyFactory = (sim: Sim) => Policy;
+
+/**
  * Deterministyczny, zachłanny bot. NIE ma być dobry — ma być powtarzalny
  * i reprezentować rozsądnego początkującego gracza, żeby rozkłady z runnera
  * mierzyły balans gry, a nie jakość bota.
@@ -56,7 +116,18 @@ const EXTRACTOR_EXEMPT_FROM_RESERVE = false;
  * przenosiło ten sam błąd na następną najtańszą opcję. "Nie wydaję ostatnich
  * pieniędzy, dopóki nie mam czym strzelać."
  */
-export class ScriptedPolicy {
+export class BeginnerPolicy implements Policy {
+  readonly name = BEGINNER_POLICY_NAME;
+  readonly opening = BRAK_OTWARCIA;
+
+  /**
+   * `[STROJENIE]` Bot początkujący decyduje RAZ NA SEKUNDĘ, nie co tick — inaczej stawiałby
+   * budynki szybciej, niż zarabia. To jest pokrętło JEGO zachowania i część tego, co znaczy
+   * „rozsądny początkujący"; zostaje nietknięte, żeby wszystkie dotychczasowe pomiary
+   * (raport z 1000 runów, §11.1) dalej znaczyły to samo.
+   */
+  readonly decisionIntervalTicks = 20;
+
   constructor(private readonly sim: Sim) {}
 
   decide(): Command[] {

@@ -736,9 +736,38 @@ if (MENU_TYPES.length > MAX_MENU_TYPES) {
  * linię na ostrzeżenie i zabierała przy tym jedyny odczyt wskazania — zmierzone na ekranie
  * po `DEFEAT`: menu dalej liczyło powody odmowy dla komórki, której numeru już nie było widać.
  */
+/**
+ * Cel runu w jednym segmencie: **kiedy wolno się ewakuować**.
+ *
+ * ## Po co, skoro odliczanie już jest
+ *
+ * Bo było **wyłącznie w wierszu menu**, czyli pokazywało się dopiero, gdy gracz wskazał
+ * komórkę i spojrzał na dziewiątą pozycję listy. Sesja 1 testów z ludźmi pokazała, że
+ * tester skanujący ekran nie ma jak się dowiedzieć, że **wygrywa się ewakuacją** — a to
+ * jedyny warunek zwycięstwa (§5.6). Onboarding jest poza zakresem MVP (§8.2), więc cel
+ * musi być widoczny w samym HUD-zie albo nie będzie go nigdzie.
+ *
+ * ## Dlaczego tylko przy RUNNING — i dlaczego to nie jest kosmetyka
+ *
+ * Bo po zakończeniu runu odliczanie jest szumem, a ten sam wiersz niesie wtedy zdanie
+ * „komendy nie są przyjmowane". Oba segmenty **wykluczają się w czasie**, więc najgorszy
+ * przypadek wiersza się nie zmienia: zmierzone 98 znaków z 111 należy do fazy zakończonej,
+ * a wersja z odliczaniem jest od niej krótsza. Gdyby oba mogły wystąpić naraz, wiersz
+ * przekroczyłby budżet i zawinął się w minimalnym oknie — a to jest ta klasa wady, którą
+ * bramka 2B już raz unieważniła (cztery pomiary z pięciu).
+ */
+export function evacSegment(s: SimState): string {
+  if (!commandsAccepted(s)) return '';
+  const left = evacCountdownSeconds(s);
+  return left <= 0
+    ? `${SEGMENT_SEPARATOR}EWAKUACJA GOTOWA`
+    : `${SEGMENT_SEPARATOR}ewakuacja za ${countdownText(left)}`;
+}
+
 export function headlineText(s: SimState, cellId: number | null): string {
   return (
     ` · komórka: ${cellId === null ? '—' : cellId}` +
+    evacSegment(s) +
     (commandsAccepted(s) ? '' : ` · komendy nie są przyjmowane — run zakończony (${s.phase})`)
   );
 }

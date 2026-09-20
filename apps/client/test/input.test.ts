@@ -8,6 +8,7 @@ import {
   stateHash,
   type BuildingType,
   type Planet,
+  sunDirection,
   type Vec3,
 } from '@heliopolis/sim';
 import {
@@ -1191,5 +1192,67 @@ describe('wireClient — spięcie aplikacji, bez rozruchu DOM', () => {
     expect(() => wireClient({ ...deps, keys: canvas as unknown as ListenerTarget })).toThrow(RangeError);
     // …a poprawne źródło przechodzi — bez tej połowy straż mogłaby odrzucać wszystko.
     expect(() => wireClient({ ...deps, keys: createFakeEventTarget() })).not.toThrow();
+  });
+
+  /**
+   * 30. **Słońce renderu musi być słońcem symulacji.**
+   *
+   * Od Zadania 3 Fazy 3 run zaczyna się o ŚWICIE komórki startowej, więc faza słońca ma
+   * przesunięcie zależne od planety (`Sim.sunOffsetSeconds`). Dopóki render wołał
+   * `sunDirection(t, period)` na własną rękę, dostawał fazę bez przesunięcia — i rysowałby
+   * noc tam, gdzie symulacja liczy dzień. **Wrogowie płonący w cieniu to wynik
+   * prawdopodobnie wyglądający, nie błąd**, więc nic by tego nie zgłosiło.
+   *
+   * Test łapie to przez SKUTEK, nie przez zaglądanie do wywołań: porównuje kierunek, który
+   * dostała scena, z tym, który liczy symulacja — i osobno sprawdza, że naiwne wywołanie
+   * dałoby INNĄ liczbę. Bez tej drugiej połowy test przechodziłby też na planecie, której
+   * świt wypada w zerze, czyli tam, gdzie obie drogi się zgadzają przypadkiem.
+   */
+  it('30. słońce podane scenie jest słońcem SYMULACJI, nie własnym wywołaniem renderu', () => {
+    const canvas = createFakeCanvas();
+    const orbit = createCamera(createFakeCanvas(), radius);
+    let sceneSun: Vec3 | null = null;
+    const scene: ClientScene = {
+      camera: orbit,
+      updateBuildings: () => {},
+      updateUnits: () => {},
+      setUnitShading: () => {},
+      render: (_light, sunDir) => {
+        sceneSun = sunDir;
+      },
+    };
+    let sim!: Sim;
+    let clock = 0;
+    const client = wireClient({
+      seed: 20260915,
+      makeScene: () => scene,
+      makeSim: (wiredPlanet, run) => {
+        sim = new Sim(wiredPlanet, run);
+        return sim;
+      },
+      canvas,
+      keys: createFakeEventTarget(),
+      hudRoot: createFakeElement(),
+      run: DEFAULT_RUN,
+      now: () => clock,
+      log: () => {},
+    });
+
+    clock = 1_000;
+    client.frame();
+    expect(sceneSun, 'scena musi dostać słońce w ogóle').not.toBeNull();
+
+    const t = sim.elapsedSeconds;
+    // PRZESŁANKA: ta planeta ma niezerowe przesunięcie świtu, więc obie drogi NIE mogą
+    // dać tej samej liczby przypadkiem. Bez tego cały test byłby tautologią.
+    expect(Math.abs(sim.sunOffsetSeconds) % DEFAULT_RUN.rotationPeriod).toBeGreaterThan(1);
+
+    const zSymulacji = sim.sunAt(t);
+    const naiwne = sunDirection(t, DEFAULT_RUN.rotationPeriod);
+    expect(sceneSun!.x).toBeCloseTo(zSymulacji.x, 6);
+    expect(sceneSun!.z).toBeCloseTo(zSymulacji.z, 6);
+    // Połówka „ma oblać przy regresji": gdyby render wrócił do własnego `sunDirection`,
+    // scena dostałaby TĘ liczbę.
+    expect(Math.abs(sceneSun!.x - naiwne.x) + Math.abs(sceneSun!.z - naiwne.z)).toBeGreaterThan(0.01);
   });
 });
