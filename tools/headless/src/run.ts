@@ -48,6 +48,14 @@ export interface RunResult {
    * wyłącznie wykrywać, że w jednej partii są dwie.
    */
   configFingerprint: string;
+  /**
+   * Nazwa OTWARCIA, którym grała polityka — przy KAŻDYM wyniku, nie tylko w nagłówku.
+   *
+   * Ten sam argument, co przy `policy`: nagłówek raportu tekstowego nie trafia do `.json`,
+   * a `--combine` czyta właśnie `.json`. Bez tego pola partia policzona innym otwarciem
+   * wchodziła do raportu bazowego bez słowa — pokazane uruchomieniem w bramce gałęzi.
+   */
+  opening: string;
 }
 
 /**
@@ -129,6 +137,7 @@ export function simulateRun(
     coreDamager: sim.lastCoreDamager,
     policy: policy.name,
     configFingerprint: configFingerprint(cfg),
+    opening: policy.opening,
   };
 }
 

@@ -259,7 +259,10 @@ export function kierunekMarszu(
   przepuszczalnosc: number,
 ): Vec3 {
   const ucieczka = scale(sunDir, -1);
-  if (cel === null) return wSwietle || exposure > 0 ? ucieczka : cel ?? ucieczka;
+  // Bez trasy zostaje sama ucieczka — także w cieniu przy zerowym poparzeniu, bo `cel`
+  // jest wtedy `null` i nie ma czego mieszać. Poprzednia wersja miała tu `cel ?? ucieczka`,
+  // czyli gałąź nieosiągalną: w tym miejscu `cel` jest z definicji `null`.
+  if (cel === null) return ucieczka;
   const prog = przepuszczalnosc * burnTime;
   // `prog <= 0` to ŚCIANA: zawracaj natychmiast, ale tylko stojąc w świetle. To jest
   // zachowanie sprzed tej zmiany, zachowane co do bitu jako wartość domyślna gry.

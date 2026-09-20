@@ -171,7 +171,8 @@ const GOLDEN_RUN_CONFIG: RunConfig = {
    * a trajektoria ma strzec obu. 0,25 jest jedyną wartością z obiema wyraźnie dodatnimi.
    *
    * To także powód, dla którego `GOLDEN_RUN_CONFIG` nie idzie za `DEFAULT_RUN`: gra stoi
-   * dziś na świcie i ma prawo tam zostać, a ten scenariusz ma ćwiczyć silnik, nie balans.
+   * dziś na **0,75** (45 s nocy, potem wschód), a ten scenariusz ma ćwiczyć silnik, nie
+   * balans — więc trzyma własną fazę niezależnie od tego, gdzie wyląduje strojenie.
    */
   sunPhaseAtStart: 0.25,
   // Zero = ściana, czyli zachowanie sprzed mechaniki pasa śmierci. Zamrożone tutaj celowo:

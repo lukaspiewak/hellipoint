@@ -3,7 +3,7 @@ import type { Planet } from '../world/planet.js';
 import { updateBurning } from './burning.js';
 import { updateCombat } from './combat.js';
 import { applyCommand, type Command } from './commands.js';
-import { BUILDINGS } from './defs.js';
+import { BUILDINGS, ENEMIES } from './defs.js';
 import { updateEconomy } from './economy.js';
 import { buildAllFlowFields } from './flowfield.js';
 import { dawnOffsetSeconds, lightField, sunDirection } from './light.js';
@@ -278,9 +278,30 @@ export class Sim {
         `RunConfig.sunPhaseAtStart must be finite, got ${config.sunPhaseAtStart}`,
       );
     }
+    // Znowu wielkość pochodna: `sunPhaseAtStart · rotationPeriod` przy 1e307 daje Infinity,
+    // a `sunDirection` rzuca dopiero ze `step()`. Ten sam układ uznano za wadę przy
+    // `rotationPeriod` i przeniesiono straż do konstruktora — tu tak samo.
+    if (!Number.isFinite(config.sunPhaseAtStart * config.rotationPeriod)) {
+      throw new RangeError(
+        `RunConfig.sunPhaseAtStart=${config.sunPhaseAtStart} overflows when scaled by ` +
+          `rotationPeriod=${config.rotationPeriod}`,
+      );
+    }
     if (!Number.isFinite(config.killRewardScale) || config.killRewardScale < 0) {
       throw new RangeError(
         `RunConfig.killRewardScale must be finite and non-negative, got ${config.killRewardScale}`,
+      );
+    }
+    // Straż na WIELKOŚCI POCHODNEJ, nie tylko na polu — ta sama nauka, co przy spawnie
+    // (`assertReleasable` w spawning.ts). `killRewardScale = 1e308` przechodzi `isFinite`,
+    // a iloczyn z nagrodą przepełnia się do `Infinity` i ląduje w `SimState.ore`, łamiąc
+    // niezmiennik serializowalności: `JSON.stringify` zamienia go na `null`, więc migawka
+    // Fazy 5 wróciłaby z inną rudą niż zapisano, a `stateHash` przestaje się zgadzać.
+    const najwiekszaNagroda = Math.max(...Object.values(ENEMIES).map((e) => e.oreReward));
+    if (!Number.isFinite(najwiekszaNagroda * config.killRewardScale)) {
+      throw new RangeError(
+        `RunConfig.killRewardScale=${config.killRewardScale} overflows when multiplied by the ` +
+          `largest oreReward (${najwiekszaNagroda}) — SimState.ore would become non-finite`,
       );
     }
     if (typeof config.spawn !== 'object' || config.spawn === null) {

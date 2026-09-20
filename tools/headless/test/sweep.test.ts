@@ -11,7 +11,7 @@ import {
   type AxisName,
 } from '../src/sweep.js';
 import { BEGINNER_POLICY_NAME } from '../src/policy.js';
-import { SKILLED_POLICY_NAME } from '../src/skilledPolicy.js';
+import { NAZWA_ZNANEJ_LINII, SKILLED_POLICY_NAME } from '../src/skilledPolicy.js';
 import { OTWARCIA, skladOtwarcia } from '../src/openings.js';
 import type { RunResult } from '../src/run.js';
 
@@ -26,7 +26,7 @@ import type { RunResult } from '../src/run.js';
 const run = (over: Partial<RunResult> = {}): RunResult => ({
   seed: 0, phase: 'DEFEAT', ticks: 1_000, cycle: 3, peakBuildings: 10, oreMined: 0,
   killsBySun: 0, killsByTurret: 0, firstDepletionTick: -1, coreDamager: null,
-  policy: SKILLED_POLICY_NAME, configFingerprint: 'aaaaaaaa', ...over,
+  policy: SKILLED_POLICY_NAME, configFingerprint: 'aaaaaaaa', opening: NAZWA_ZNANEJ_LINII, ...over,
 });
 const batch = (n: number, wins: number, policy = SKILLED_POLICY_NAME): RunResult[] =>
   Array.from({ length: n }, (_, i) =>
@@ -121,7 +121,13 @@ describe('3. [OŚ] osie TRZYMANE na stałe podczas przemiatania innej', () => {
     ]);
     expect(() => parseFixed(['evacEnergyRequired=1000'])).toThrow(/nieznana oś/);
     expect(() => parseFixed(['killRewardScale=dużo'])).toThrow(/nie jest liczbą/);
-    expect(() => parseFixed(['killRewardScale'])).toThrow(/nie jest liczbą/);
+    expect(() => parseFixed(['killRewardScale'])).toThrow(/brak wartości/);
+    // `Number('')` to ZERO, nie NaN — więc pusta wartość przechodziła walidację i cicho
+    // ustawiała oś na zero. Bramka gałęzi Fazy 3, znalezisko #6.
+    expect(() => parseFixed(['killRewardScale='])).toThrow(/brak wartości/);
+    expect(() => parseFixed(['killRewardScale=   '])).toThrow(/brak wartości/);
+    // Połówka „ma przejść": jawne zero nadal jest legalną nastawą.
+    expect(parseFixed(['killRewardScale=0'])).toEqual([{ name: 'killRewardScale', value: 0 }]);
   });
 
   it('3b. trzymane osie NAKŁADAJĄ SIĘ, a przemiatana idzie na wierzch', () => {

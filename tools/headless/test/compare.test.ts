@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ciRoznicyPp, formatPorownanie, porownaj, type Wariant } from '../src/compare.js';
 import { ciHalfWidthPp } from '../src/health.js';
-import { SKILLED_POLICY_NAME } from '../src/skilledPolicy.js';
+import { NAZWA_ZNANEJ_LINII, SKILLED_POLICY_NAME } from '../src/skilledPolicy.js';
 import type { RunResult } from '../src/run.js';
 
 /**
@@ -15,7 +15,7 @@ import type { RunResult } from '../src/run.js';
 const run = (over: Partial<RunResult> = {}): RunResult => ({
   seed: 0, phase: 'DEFEAT', ticks: 1_000, cycle: 3, peakBuildings: 10, oreMined: 0,
   killsBySun: 0, killsByTurret: 0, firstDepletionTick: -1, coreDamager: null,
-  policy: SKILLED_POLICY_NAME, configFingerprint: 'aaaaaaaa', ...over,
+  policy: SKILLED_POLICY_NAME, configFingerprint: 'aaaaaaaa', opening: NAZWA_ZNANEJ_LINII, ...over,
 });
 
 /** Partia o zadanym odsetku zwycięstw, ze ZRÓŻNICOWANYMI przebiegami (żeby sita milczały). */

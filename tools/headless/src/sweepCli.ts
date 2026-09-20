@@ -41,10 +41,16 @@ if (!isAxisName(axisName)) {
 }
 const axis = AXES[axisName];
 
-const values = arg('values')
-  .split(',')
-  .map((v) => Number(v.trim()));
-if (values.length === 0 || values.some((v) => !Number.isFinite(v))) {
+// Puste człony odrzucane JAWNIE: `Number('')` to 0, więc `--values 0.25,0.35,` (przecinek
+// na końcu) dokładało punkt przemiatania przy zerze, który liczył się i stawał w tabeli
+// jak każdy inny. `values.length === 0` było przy okazji warunkiem NIEMOŻLIWYM — `split`
+// nigdy nie zwraca pustej tablicy — czyli napisem wyglądającym jak kontrola (CLAUDE.md §2).
+const surowe = arg('values').split(',').map((v) => v.trim());
+if (surowe.some((v) => v === '')) {
+  throw new Error(`sweepCli: --values ${arg('values')} ma pusty człon (zbędny przecinek?)`);
+}
+const values = surowe.map((v) => Number(v));
+if (values.some((v) => !Number.isFinite(v))) {
   throw new Error(`sweepCli: --values ${arg('values')} nie jest listą liczb skończonych`);
 }
 

@@ -83,6 +83,12 @@ if (process.argv.includes('--openings')) {
 // `--metric cykl1` porównuje odsetek runów ginących w cyklu 1 zamiast zwycięstw — bo
 // zmiana, która NIC nie robi zwycięstwom, może ruszyć podłogę i odwrotnie. Dokładnie tak
 // zachowała się zmiana wieży: zwycięstwa początkującej bez zmian (0 %), a cykl 1 spadł o 22 pp.
-const miara = (arg('metric', 'zwyciestwa') === 'cykl1' ? 'cykl1' : 'zwyciestwa') as Miara;
+const metricSurowa = arg('metric', 'zwyciestwa');
+if (metricSurowa !== 'zwyciestwa' && metricSurowa !== 'cykl1') {
+  // Poprzednio KAŻDA wartość poza dosłownym `cykl1` cofała się po cichu do zwycięstw,
+  // czyli literówka dawała tabelę odpowiadającą na inne pytanie niż zadane.
+  throw new Error(`compareCli: --metric ${metricSurowa} — dozwolone: zwyciestwa | cykl1`);
+}
+const miara: Miara = metricSurowa;
 writeFileSync(out, formatPorownanie(warianty, miara) + '\n');
 process.stderr.write(`\nporównanie → ${out}\n`);

@@ -61,6 +61,15 @@ export function formatReport(results: RunResult[]): string {
     lines.push('!!! Rozkłady porażki niżej opisują wyłącznie runy zakończone, więc są NIEPEŁNE.');
     lines.push('');
   }
+  // To samo dla OTWARCIA. Odcisk konfiguracji tego NIE łapie i słusznie — otwarcie jest
+  // własnością polityki, nie nastawy — więc bez osobnego strażnika partia z dwóch linii
+  // wygląda dokładnie jak partia z jednej (pokazane uruchomieniem w bramce gałęzi Fazy 3).
+  const otwarcia = [...new Set(results.map((r) => r.opening))].sort();
+  if (otwarcia.length > 1) {
+    lines.push(`!!! UWAGA: ta partia MIESZA ${otwarcia.length} otwarcia (${otwarcia.join(', ')}).`);
+    lines.push('!!! Rozkłady poniżej nie opisują żadnego z nich. Rozdziel partie.');
+    lines.push('');
+  }
   // To samo dla KONFIGURACJI: Zadanie 3 przemiata nastawy, a partia z dwóch nastaw nie
   // opisuje żadnej z nich — dokładnie tak samo jak partia z dwóch polityk (Z5).
   const configs = [...new Set(results.map((r) => r.configFingerprint))].sort();
@@ -100,8 +109,19 @@ export function formatReport(results: RunResult[]): string {
   return lines.join('\n');
 }
 
+/**
+ * Odsetek do wydruku — **nigdy „0.0%" dla wartości niezerowej**.
+ *
+ * Ta sama ochrona, co w `health.ts`, i z tego samego powodu: liczba prawdziwa nie powinna
+ * być nieodróżnialna od liczby fałszywej. `report.ts` jej nie miał i **już raz skłamał
+ * w opublikowanym raporcie bazowym**: wiersz „wyczerpanie 1. złoża: 0.0% runów, czas [s]
+ * p10=134.1 …" — kwantyle mogą istnieć tylko przy co najmniej jednym wyczerpaniu, więc
+ * złoże wyczerpało się w 1–49 runach na 10 000, a wiersz czytał się jak „nigdy".
+ */
 function pct(v: number): string {
-  return Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : 'n/d';
+  if (!Number.isFinite(v)) return 'n/d';
+  const p = v * 100;
+  return p > 0 && p < 0.05 ? `${p.toFixed(2)}%` : `${p.toFixed(1)}%`;
 }
 
 function quantiles(values: number[]): string {

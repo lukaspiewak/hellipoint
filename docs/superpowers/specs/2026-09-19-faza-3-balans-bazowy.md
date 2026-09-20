@@ -228,7 +228,7 @@ Naprawa: `packages/sim/test/support/gestySpawn.ts` — jedna zamrożona nastawa 
 fikstur, ta sama decyzja co `GOLDEN_RUN_CONFIG`. Następne strojenie balansu już ich nie ruszy.
 
 Wyjątkiem są dwa miejsca, które mają iść za grą i zostały PRZEMIERZONE: test zwycięstwa
-w `fullrun.test.ts` (seed 33 kończy teraz na ticku 35 483, nie 24 133) i liczba referencyjna
+w `fullrun.test.ts` (seed odniesienia zmieniał się razem z balansem — aktualna liczba stoi wyłącznie w asercji testu 1e, nie w prozie) i liczba referencyjna
 w `policy.test.ts`. **Zwycięskie otwarcie nadal wygrywa** — rozstrzygnięcie R2 trzyma.
 
 

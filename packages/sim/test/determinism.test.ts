@@ -446,3 +446,37 @@ describe('RunConfig.killRewardScale — walidacja w konstruktorze Sim', () => {
     );
   });
 });
+
+/**
+ * # Wielkości POCHODNE też mają straż (bramka gałęzi Fazy 3, znalezisko #2)
+ *
+ * `Number.isFinite(pole)` nie wystarcza, gdy pole wchodzi do iloczynu: `killRewardScale`
+ * równe `1e308` przechodzi walidację, a przemnożone przez nagrodę daje `Infinity`
+ * w `SimState.ore` — i łamie niezmiennik serializowalności wprost, bo `JSON.stringify`
+ * zamienia nieskończoność na `null`. Migawka Fazy 5 wróciłaby wtedy z inną rudą niż
+ * zapisano, a `stateHash` przestałby się zgadzać.
+ *
+ * Ta sama nauka stoi już w `spawning.ts` (`assertReleasable` na wielkości pochodnej,
+ * nie na polu) — nowe pola Fazy 3 dostały drugie piętro dopiero tutaj.
+ */
+describe('RunConfig — straż na wielkościach POCHODNYCH, nie tylko na polach', () => {
+  const planet = createPlanet({ seed: 7 });
+
+  it('[PARA] killRewardScale przepełniający iloczyn z nagrodą jest odrzucany', () => {
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: 1e308 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: 1e308 })).toThrow(/overflow/);
+    // Połówka „ma przejść": wartość duża, ale nieprzepełniająca, zostaje legalna.
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, killRewardScale: 1e300 })).not.toThrow();
+  });
+
+  it('[PARA] sunPhaseAtStart przepełniający iloczyn z okresem obrotu — w KONSTRUKTORZE', () => {
+    // Bez tej straży `sunDirection` rzuca dopiero ze `step()`. Ten sam układ uznano
+    // za wadę przy `rotationPeriod` i przeniesiono do konstruktora.
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, sunPhaseAtStart: 1e307 })).toThrow(RangeError);
+    expect(() => new Sim(planet, { ...DEFAULT_RUN, sunPhaseAtStart: 1e300 })).not.toThrow();
+  });
+
+  it('KONTROLA: DEFAULT_RUN nie wywołuje żadnej z tych straży', () => {
+    expect(() => new Sim(planet, DEFAULT_RUN)).not.toThrow();
+  });
+});

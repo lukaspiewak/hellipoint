@@ -18,8 +18,12 @@ import { WINNING_OPENING } from '../../../packages/sim/test/support/openings.js'
  */
 
 /**
- * [STROJENIE w teście] ~1,7× zmierzonej długości zwycięskiego przebiegu (35 483 ticki
- * po strojeniu Zadania 3; wcześniej 24 133).
+ * [STROJENIE w teście] ~1,8× zmierzonej długości zwycięskiego przebiegu.
+ *
+ * Liczba referencyjna stoi DOKŁADNIE W JEDNYM miejscu — w asercji testu 1e — bo ten plik
+ * miał przez chwilę trzy różne (35 483 w tym komentarzu, 32 769 w innym, 33 083 w asercji),
+ * a doc-comment nad 1e każe ją przepinać ręcznie, czyli to jest miejsce, w którym ktoś
+ * BĘDZIE czytał liczbę z komentarza zamiast z kodu. Złapane przez bramkę gałęzi Fazy 3.
  *
  * Podniesione razem z balansem i to NIE jest kosmetyka: przy starych 40 000 zwycięski
  * przebieg seeda 33 mieścił się w limicie z 13 % zapasu, a część seedów próbki była już
@@ -145,9 +149,10 @@ describe('1. [PRZYRZĄD] dwie polityki dają RÓŻNE wyniki na tym samym seedzie
   it('1e. seed odniesienia kończy na ticku 33 083 — liczba przepinana ze zmianami silnika', () => {
     const r = simulateRun(REF_SEED, DEFAULT_RUN, WIN_CAP, (sim) => new SkilledPolicy(sim));
     expect(r.phase).toBe('VICTORY');
-    // 24 133 na seedzie 33 przy balansie sprzed Zadania 3; dziś 32 769 na seedzie
+    // 24 133 na seedzie 33 przy balansie sprzed Zadania 3; dziś wartość niżej, na seedzie
     // odniesienia. Zmieniły się i nastawa, i planeta — powód zmiany seeda stoi przy
-    // `REF_SEED`. Przepięte zgodnie z instrukcją
+    // `REF_SEED`. **Liczby nie powtarzam w tym zdaniu**, żeby nie powstała druga wersja
+    // prawdy: jedyne źródło to asercja dwa wiersze niżej. Przepięte zgodnie z instrukcją
     // w doc-commencie wyżej — zmiana PO strojeniu jest oczekiwana, BEZ strojenia znaczy
     // zepsuty przyrząd. `fullrun.test.ts` przypina tę samą liczbę z drugiej strony,
     // przez `playPlan`, więc rozjazd polityki z otwarciem oblewa w dwóch miejscach.

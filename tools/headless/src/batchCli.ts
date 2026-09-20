@@ -48,7 +48,7 @@ if (wariant === undefined) {
 
 const POLICIES: Record<string, PolicyFactory> = {
   beginner: (sim) => new BeginnerPolicy(sim),
-  skilled: (sim) => new SkilledPolicy(sim, wariant[1]),
+  skilled: (sim) => new SkilledPolicy(sim, wariant[1], wariant[0]),
 };
 
 
@@ -76,6 +76,17 @@ if (process.argv.includes('--combine')) {
   // ale tutaj woła się go dwa razy, na dwóch osobnych partiach — dwa różne odciski
   // przeszłyby bez jednego ostrzeżenia, a H2 porównywałoby wtedy sufit z jednej nastawy
   // z podłogą z drugiej. Zadanie 3 przemiata właśnie nastawy, więc to uderzy tam.
+  // Otwarcie NIE wchodzi do odcisku konfiguracji (jest własnością polityki), więc dwie
+  // partie na różnych liniach mają identyczny odcisk i strażnik niżej milczy. Bez tego
+  // sprawdzenia „raport bazowy" potrafił opisywać sufit policzony innym otwarciem —
+  // pokazane uruchomieniem w bramce gałęzi Fazy 3.
+  const otwarciaWprawnej = [...new Set(skilled.map((r) => r.opening))].sort();
+  if (otwarciaWprawnej.length > 1) {
+    throw new Error(
+      `batchCli --combine: partia WPRAWNA miesza otwarcia (${otwarciaWprawnej.join(', ')}). ` +
+        'H1 i H3 nie opisywałyby wtedy żadnej linii.',
+    );
+  }
   const odciski = new Set([...skilled, ...beginner].map((r) => r.configFingerprint));
   if (odciski.size > 1) {
     throw new Error(
@@ -85,6 +96,10 @@ if (process.argv.includes('--combine')) {
   }
   const lines = [
     '# Raport bazowy Fazy 3 — dwie polityki, sześć kryteriów zdrowia',
+    '',
+    // Otwarcie NAZWANE w dokumencie: sufit policzony inną linią to inny sufit, a bez tego
+    // wiersza czytelnik nie ma jak tego zobaczyć.
+    `otwarcie polityki wprawnej: ${otwarciaWprawnej[0] ?? '—'}`,
     '',
     '## Polityka WPRAWNA — „gdzie jest sufit?"',
     '',

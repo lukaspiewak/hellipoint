@@ -175,6 +175,14 @@ function ordersFor(planet: Planet, opening: Opening): Command[] {
 /** Nazwa, pod którą polityka wprawna podpisuje każdy wynik. Patrz `BEGINNER_POLICY_NAME`. */
 export const SKILLED_POLICY_NAME = 'skilled';
 
+/**
+ * Nazwa domyślnego otwarcia — JEDYNE źródło tego napisu.
+ *
+ * `openings.ts` bierze ją stąd do swojej tabeli wariantów, więc nazwa w raporcie i nazwa
+ * przyjmowana przez `--opening` nie mogą się rozjechać.
+ */
+export const NAZWA_ZNANEJ_LINII = 'laserowe (znana linia)';
+
 /** Kolejka zabudowy: co i z której puli, w kolejności stawiania. */
 export type Opening = ReadonlyArray<readonly [Pool, BuildingType]>;
 
@@ -198,10 +206,15 @@ export class SkilledPolicy implements Policy {
    *   z §11.1. Parametr istnieje dla kryterium H5, które pyta, ILE różnych otwarć wygrywa;
    *   bez niego „różne otwarcia" nie dałyby się w ogóle zmierzyć tym samym przyrządem.
    */
+  /** Nazwa otwarcia — do `RunResult`, żeby wynik wiedział, z jakiej linii pochodzi. */
+  readonly opening: string;
+
   constructor(
     private readonly sim: Sim,
     opening: Opening = SKILLED_OPENING,
+    openingName: string = NAZWA_ZNANEJ_LINII,
   ) {
+    this.opening = openingName;
     // RAZ, nie co tick: komórki są funkcją samej planety, a `decide()` biegnie 20 razy
     // na sekundę symulacji przez dziesiątki tysięcy ticków.
     this.orders = ordersFor(sim.state.planet, opening);

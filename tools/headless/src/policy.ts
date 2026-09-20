@@ -53,6 +53,9 @@ const EXTRACTOR_EXEMPT_FROM_RESERVE = false;
  */
 export const BEGINNER_POLICY_NAME = 'beginner';
 
+/** Znacznik dla polityk, które nie grają z kolejki otwarcia. */
+export const BRAK_OTWARCIA = '—';
+
 export interface Policy {
   readonly name: string;
   /**
@@ -73,6 +76,18 @@ export interface Policy {
    * zamiast 78 % („przechodzi się samo")** — i całe strojenie Fazy 3 celowałoby w zły punkt.
    */
   readonly decisionIntervalTicks: number;
+  /**
+   * Nazwa OTWARCIA, którym ta polityka gra — trafia do każdego `RunResult`.
+   *
+   * Dokładnie z tego samego powodu, co `name`: wynik bez niej nie da się przypisać do
+   * pytania, na które odpowiadał. Bramka gałęzi Fazy 3 pokazała uruchomieniem, że bez tego
+   * pola `--combine` skleja partię policzoną INNYM otwarciem w „raport bazowy" bez jednego
+   * ostrzeżenia — odciski konfiguracji są identyczne (otwarcie jest własnością polityki,
+   * nie nastawy), więc strażnik jednorodności jest wobec niego z definicji ślepy.
+   *
+   * Polityki bez otwarcia (zachłanna początkująca) niosą `BRAK_OTWARCIA`.
+   */
+  readonly opening: string;
   decide(): Command[];
 }
 
@@ -103,6 +118,7 @@ export type PolicyFactory = (sim: Sim) => Policy;
  */
 export class BeginnerPolicy implements Policy {
   readonly name = BEGINNER_POLICY_NAME;
+  readonly opening = BRAK_OTWARCIA;
 
   /**
    * `[STROJENIE]` Bot początkujący decyduje RAZ NA SEKUNDĘ, nie co tick — inaczej stawiałby

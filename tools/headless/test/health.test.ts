@@ -9,7 +9,7 @@ import {
   type HealthId,
 } from '../src/health.js';
 import { BEGINNER_POLICY_NAME } from '../src/policy.js';
-import { SKILLED_POLICY_NAME } from '../src/skilledPolicy.js';
+import { NAZWA_ZNANEJ_LINII, SKILLED_POLICY_NAME } from '../src/skilledPolicy.js';
 import type { RunResult } from '../src/run.js';
 
 /**
@@ -42,7 +42,7 @@ function run(over: Partial<RunResult> = {}): RunResult {
     firstDepletionTick: -1,
     coreDamager: null,
     policy: SKILLED_POLICY_NAME,
-    configFingerprint: 'aaaaaaaa',
+    configFingerprint: 'aaaaaaaa', opening: NAZWA_ZNANEJ_LINII,
     ...over,
   };
 }

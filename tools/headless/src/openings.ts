@@ -1,5 +1,5 @@
 import type { BuildingType } from '@heliopolis/sim';
-import { SKILLED_OPENING, type Opening } from './skilledPolicy.js';
+import { NAZWA_ZNANEJ_LINII, SKILLED_OPENING, type Opening } from './skilledPolicy.js';
 
 /**
  * # Warianty otwarcia — przyrząd kryterium H5 (Faza 3, Zadanie 3)
@@ -130,7 +130,7 @@ export const OTWARCIE_CZAPY: Opening = [
 
 /** Wszystkie warianty pod nazwami, w kolejności pomiaru. */
 export const OTWARCIA: ReadonlyArray<readonly [string, Opening]> = [
-  ['laserowe (znana linia)', OTWARCIE_LASEROWE],
+  [NAZWA_ZNANEJ_LINII, OTWARCIE_LASEROWE],
   ['kinetyczne', OTWARCIE_KINETYCZNE],
   ['mur najpierw', OTWARCIE_MUR_NAJPIERW],
   ['ekonomiczne', OTWARCIE_EKONOMICZNE],

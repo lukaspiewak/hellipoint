@@ -119,8 +119,14 @@ export function parseFixed(specs: readonly string[]): FixedAxis[] {
     if (name === undefined || !isAxisName(name)) {
       throw new Error(`--fix ${spec}: nieznana oś ${name} (jest: ${Object.keys(AXES).join(', ')})`);
     }
+    // `Number('')` to **0**, nie `NaN` — więc `--fix killRewardScale=` przechodziło
+    // walidację i ustawiało stawkę nagród na zero, a tabela wypisywała `trzymane:
+    // killRewardScale=0`, co czyta się jak wybór. Pusty napis odrzucamy JAWNIE.
+    if (raw === undefined || raw.trim() === '') {
+      throw new Error(`--fix ${spec}: brak wartości po „=" — puste znaczy zero, a to nie wybór`);
+    }
     const value = Number(raw);
-    if (raw === undefined || !Number.isFinite(value)) {
+    if (!Number.isFinite(value)) {
       throw new Error(`--fix ${spec}: ${raw} nie jest liczbą skończoną`);
     }
     return { name, value };

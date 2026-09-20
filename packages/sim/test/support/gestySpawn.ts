@@ -43,15 +43,17 @@ export const GESTY_SPAWN: SpawnConfig = {
 /**
  * Faza słońca dla fikstur — **ćwierć obrotu po świcie**.
  *
- * Gra stoi od Zadania 3 na `sunPhaseAtStart: 0` (start o świcie) i ma prawo tam zostać.
- * Fikstury nie mogą za tym iść z tego samego powodu, co przy tempie spawnu, tylko dobitniej:
- * przy świcie baza jest oświetlona, wrogowie płoną po drodze i **zwykły przebieg robi się
- * dwa razy dłuższy** (zmierzone na seedzie 101: 971 → 1832 ticków). Liczby referencyjne
- * w opisach tych testów przestałyby cokolwiek opisywać.
+ * **Gra stoi na `sunPhaseAtStart: 0,75`** — 45 sekund nocy, potem wschód (`rules.ts`).
+ * Fikstury nie mogą za tym iść z tego samego powodu, co przy tempie spawnu: faza słońca
+ * decyduje, ile się w przebiegu dzieje, a liczby referencyjne w opisach tych testów
+ * przestałyby cokolwiek opisywać. Zmierzone, jak mocno to działa: przy fazie 0 (świt) ten
+ * sam przebieg na seedzie 101 trwa 1832 ticki zamiast 971.
  *
- * 0,25 wybrane tym samym pomiarem, co w `golden-hash.test.ts`: skrajne fazy zostawiają
- * jedną ścieżkę śmierci martwą (przy świcie wieże nie mają do kogo strzelać, w pełnej nocy
- * słońce nikogo nie pali), a ćwierć obrotu po świcie trzyma obie wyraźnie dodatnie.
+ * 0,25 to **ćwierć obrotu po świcie, czyli lokalne południe** — wybrane tym samym pomiarem,
+ * co w `golden-hash.test.ts`: skrajne fazy zostawiają jedną ścieżkę śmierci martwą (przy
+ * świcie wieże nie mają do kogo strzelać, w pełnej nocy słońce nikogo nie pali), a południe
+ * trzyma obie wyraźnie dodatnie. **Nie jest to „bezpieczniejsze od domyślnego" — jest po
+ * prostu INNE od domyślnego 0,75 i zamrożone, żeby nie szło za grą.**
  */
 export const GESTA_FAZA_SLONCA = 0.25;
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { diagnozuj } from '../src/diagnostics.js';
 import { formatReport } from '../src/report.js';
-import { SKILLED_POLICY_NAME } from '../src/skilledPolicy.js';
+import { NAZWA_ZNANEJ_LINII, SKILLED_POLICY_NAME } from '../src/skilledPolicy.js';
 import type { RunResult } from '../src/run.js';
 
 /**
@@ -16,7 +16,7 @@ import type { RunResult } from '../src/run.js';
 const run = (over: Partial<RunResult> = {}): RunResult => ({
   seed: 0, phase: 'DEFEAT', ticks: 1_000, cycle: 3, peakBuildings: 10, oreMined: 0,
   killsBySun: 0, killsByTurret: 0, firstDepletionTick: -1, coreDamager: null,
-  policy: SKILLED_POLICY_NAME, configFingerprint: 'aaaaaaaa', ...over,
+  policy: SKILLED_POLICY_NAME, configFingerprint: 'aaaaaaaa', opening: NAZWA_ZNANEJ_LINII, ...over,
 });
 
 /** Partia zdrowa: przebiegi się RÓŻNIĄ, zabudowa jest rozrzucona, część wygrywa. */
@@ -107,5 +107,37 @@ describe('4. [SITO] diagnoza trafia do RAPORTU, i to na samą górę', () => {
 
   it('4b. [PARA] zdrowa partia nie ma w raporcie ANI SŁOWA o przyrządzie', () => {
     expect(formatReport(zdrowa())).not.toContain('PRZYRZĄD');
+  });
+});
+
+describe('5. [SITO] otwarcie jedzie przy KAŻDYM wyniku, nie tylko w nagłówku', () => {
+  /**
+   * Bramka gałęzi Fazy 3, znalezisko #1. Otwarcie było zapisane wyłącznie w nagłówku
+   * raportu TEKSTOWEGO, a `--combine` czyta `.json`, do którego nagłówek nie trafia.
+   * `configFingerprint` tego nie łapie i **słusznie** — otwarcie jest własnością polityki,
+   * nie nastawy — więc partia policzona inną linią wchodziła do „raportu bazowego"
+   * bez jednego ostrzeżenia. Pokazane uruchomieniem: H1 i H3 policzone na otwarciu
+   * ekonomicznym, zero wystąpień słowa „ekonomiczne" w wynikowym dokumencie.
+   */
+  it('5a. [PARA] partia z DWÓCH otwarć jest zgłaszana, z jednego — nie', () => {
+    const jedno = Array.from({ length: 30 }, (_, i) => run({ seed: i, ticks: 1_000 + i }));
+    expect(formatReport(jedno)).not.toContain('MIESZA');
+
+    const dwa = jedno.map((r, i) => (i % 2 === 0 ? { ...r, opening: 'kinetyczne' } : r));
+    const raport = formatReport(dwa);
+    expect(raport).toContain('MIESZA');
+    expect(raport, 'ostrzeżenie ma NAZWAĆ otwarcia, inaczej nie wiadomo, co rozdzielić')
+      .toContain('kinetyczne');
+  });
+
+  it('5b. ostrzeżenie o otwarciach stoi NAD liczbami, tak jak pozostałe', () => {
+    const dwa = Array.from({ length: 30 }, (_, i) =>
+      run({ seed: i, ticks: 1_000 + i, opening: i % 2 === 0 ? 'kinetyczne' : 'mur najpierw' }),
+    );
+    const linie = formatReport(dwa).split('\n');
+    const ostrzezenie = linie.findIndex((l) => l.includes('MIESZA'));
+    const liczby = linie.findIndex((l) => l.includes('runów:'));
+    expect(ostrzezenie).toBeGreaterThanOrEqual(0);
+    expect(ostrzezenie, 'ostrzeżenie pod liczbami jest ostrzeżeniem po fakcie').toBeLessThan(liczby);
   });
 });
