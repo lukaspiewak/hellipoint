@@ -182,6 +182,42 @@ jako czwarta, która wychodzi taniej niż każda z nich osobno.
 
 ---
 
+## Odłożone z bramki gałęzi Fazy 3 (2026-09-20)
+
+Bramka dała 11 znalezisk; sześć naprawiono przed scaleniem, trzy drobne przy okazji.
+**Dwa zostały świadomie odłożone** — żadne nie zmienia liczby, którą ktoś dziś zobaczy,
+ale oba są prawdziwe i wracają przy następnym strojeniu.
+
+### D1. Pasmo H2 robi się arytmetycznie puste przy H1 ≤ 4 %
+
+`health.ts`: `ok: h2Pct > 2 && h2Pct < h1Pct * 0.5`. Przy H1 = 4 % sufit wynosi 2 %, więc
+warunek `> 2 && < 2` jest **niespełnialny dla żadnej wartości podłogi**. Widać to w raporcie
+wprost: `próg >2% i <0.0%`.
+
+Dziś nieszkodliwe (H1 = 32,2 % → pasmo (2; 16,1)), ale **przemiatanie `lightPermeability`
+działa w zakresie H1 = 0,8–5,8 %**, czyli dokładnie tam, gdzie H2 dostaje wykrzyknik
+z powodu arytmetyki, a nie z powodu bota — i nic tego nie mówi. Wróci przy przestrajaniu
+balansu pod pas śmierci.
+
+*Kierunek naprawy:* trzeci stan („pasmo puste — kryterium nie orzeka") zamiast `ok: false`,
+tak jak przy H5/H6 bez danych.
+
+### D2. Dwie fikstury nadal idą za balansem
+
+`fullrun.test.ts` („wrogowie faktycznie się pojawiają i faktycznie atakują CORE") oraz
+`snapshot.test.ts` („wznowienie po przegranej nie wskrzesza zniszczonego CORE") biorą
+`DEFAULT_RUN` wprost, choć ich przesłanki wymagają **gęstego przebiegu** — czyli dokładnie
+tej klasy, dla której powstał `gestyRun`.
+
+Zmierzony zapas: 2 655–2 752 ticków przy limicie 6 000, czyli 2,2×. Dziś nic nie oblewa;
+ryzyko jest jakościowe — **następne zejście z tempem spawnu ruszy je razem z balansem**,
+a wtedy oblewa coś, co z balansem nie ma nic wspólnego.
+
+*Kierunek naprawy:* przepuścić obie przez `gestyRun` przy najbliższym strojeniu, razem
+z przemierzeniem liczb w ich komentarzach (część pochodzi sprzed Zadania 3).
+
+---
+
 ## Co z tego wynika dla Fazy 4
 
 Kamień milowy Fazy 4 to „wersja do pokazania", a jej zakres to m.in. **game feel**. O3 jest

@@ -8,25 +8,9 @@ import { DEFAULT_RUN } from '../src/sim/rules.js';
 import { Sim } from '../src/sim/loop.js';
 import type { Command } from '../src/sim/commands.js';
 import { skanujSerializowalnosc } from './support/serializable.js';
-import { GESTA_FAZA_SLONCA, GESTY_SPAWN, gestyRun } from './support/gestySpawn.js';
+import { gestyRun } from './support/gestySpawn.js';
 
 const planet = createPlanet({ seed: 1 });
-
-/**
- * **Gęstość fikstur PRZYPIĘTA, nie odziedziczona po `DEFAULT_RUN`.**
- *
- * Oba strażniki serializowalności w tym pliku — round-trip JSON i skaner strukturalny —
- * mówią coś tylko wtedy, gdy chodzą po stanie z JEDNOSTKAMI. Dziedziczenie tempa spawnu
- * po nastawie gry znaczyłoby, że każde strojenie balansu unieważnia dowód o niezmienniku,
- * który z balansem nie ma nic wspólnego.
- *
- * Zmierzone, gdy Zadanie 3 Fazy 3 zeszło z `baseRatePerPentagon` 0,25 na 0,05: w 1 200
- * tickach na scenariuszu `rozegranyStan` zostawało **zero** żywych jednostek (szczyt 6,
- * wszystkie ubite przez wieże), więc kontrola „fikstura jest BOGATA" oblewała. Zadziałała
- * dokładnie tak, jak miała — i to ona pokazała, że fikstura była przywiązana do balansu.
- *
- * Ta sama decyzja i to samo uzasadnienie, co przy `GOLDEN_RUN_CONFIG` w `golden-hash.test.ts`.
- */
 
 
 /**
@@ -335,6 +319,10 @@ describe('kompletność stateHash — każde pole SimState jest albo hashowane, 
  */
 describe('niezmiennik serializowalności (round-trip JSON)', () => {
   it('stateHash(JSON.parse(JSON.stringify(state))) === stateHash(state) po kilkuset tickach ze zbudowanymi budynkami', () => {
+    // `gestyRun` PRZYPINA tempo spawnu i fazę słońca: obaj strażnicy serializowalności
+    // w tym pliku mówią coś tylko wtedy, gdy chodzą po stanie z JEDNOSTKAMI, a dziedziczenie
+    // nastawy gry znaczyłoby, że każde strojenie balansu unieważnia dowód o niezmienniku,
+    // który z balansem nie ma nic wspólnego. Uzasadnienie i pomiar: `support/gestySpawn.ts`.
     const sim = new Sim(planet, gestyRun({ ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 5000 }));
 
     // KOREKTA (przegląd gałęzi, Important #5): poprzednia wersja tego komentarza
@@ -489,6 +477,10 @@ describe('skaner serializowalności — na ROZEGRANYM stanie', () => {
    * CORE przy życiu, więc stan ma jednocześnie budynki, jednostki i przebytą walkę.
    */
   function rozegranyStan(): SimState {
+    // `gestyRun` PRZYPINA tempo spawnu i fazę słońca: obaj strażnicy serializowalności
+    // w tym pliku mówią coś tylko wtedy, gdy chodzą po stanie z JEDNOSTKAMI, a dziedziczenie
+    // nastawy gry znaczyłoby, że każde strojenie balansu unieważnia dowód o niezmienniku,
+    // który z balansem nie ma nic wspólnego. Uzasadnienie i pomiar: `support/gestySpawn.ts`.
     const sim = new Sim(planet, gestyRun({ ...DEFAULT_RUN, rotationPeriod: 180, startingOre: 5000 }));
     sim.state.buildings[planet.startCell] = {
       cellId: planet.startCell, type: 'CORE', hp: BUILDINGS.CORE.hp, powered: false,
