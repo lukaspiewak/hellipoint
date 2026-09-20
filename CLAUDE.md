@@ -157,5 +157,17 @@ Autoryzacja merge'a tej bramki nie znosi.
 ## Gdzie jest stan
 
 Plany faz: `docs/superpowers/plans/`. Wyniki bramek: `docs/superpowers/specs/`.
-Stan na 2026-09-19: `main` = Fazy 0–2C scalone; **Faza 3 (pętla roguelite i balans) w toku**
-na gałęzi `faza-3`. Aktualnie: `git log --oneline -5` i plan najświeższej fazy.
+Stan na 2026-09-20: `main` = Fazy 0–3 scalone. **Trwa seria testów z ludźmi** — plan
+i dziennik obserwacji leżą w `docs/superpowers/specs/2026-09-19-plan-testow-z-ludzmi.md`
+i `…-obserwacje-z-testow.md`. Reguła serii: **zapisujemy, nie naprawiamy w trakcie**, bo
+zmiana balansu unieważnia porównanie między testerami.
+
+Trzy kryteria zdrowia są oblane świadomie (H2 = 0 %, H4 = 36,9 %, H5 = 2) — wszystkie
+opierają się na założeniu, że bot początkujący przybliża nowicjusza, a §11.1 mówi, że progi
+zmierzone na słabej polityce **nie są wiążące**. To rozstrzygną testy, nie dalsze strojenie.
+
+Mechanika pasa śmierci (§4.4) jest zaimplementowana i **domyślnie wyłączona**
+(`RunConfig.lightPermeability = 0`): jej włączenie zmienia H1 z 32,2 na 4,2 %, więc wymaga
+przestrojenia całego balansu — po serii.
+
+Aktualnie: `git log --oneline -5` i plan najświeższej fazy.
